@@ -6,6 +6,7 @@ import { authApi } from "@/services/auth";
 import { useAuthStore } from "@/stores/auth-store";
 import { CentersPage } from "@/pages/centers/CentersPage";
 import { ClinicalDatasetPage } from "@/pages/clinical-dataset/ClinicalDatasetPage";
+import { SubjectDetailPage } from "@/pages/clinical-dataset/SubjectDetailPage";
 import { DashboardPage } from "@/pages/dashboard/DashboardPage";
 import { DictionariesPage } from "@/pages/dictionaries/DictionariesPage";
 import { LoginPage } from "@/pages/login/LoginPage";
@@ -94,6 +95,7 @@ export default function App() {
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />
         <Route path="/clinical-dataset" element={<ClinicalDatasetPage />} />
+        <Route path="/clinical-dataset/subjects/:subjectId" element={<SubjectDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

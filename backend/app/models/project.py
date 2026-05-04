@@ -27,4 +27,5 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
-
+    subjects = relationship("Subject", back_populates="project", cascade="all, delete-orphan")
+    stage_files = relationship("StageFile", back_populates="project", cascade="all, delete-orphan")

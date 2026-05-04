@@ -36,4 +36,8 @@ class StageTemplate(Base):
 
     project = relationship("Project", back_populates="stage_templates")
     stage = relationship("Stage", back_populates="stage_templates")
-
+    stage_files = relationship(
+        "StageFile",
+        back_populates="stage_template",
+        cascade="all, delete-orphan",
+    )

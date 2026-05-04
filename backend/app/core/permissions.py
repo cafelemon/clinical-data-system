@@ -20,6 +20,7 @@ PERMISSIONS = [
     PermissionSpec("roles:write", "维护角色", "identity"),
     PermissionSpec("permissions:read", "查看权限", "identity"),
     PermissionSpec("clinical_data:read", "查看临床数据集", "clinical_data"),
+    PermissionSpec("clinical_data:write", "维护临床数据集", "clinical_data"),
 ]
 
 ROLE_SPECS = {
@@ -36,17 +37,28 @@ ROLE_SPECS = {
             "master_data:write",
             "dictionaries:read",
             "clinical_data:read",
+            "clinical_data:write",
         ],
     },
     "center_manager": {
         "label": "中心负责人",
         "description": "管理指定中心",
-        "permissions": ["master_data:read", "dictionaries:read", "clinical_data:read"],
+        "permissions": [
+            "master_data:read",
+            "dictionaries:read",
+            "clinical_data:read",
+            "clinical_data:write",
+        ],
     },
     "clinical_coordinator": {
         "label": "临床协调员",
         "description": "上传和维护资料",
-        "permissions": ["master_data:read", "dictionaries:read", "clinical_data:read"],
+        "permissions": [
+            "master_data:read",
+            "dictionaries:read",
+            "clinical_data:read",
+            "clinical_data:write",
+        ],
     },
     "reviewer": {
         "label": "审核人员",
@@ -64,4 +76,3 @@ ROLE_SPECS = {
         "permissions": ["master_data:read", "dictionaries:read", "clinical_data:read"],
     },
 }
-

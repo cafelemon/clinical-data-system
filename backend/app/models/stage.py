@@ -32,3 +32,4 @@ class Stage(Base):
         back_populates="stage",
         cascade="all, delete-orphan",
     )
+    stage_files = relationship("StageFile", back_populates="stage", cascade="all, delete-orphan")

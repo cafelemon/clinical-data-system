@@ -921,6 +921,7 @@ GET  /api/permissions
 - id
 - project\_id
 - subject\_id
+- section\_code
 - name
 - visit\_name
 - time\_window
@@ -936,6 +937,8 @@ GET  /api/permissions
 - section\_id
 - item\_name
 - item\_code
+- sort\_order
+- created\_at
 - updated\_at
 - upload\_status
 - review\_status
@@ -949,6 +952,7 @@ GET  /api/permissions
 - project\_id
 - center\_id
 - stage\_id
+- stage\_template\_id
 - file\_name
 - file\_type
 - upload\_status
@@ -956,6 +960,16 @@ GET  /api/permissions
 - added\_by
 - added\_at
 - remark
+- updated\_at
+
+受试者详情固定按 6 个业务阶段展示数据项：
+
+1. 筛选阶段。
+2. 入组与检查准备阶段。
+3. 检查执行阶段。
+4. 检查后早期随访阶段。
+5. 异常或延迟随访阶段。
+6. 试验完成阶段。
 
 ## P3.3 页面
 
@@ -987,7 +1001,7 @@ PUT /api/subject-items/{id}
 - 启动阶段可以看到资料清单。
 - 试验进行阶段可以看到受试者列表。
 - 点击受试者可以进入详情。
-- 受试者详情可以按 8 个阶段展示数据项。
+- 受试者详情可以按 6 个阶段展示数据项。
 - 总结阶段可以看到资料清单。
 - 所有数据来自 PostgreSQL，不再使用假数据。
 
@@ -1794,4 +1808,3 @@ networks:
 落地上建议拆成多个阶段：先完成工程架构、主数据、登录权限；再打通项目、中心、阶段、受试者、原始文件上传、审核和完整性计算；之后建设数据看板、Excel 导入导出、操作日志和备份；再把研发图像视频、JSON 字典、标注和权限矩阵纳入系统；最后再考虑 OCR、自动结构化和 AI 质控。
 
 第一版不建议承诺自动识别、自动病灶标注和 AI 报告，而是优先完成可用、可管、可追溯的资料收集闭环。这样系统可以先落地，再逐步长出智能化能力。
-

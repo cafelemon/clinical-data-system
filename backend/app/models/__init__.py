@@ -1,4 +1,5 @@
 from app.models.center import Center
+from app.models.clinical_data import StageFile, Subject, SubjectItem, SubjectSection
 from app.models.dictionary import Dictionary
 from app.models.identity import (
     Permission,
@@ -20,7 +21,11 @@ __all__ = [
     "Project",
     "Role",
     "Stage",
+    "StageFile",
     "StageTemplate",
+    "Subject",
+    "SubjectItem",
+    "SubjectSection",
     "User",
     "role_permissions",
     "user_center_scopes",
