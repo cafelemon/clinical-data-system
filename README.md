@@ -32,5 +32,9 @@ npm run dev
 - 后端健康检查: http://localhost:8000/api/health
 - 后端 OpenAPI: http://localhost:8000/docs
 
-开发期推荐前后端在 Mac 本地运行，PostgreSQL 使用 Docker 容器，文件存储使用 `data-dev/file-storage` 模拟。正式部署前再补齐 frontend、backend、postgres、nginx 的完整 Docker Compose 编排。
+开发默认管理员：
 
+- 用户名：`admin`
+- 密码：`Admin@123456`
+
+开发期推荐前后端在 Mac 本地运行，PostgreSQL 使用 Docker 容器，文件存储使用 `data-dev/file-storage` 模拟。正式部署前再补齐 frontend、backend、postgres、nginx 的完整 Docker Compose 编排。

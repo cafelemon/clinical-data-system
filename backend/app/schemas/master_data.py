@@ -1,0 +1,150 @@
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ProjectBase(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    code: str = Field(min_length=1, max_length=50)
+    description: str | None = None
+    status: str = Field(default="active", max_length=30)
+
+
+class ProjectCreate(ProjectBase):
+    pass
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    code: str | None = Field(default=None, min_length=1, max_length=50)
+    description: str | None = None
+    status: str | None = Field(default=None, max_length=30)
+
+
+class ProjectRead(ProjectBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CenterBase(BaseModel):
+    project_id: int
+    name: str = Field(min_length=1, max_length=100)
+    code: str = Field(min_length=1, max_length=50)
+    contact_person: str | None = Field(default=None, max_length=100)
+    status: str = Field(default="active", max_length=30)
+    description: str | None = None
+
+
+class CenterCreate(CenterBase):
+    pass
+
+
+class CenterUpdate(BaseModel):
+    project_id: int | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    code: str | None = Field(default=None, min_length=1, max_length=50)
+    contact_person: str | None = Field(default=None, max_length=100)
+    status: str | None = Field(default=None, max_length=30)
+    description: str | None = None
+
+
+class CenterRead(CenterBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StageBase(BaseModel):
+    project_id: int
+    name: str = Field(min_length=1, max_length=100)
+    code: str = Field(min_length=1, max_length=50)
+    sort_order: int = 0
+    description: str | None = None
+
+
+class StageCreate(StageBase):
+    pass
+
+
+class StageUpdate(BaseModel):
+    project_id: int | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    code: str | None = Field(default=None, min_length=1, max_length=50)
+    sort_order: int | None = None
+    description: str | None = None
+
+
+class StageRead(StageBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StageTemplateBase(BaseModel):
+    project_id: int
+    stage_id: int
+    item_name: str = Field(min_length=1, max_length=150)
+    item_code: str = Field(min_length=1, max_length=80)
+    required: bool = True
+    sort_order: int = 0
+    description: str | None = None
+
+
+class StageTemplateCreate(StageTemplateBase):
+    pass
+
+
+class StageTemplateUpdate(BaseModel):
+    project_id: int | None = None
+    stage_id: int | None = None
+    item_name: str | None = Field(default=None, min_length=1, max_length=150)
+    item_code: str | None = Field(default=None, min_length=1, max_length=80)
+    required: bool | None = None
+    sort_order: int | None = None
+    description: str | None = None
+
+
+class StageTemplateRead(StageTemplateBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DictionaryBase(BaseModel):
+    dict_type: str = Field(min_length=1, max_length=80)
+    value: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=100)
+    color: str | None = Field(default=None, max_length=30)
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class DictionaryCreate(DictionaryBase):
+    pass
+
+
+class DictionaryUpdate(BaseModel):
+    dict_type: str | None = Field(default=None, min_length=1, max_length=80)
+    value: str | None = Field(default=None, min_length=1, max_length=80)
+    label: str | None = Field(default=None, min_length=1, max_length=100)
+    color: str | None = Field(default=None, max_length=30)
+    sort_order: int | None = None
+    enabled: bool | None = None
+
+
+class DictionaryRead(DictionaryBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+

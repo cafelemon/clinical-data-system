@@ -8,22 +8,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, SelectField, TextAreaField } from "@/components/ui/form";
 import { inputClassName } from "@/lib/form-styles";
 import { masterDataApi } from "@/services/master-data";
-import type { Center, CenterPayload, Project } from "@/types/master-data";
+import type { Project, Stage, StagePayload } from "@/types/master-data";
 
-const defaultForm: CenterPayload = {
+const defaultForm: StagePayload = {
   project_id: 0,
   name: "",
   code: "",
-  contact_person: "",
-  status: "active",
+  sort_order: 0,
   description: "",
 };
 
-export function CentersPage() {
+export function StagesPage() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [centers, setCenters] = useState<Center[]>([]);
+  const [stages, setStages] = useState<Stage[]>([]);
   const [projectFilter, setProjectFilter] = useState<number | undefined>();
-  const [form, setForm] = useState<CenterPayload>(defaultForm);
+  const [form, setForm] = useState<StagePayload>(defaultForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -33,12 +32,12 @@ export function CentersPage() {
   );
 
   async function loadData(nextProjectFilter = projectFilter) {
-    const [projectData, centerData] = await Promise.all([
+    const [projectData, stageData] = await Promise.all([
       masterDataApi.listProjects(),
-      masterDataApi.listCenters(nextProjectFilter),
+      masterDataApi.listStages(nextProjectFilter),
     ]);
     setProjects(projectData);
-    setCenters(centerData);
+    setStages(stageData);
     if (!form.project_id && projectData.length > 0) {
       setForm((current) => ({ ...current, project_id: projectData[0].id }));
     }
@@ -46,12 +45,12 @@ export function CentersPage() {
 
   useEffect(() => {
     async function initialize() {
-      const [projectData, centerData] = await Promise.all([
+      const [projectData, stageData] = await Promise.all([
         masterDataApi.listProjects(),
-        masterDataApi.listCenters(),
+        masterDataApi.listStages(),
       ]);
       setProjects(projectData);
-      setCenters(centerData);
+      setStages(stageData);
       if (projectData.length > 0) {
         setForm((current) => ({ ...current, project_id: projectData[0].id }));
       }
@@ -78,39 +77,38 @@ export function CentersPage() {
       ...form,
       name: form.name.trim(),
       code: form.code.trim(),
-      contact_person: form.contact_person?.trim() || null,
+      sort_order: Number(form.sort_order) || 0,
       description: form.description?.trim() || null,
     };
     try {
       if (editingId) {
-        await masterDataApi.updateCenter(editingId, payload);
-        setMessage("中心已更新");
+        await masterDataApi.updateStage(editingId, payload);
+        setMessage("阶段已更新");
       } else {
-        await masterDataApi.createCenter(payload);
-        setMessage("中心已创建");
+        await masterDataApi.createStage(payload);
+        setMessage("阶段已创建");
       }
       resetForm();
       await loadData();
     } catch {
-      setMessage("保存失败，请检查中心编码是否重复");
+      setMessage("保存失败，请检查阶段编码是否重复");
     }
   }
 
-  async function handleDelete(center: Center) {
-    if (!window.confirm(`确认删除中心：${center.name}？`)) return;
-    await masterDataApi.deleteCenter(center.id);
+  async function handleDelete(stage: Stage) {
+    if (!window.confirm(`确认删除阶段：${stage.name}？`)) return;
+    await masterDataApi.deleteStage(stage.id);
     await loadData();
   }
 
-  function handleEdit(center: Center) {
-    setEditingId(center.id);
+  function handleEdit(stage: Stage) {
+    setEditingId(stage.id);
     setForm({
-      project_id: center.project_id,
-      name: center.name,
-      code: center.code,
-      contact_person: center.contact_person ?? "",
-      status: center.status,
-      description: center.description ?? "",
+      project_id: stage.project_id,
+      name: stage.name,
+      code: stage.code,
+      sort_order: stage.sort_order,
+      description: stage.description ?? "",
     });
   }
 
@@ -124,8 +122,8 @@ export function CentersPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">中心管理</h1>
-          <p className="mt-1 text-sm text-slate-500">为项目维护研究中心和联系人</p>
+          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">阶段管理</h1>
+          <p className="mt-1 text-sm text-slate-500">配置启动、进行、总结等项目阶段</p>
         </div>
         <Button variant="secondary" onClick={() => void loadData()}>
           <RotateCcw className="size-4" aria-hidden="true" />
@@ -138,7 +136,7 @@ export function CentersPage() {
       <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>{editingId ? "编辑中心" : "新建中心"}</CardTitle>
+            <CardTitle>{editingId ? "编辑阶段" : "新建阶段"}</CardTitle>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={handleSubmit}>
@@ -160,45 +158,33 @@ export function CentersPage() {
                   ))}
                 </SelectField>
               </Field>
-              <Field label="中心名称">
+              <Field label="阶段名称">
                 <input
                   className={inputClassName()}
                   value={form.name}
                   onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="北京一中心"
+                  placeholder="启动阶段"
                   required
                 />
               </Field>
-              <Field label="中心编码">
+              <Field label="阶段编码">
                 <input
                   className={inputClassName()}
                   value={form.code}
                   onChange={(event) => setForm((current) => ({ ...current, code: event.target.value }))}
-                  placeholder="BJ-01"
+                  placeholder="STARTUP"
                   required
                 />
               </Field>
-              <Field label="联系人">
+              <Field label="排序">
                 <input
                   className={inputClassName()}
-                  value={form.contact_person ?? ""}
+                  type="number"
+                  value={form.sort_order}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, contact_person: event.target.value }))
+                    setForm((current) => ({ ...current, sort_order: Number(event.target.value) }))
                   }
-                  placeholder="张三"
                 />
-              </Field>
-              <Field label="状态">
-                <SelectField
-                  value={form.status}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, status: event.target.value }))
-                  }
-                >
-                  <option value="active">启用</option>
-                  <option value="paused">暂停</option>
-                  <option value="closed">关闭</option>
-                </SelectField>
               </Field>
               <Field label="说明">
                 <TextAreaField
@@ -226,7 +212,7 @@ export function CentersPage() {
         <Card>
           <CardHeader>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <CardTitle>中心列表</CardTitle>
+              <CardTitle>阶段列表</CardTitle>
               <SelectField
                 className="sm:w-56"
                 value={projectFilter ?? ""}
@@ -243,17 +229,17 @@ export function CentersPage() {
           </CardHeader>
           <CardContent>
             <EntityTable
-              rows={centers}
-              getRowKey={(center) => center.id}
-              emptyLabel="暂无中心"
+              rows={stages}
+              getRowKey={(stage) => stage.id}
+              emptyLabel="暂无阶段"
               onEdit={handleEdit}
-              onDelete={(center) => void handleDelete(center)}
+              onDelete={(stage) => void handleDelete(stage)}
               columns={[
-                { key: "project", label: "项目", render: (center) => projectNameById.get(center.project_id) ?? "-" },
-                { key: "name", label: "中心", render: (center) => center.name },
-                { key: "code", label: "编码", render: (center) => center.code },
-                { key: "contact", label: "联系人", render: (center) => center.contact_person || "-" },
-                { key: "status", label: "状态", render: (center) => center.status },
+                { key: "project", label: "项目", render: (stage) => projectNameById.get(stage.project_id) ?? "-" },
+                { key: "name", label: "阶段", render: (stage) => stage.name },
+                { key: "code", label: "编码", render: (stage) => stage.code },
+                { key: "sort", label: "排序", render: (stage) => stage.sort_order },
+                { key: "description", label: "说明", render: (stage) => stage.description || "-" },
               ]}
             />
           </CardContent>

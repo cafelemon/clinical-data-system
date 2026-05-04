@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-this-secret-key"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
+    initial_admin_username: str = "admin"
+    initial_admin_password: str = "Admin@123456"
+    initial_admin_full_name: str = "系统管理员"
+    initial_admin_email: str | None = None
 
     file_storage_root: Path = PROJECT_ROOT / "data-dev" / "file-storage"
     max_upload_size_mb: int = 200
@@ -34,4 +38,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

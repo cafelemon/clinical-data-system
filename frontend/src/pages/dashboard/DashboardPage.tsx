@@ -5,18 +5,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getHealth, getVersion } from "@/services/health";
+import { masterDataApi } from "@/services/master-data";
 import type { HealthResponse, VersionResponse } from "@/types/health";
-
-const summaryItems = [
-  { label: "项目", value: "0", tone: "neutral" },
-  { label: "中心", value: "0", tone: "neutral" },
-  { label: "资料项", value: "0", tone: "neutral" },
-  { label: "待处理", value: "0", tone: "warning" },
-] as const;
 
 export function DashboardPage() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [version, setVersion] = useState<VersionResponse | null>(null);
+  const [summary, setSummary] = useState({
+    projects: 0,
+    centers: 0,
+    stages: 0,
+    templates: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,9 +24,22 @@ export function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [healthData, versionData] = await Promise.all([getHealth(), getVersion()]);
+      const [healthData, versionData, projects, centers, stages, templates] = await Promise.all([
+        getHealth(),
+        getVersion(),
+        masterDataApi.listProjects(),
+        masterDataApi.listCenters(),
+        masterDataApi.listStages(),
+        masterDataApi.listStageTemplates(),
+      ]);
       setHealth(healthData);
       setVersion(versionData);
+      setSummary({
+        projects: projects.length,
+        centers: centers.length,
+        stages: stages.length,
+        templates: templates.length,
+      });
     } catch {
       setHealth(null);
       setVersion(null);
@@ -41,6 +54,12 @@ export function DashboardPage() {
   }, []);
 
   const isReady = health?.status === "ok";
+  const summaryItems = [
+    { label: "项目", value: String(summary.projects), tone: "success" },
+    { label: "中心", value: String(summary.centers), tone: "success" },
+    { label: "阶段", value: String(summary.stages), tone: "success" },
+    { label: "资料模板", value: String(summary.templates), tone: "success" },
+  ] as const;
 
   return (
     <div className="space-y-6">
@@ -64,7 +83,7 @@ export function DashboardPage() {
             <CardContent>
               <div className="flex items-end justify-between">
                 <span className="text-3xl font-semibold text-slate-950">{item.value}</span>
-                <Badge tone={item.tone}>P1 接入</Badge>
+                <Badge tone={item.tone}>P1</Badge>
               </div>
             </CardContent>
           </Card>
@@ -109,15 +128,15 @@ export function DashboardPage() {
           <CardContent>
             <div className="space-y-3 text-sm text-slate-600">
               <div className="flex items-center justify-between">
-                <span>独立 Git 仓库</span>
+                <span>主数据接口</span>
                 <Badge tone="success">完成</Badge>
               </div>
               <div className="flex items-center justify-between">
-                <span>FastAPI 框架</span>
+                <span>PostgreSQL 迁移</span>
                 <Badge tone="success">完成</Badge>
               </div>
               <div className="flex items-center justify-between">
-                <span>React 框架</span>
+                <span>前端管理页</span>
                 <Badge tone="success">完成</Badge>
               </div>
             </div>
@@ -127,4 +146,3 @@ export function DashboardPage() {
     </div>
   );
 }
-

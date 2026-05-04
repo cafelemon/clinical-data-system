@@ -1,7 +1,12 @@
-import { Badge } from "@/components/ui/badge";
+import { Link } from "react-router-dom";
+
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuthStore } from "@/stores/auth-store";
 
 export function SettingsPage() {
+  const hasPermission = useAuthStore((state) => state.hasPermission);
+
   return (
     <div className="space-y-6">
       <div>
@@ -14,12 +19,25 @@ export function SettingsPage() {
           <CardTitle>配置项</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex h-36 items-center justify-center rounded-md border border-dashed border-slate-300 bg-slate-50">
-            <Badge>等待 P1/P2 模块</Badge>
+          <div className="grid gap-3 rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 sm:grid-cols-3">
+            {hasPermission("dictionaries:read") && (
+              <Button asChild variant="secondary">
+                <Link to="/dictionaries">状态字典</Link>
+              </Button>
+            )}
+            {hasPermission("users:read") && (
+              <Button asChild variant="secondary">
+                <Link to="/users">用户管理</Link>
+              </Button>
+            )}
+            {hasPermission("roles:read") && (
+              <Button asChild variant="secondary">
+                <Link to="/roles">角色管理</Link>
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
     </div>
   );
 }
-
