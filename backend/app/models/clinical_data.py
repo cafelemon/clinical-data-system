@@ -70,6 +70,7 @@ class Subject(Base):
         cascade="all, delete-orphan",
         order_by="SubjectItem.sort_order",
     )
+    file_assets = relationship("FileAsset", back_populates="subject", cascade="all, delete-orphan")
 
 
 class SubjectSection(Base):
@@ -146,6 +147,11 @@ class SubjectItem(Base):
 
     subject = relationship("Subject", back_populates="items")
     section = relationship("SubjectSection", back_populates="items")
+    file_assets = relationship(
+        "FileAsset",
+        back_populates="subject_item",
+        cascade="all, delete-orphan",
+    )
 
 
 class StageFile(Base):
@@ -206,3 +212,8 @@ class StageFile(Base):
     center = relationship("Center", back_populates="stage_files")
     stage = relationship("Stage", back_populates="stage_files")
     stage_template = relationship("StageTemplate", back_populates="stage_files")
+    file_assets = relationship(
+        "FileAsset",
+        back_populates="stage_file",
+        cascade="all, delete-orphan",
+    )

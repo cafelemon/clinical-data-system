@@ -21,6 +21,9 @@ PERMISSIONS = [
     PermissionSpec("permissions:read", "查看权限", "identity"),
     PermissionSpec("clinical_data:read", "查看临床数据集", "clinical_data"),
     PermissionSpec("clinical_data:write", "维护临床数据集", "clinical_data"),
+    PermissionSpec("files:read", "查看和下载文件", "files"),
+    PermissionSpec("files:write", "上传和替换文件", "files"),
+    PermissionSpec("files:delete", "删除文件", "files"),
 ]
 
 ROLE_SPECS = {
@@ -38,6 +41,9 @@ ROLE_SPECS = {
             "dictionaries:read",
             "clinical_data:read",
             "clinical_data:write",
+            "files:read",
+            "files:write",
+            "files:delete",
         ],
     },
     "center_manager": {
@@ -48,6 +54,8 @@ ROLE_SPECS = {
             "dictionaries:read",
             "clinical_data:read",
             "clinical_data:write",
+            "files:read",
+            "files:write",
         ],
     },
     "clinical_coordinator": {
@@ -58,21 +66,38 @@ ROLE_SPECS = {
             "dictionaries:read",
             "clinical_data:read",
             "clinical_data:write",
+            "files:read",
+            "files:write",
         ],
     },
     "reviewer": {
         "label": "审核人员",
         "description": "审核文件和数据项",
-        "permissions": ["master_data:read", "dictionaries:read", "clinical_data:read"],
+        "permissions": [
+            "master_data:read",
+            "dictionaries:read",
+            "clinical_data:read",
+            "files:read",
+        ],
     },
     "rd_user": {
         "label": "研发人员",
         "description": "查看临床数据、访问研发数据模块",
-        "permissions": ["master_data:read", "dictionaries:read", "clinical_data:read"],
+        "permissions": [
+            "master_data:read",
+            "dictionaries:read",
+            "clinical_data:read",
+            "files:read",
+        ],
     },
     "readonly": {
         "label": "只读用户",
         "description": "只读查看",
-        "permissions": ["master_data:read", "dictionaries:read", "clinical_data:read"],
+        "permissions": [
+            "master_data:read",
+            "dictionaries:read",
+            "clinical_data:read",
+            "files:read",
+        ],
     },
 }

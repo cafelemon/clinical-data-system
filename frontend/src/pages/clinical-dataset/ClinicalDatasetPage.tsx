@@ -2,6 +2,7 @@ import { Eye, Pencil, Plus, RotateCcw, Save } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { FileActions } from "@/components/files/FileActions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -60,7 +61,19 @@ function statusLabel(labels: Record<string, string>, status: string) {
   return labels[status] ?? status;
 }
 
-function StageFileTable({ files }: { files: StageFile[] }) {
+function StageFileTable({
+  files,
+  canReadFiles,
+  canWriteFiles,
+  canDeleteFiles,
+  onChanged,
+}: {
+  files: StageFile[];
+  canReadFiles: boolean;
+  canWriteFiles: boolean;
+  canDeleteFiles: boolean;
+  onChanged: () => void;
+}) {
   if (files.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
@@ -78,6 +91,7 @@ function StageFileTable({ files }: { files: StageFile[] }) {
             <th className="px-3 py-2 font-medium">上传状态</th>
             <th className="px-3 py-2 font-medium">审核状态</th>
             <th className="px-3 py-2 font-medium">更新时间</th>
+            <th className="px-3 py-2 font-medium">文件</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -97,6 +111,16 @@ function StageFileTable({ files }: { files: StageFile[] }) {
               </td>
               <td className="px-3 py-3 text-slate-500">
                 {new Date(file.updated_at).toLocaleDateString()}
+              </td>
+              <td className="px-3 py-3">
+                <FileActions
+                  stageFileId={file.id}
+                  defaultCategory="clinical_document"
+                  canRead={canReadFiles}
+                  canWrite={canWriteFiles}
+                  canDelete={canDeleteFiles}
+                  onChanged={onChanged}
+                />
               </td>
             </tr>
           ))}
@@ -190,6 +214,9 @@ export function ClinicalDatasetPage() {
   const [loading, setLoading] = useState(false);
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canWrite = hasPermission("clinical_data:write");
+  const canReadFiles = hasPermission("files:read");
+  const canWriteFiles = hasPermission("files:write");
+  const canDeleteFiles = hasPermission("files:delete");
 
   const stageByCode = useMemo(
     () => new Map((dataset?.stages ?? stages).map((stage) => [stage.code, stage])),
@@ -369,7 +396,13 @@ export function ClinicalDatasetPage() {
             </CardHeader>
             <CardContent>
               {startupStage ? (
-                <StageFileTable files={dataset?.startup_files ?? []} />
+                <StageFileTable
+                  files={dataset?.startup_files ?? []}
+                  canReadFiles={canReadFiles}
+                  canWriteFiles={canWriteFiles}
+                  canDeleteFiles={canDeleteFiles}
+                  onChanged={() => void loadDataset()}
+                />
               ) : (
                 <p className="text-sm text-slate-500">未配置 STARTUP 阶段</p>
               )}
@@ -399,7 +432,13 @@ export function ClinicalDatasetPage() {
             </CardHeader>
             <CardContent>
               {closeoutStage ? (
-                <StageFileTable files={dataset?.closeout_files ?? []} />
+                <StageFileTable
+                  files={dataset?.closeout_files ?? []}
+                  canReadFiles={canReadFiles}
+                  canWriteFiles={canWriteFiles}
+                  canDeleteFiles={canDeleteFiles}
+                  onChanged={() => void loadDataset()}
+                />
               ) : (
                 <p className="text-sm text-slate-500">未配置 CLOSEOUT 阶段</p>
               )}

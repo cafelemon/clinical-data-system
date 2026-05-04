@@ -2,6 +2,7 @@ import { ArrowLeft, RotateCcw, Save } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { FileActions } from "@/components/files/FileActions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,6 +57,9 @@ export function SubjectDetailPage() {
   const [loading, setLoading] = useState(false);
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canWrite = hasPermission("clinical_data:write");
+  const canReadFiles = hasPermission("files:read");
+  const canWriteFiles = hasPermission("files:write");
+  const canDeleteFiles = hasPermission("files:delete");
 
   const groupedSections = useMemo(
     () =>
@@ -223,6 +227,7 @@ export function SubjectDetailPage() {
                       <th className="px-3 py-2 font-medium">上传状态</th>
                       <th className="px-3 py-2 font-medium">审核状态</th>
                       <th className="px-3 py-2 font-medium">备注</th>
+                      <th className="px-3 py-2 font-medium">文件</th>
                       {canWrite && <th className="px-3 py-2 font-medium">操作</th>}
                     </tr>
                   </thead>
@@ -282,6 +287,16 @@ export function SubjectDetailPage() {
                             ) : (
                               <span className="text-slate-600">{item.remark || "-"}</span>
                             )}
+                          </td>
+                          <td className="px-3 py-3">
+                            <FileActions
+                              subjectItemId={item.id}
+                              defaultCategory="clinical_document"
+                              canRead={canReadFiles}
+                              canWrite={canWriteFiles}
+                              canDelete={canDeleteFiles}
+                              onChanged={() => void loadData()}
+                            />
                           </td>
                           {canWrite && (
                             <td className="px-3 py-3">

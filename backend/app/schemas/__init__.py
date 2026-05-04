@@ -8,6 +8,7 @@ from app.schemas.clinical_data import (
     SubjectSectionRead,
     SubjectUpdate,
 )
+from app.schemas.file_asset import FileRead, FileVersionRead
 from app.schemas.identity import (
     ChangePasswordRequest,
     CurrentUserRead,
@@ -49,6 +50,8 @@ __all__ = [
     "DictionaryCreate",
     "DictionaryRead",
     "DictionaryUpdate",
+    "FileRead",
+    "FileVersionRead",
     "LoginRequest",
     "PermissionRead",
     "ProjectCreate",

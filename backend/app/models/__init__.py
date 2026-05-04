@@ -1,6 +1,7 @@
 from app.models.center import Center
 from app.models.clinical_data import StageFile, Subject, SubjectItem, SubjectSection
 from app.models.dictionary import Dictionary
+from app.models.file_asset import FileAsset, FileVersion
 from app.models.identity import (
     Permission,
     Role,
@@ -17,6 +18,8 @@ from app.models.stage_template import StageTemplate
 __all__ = [
     "Center",
     "Dictionary",
+    "FileAsset",
+    "FileVersion",
     "Permission",
     "Project",
     "Role",

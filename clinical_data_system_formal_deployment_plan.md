@@ -1060,6 +1060,7 @@ file-storage/
 - center\_id
 - subject\_id
 - stage\_id
+- stage\_file\_id
 - subject\_item\_id
 - file\_category
 - version
@@ -1113,7 +1114,10 @@ DELETE /api/files/{id}
 - 数据库记录文件路径和哈希。
 - 文件可以绑定到阶段资料或受试者数据项。
 - 文件可以下载。
+- PDF 和图片可以预览，其他文件通过下载查看。
 - 替换文件时保留版本记录。
+- 上传 / 替换文件后自动更新绑定资料项上传状态。
+- 删除采用硬删除，并在最后一个绑定文件删除后回退资料项状态。
 - 无权限用户不能下载文件。
 
 ---
