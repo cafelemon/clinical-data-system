@@ -151,7 +151,7 @@ def test_stage_file_upload_download_preview_replace_versions_and_delete(
     )
     assert stage_files.status_code == 200
     assert stage_files.json()[0]["upload_status"] == "uploaded"
-    assert stage_files.json()[0]["review_status"] == "pending_review"
+    assert stage_files.json()[0]["review_status"] == "unreviewed"
 
     listed = client.get(f"/api/files?stage_file_id={stage_file['id']}", headers=admin_headers)
     assert listed.status_code == 200
@@ -241,11 +241,11 @@ def test_subject_item_file_status_sync_and_size_limit(
     assert items.status_code == 200
     updated_item = next(row for row in items.json() if row["id"] == item["id"])
     assert updated_item["upload_status"] == "uploaded"
-    assert updated_item["review_status"] == "pending_review"
+    assert updated_item["review_status"] == "unreviewed"
 
     subject = client.get(f"/api/subjects/{item['subject_id']}", headers=admin_headers)
     assert subject.status_code == 200
-    assert subject.json()["data_status"] == "in_progress"
+    assert subject.json()["data_status"] == "incomplete"
 
     delete = client.delete(f"/api/files/{upload.json()['id']}", headers=admin_headers)
     assert delete.status_code == 204

@@ -12,8 +12,8 @@ class SubjectBase(BaseModel):
     gender: str | None = Field(default=None, max_length=30)
     age: int | None = Field(default=None, ge=0, le=130)
     enrolled_at: date | None = None
-    review_status: str = Field(default="pending_review", max_length=30)
-    data_status: str = Field(default="not_started", max_length=30)
+    review_status: str = Field(default="unreviewed", max_length=30)
+    data_status: str = Field(default="incomplete", max_length=30)
 
 
 class SubjectCreate(SubjectBase):
@@ -33,6 +33,7 @@ class SubjectUpdate(BaseModel):
 class SubjectRead(SubjectBase):
     id: int
     added_by: int | None = None
+    completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -60,6 +61,7 @@ class SubjectItemRead(BaseModel):
     item_name: str
     item_code: str
     sort_order: int
+    required: bool
     upload_status: str
     review_status: str
     remark: str | None = None

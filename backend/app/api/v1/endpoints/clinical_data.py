@@ -176,6 +176,7 @@ def create_default_subject_sections(db: Session, subject: Subject) -> None:
                     item_name=item_spec.name,
                     item_code=item_spec.code,
                     sort_order=item_spec.sort_order,
+                    required=True,
                     upload_status=DEFAULT_UPLOAD_STATUS,
                     review_status=DEFAULT_REVIEW_STATUS,
                 )

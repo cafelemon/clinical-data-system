@@ -8,6 +8,13 @@ from app.schemas.clinical_data import (
     SubjectSectionRead,
     SubjectUpdate,
 )
+from app.schemas.dashboard import (
+    DashboardCenterRead,
+    DashboardCompletenessRead,
+    DashboardProjectSummaryRead,
+    DashboardReviewStatusRead,
+    DashboardTrendPointRead,
+)
 from app.schemas.file_asset import FileRead, FileVersionRead
 from app.schemas.identity import (
     ChangePasswordRequest,
@@ -39,14 +46,32 @@ from app.schemas.master_data import (
     StageTemplateUpdate,
     StageUpdate,
 )
+from app.schemas.review import (
+    CenterCompletenessRead,
+    CompletenessRecalculateRequest,
+    CompletenessStatusCount,
+    CompletenessSummaryRead,
+    ReviewActionRequest,
+    ReviewRecordRead,
+    StageCompletenessRead,
+)
 
 __all__ = [
     "CenterCreate",
     "CenterRead",
     "CenterUpdate",
+    "CenterCompletenessRead",
     "ChangePasswordRequest",
     "ClinicalDatasetRead",
+    "CompletenessRecalculateRequest",
+    "CompletenessStatusCount",
+    "CompletenessSummaryRead",
     "CurrentUserRead",
+    "DashboardCenterRead",
+    "DashboardCompletenessRead",
+    "DashboardProjectSummaryRead",
+    "DashboardReviewStatusRead",
+    "DashboardTrendPointRead",
     "DictionaryCreate",
     "DictionaryRead",
     "DictionaryUpdate",
@@ -57,10 +82,13 @@ __all__ = [
     "ProjectCreate",
     "ProjectRead",
     "ProjectUpdate",
+    "ReviewActionRequest",
+    "ReviewRecordRead",
     "RoleCreate",
     "RoleRead",
     "RoleUpdate",
     "StageCreate",
+    "StageCompletenessRead",
     "StageFileRead",
     "StageRead",
     "StageTemplateCreate",

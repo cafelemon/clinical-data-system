@@ -3,10 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { FileActions } from "@/components/files/FileActions";
+import { ReviewActions } from "@/components/reviews/ReviewActions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { SelectField, TextAreaField } from "@/components/ui/form";
+import { TextAreaField } from "@/components/ui/form";
 import { clinicalDataApi } from "@/services/clinical-data";
 import { useAuthStore } from "@/stores/auth-store";
 import type { Subject, SubjectItem, SubjectSection } from "@/types/clinical-data";
@@ -14,36 +15,52 @@ import type { Subject, SubjectItem, SubjectSection } from "@/types/clinical-data
 const uploadStatusLabels: Record<string, string> = {
   not_uploaded: "未上传",
   uploaded: "已上传",
-  not_applicable: "不适用",
+  supplement_required: "待补充",
+  replaced: "已替换",
 };
 
 const reviewStatusLabels: Record<string, string> = {
-  pending_review: "待审核",
+  unreviewed: "未审核",
+  pending: "待审核",
   approved: "已通过",
   rejected: "已驳回",
 };
 
 const dataStatusLabels: Record<string, string> = {
-  not_started: "未开始",
-  in_progress: "进行中",
-  complete: "已完成",
+  incomplete: "资料不全",
+  checking: "核查中",
+  complete: "资料齐全",
 };
 
 type ItemDraft = {
-  upload_status: string;
-  review_status: string;
   remark: string;
 };
 
 function statusTone(status: string) {
   if (status === "approved" || status === "complete" || status === "uploaded") return "success";
-  if (status === "rejected") return "danger";
-  if (status === "in_progress" || status === "pending_review") return "warning";
+  if (status === "rejected" || status === "incomplete" || status === "supplement_required") return "danger";
+  if (status === "checking" || status === "pending" || status === "unreviewed" || status === "replaced") {
+    return "warning";
+  }
   return "neutral";
 }
 
 function statusLabel(labels: Record<string, string>, status: string) {
   return labels[status] ?? status;
+}
+
+function itemCompletenessStatus(item: SubjectItem) {
+  if (!item.required) return "complete";
+  if (item.upload_status === "supplement_required" || item.review_status === "rejected") {
+    return "incomplete";
+  }
+  if ((item.upload_status === "uploaded" || item.upload_status === "replaced") && item.review_status === "approved") {
+    return "complete";
+  }
+  if (item.upload_status === "uploaded" || item.upload_status === "replaced") {
+    return "checking";
+  }
+  return "incomplete";
 }
 
 export function SubjectDetailPage() {
@@ -60,6 +77,9 @@ export function SubjectDetailPage() {
   const canReadFiles = hasPermission("files:read");
   const canWriteFiles = hasPermission("files:write");
   const canDeleteFiles = hasPermission("files:delete");
+  const canReadReviews = hasPermission("reviews:read");
+  const canSubmitReview = hasPermission("reviews:submit");
+  const canReview = hasPermission("reviews:review");
 
   const groupedSections = useMemo(
     () =>
@@ -90,8 +110,6 @@ export function SubjectDetailPage() {
           itemData.map((item) => [
             item.id,
             {
-              upload_status: item.upload_status,
-              review_status: item.review_status,
               remark: item.remark ?? "",
             },
           ]),
@@ -124,8 +142,6 @@ export function SubjectDetailPage() {
     if (!draft) return;
     try {
       await clinicalDataApi.updateSubjectItem(item.id, {
-        upload_status: draft.upload_status,
-        review_status: draft.review_status,
         remark: draft.remark.trim() || null,
       });
       setMessage("数据项已更新");
@@ -219,15 +235,18 @@ export function SubjectDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] text-left text-sm">
+                <table className="w-full min-w-[980px] text-left text-sm">
                   <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
                     <tr>
                       <th className="px-3 py-2 font-medium">数据项</th>
                       <th className="px-3 py-2 font-medium">编码</th>
+                      <th className="px-3 py-2 font-medium">必填</th>
                       <th className="px-3 py-2 font-medium">上传状态</th>
                       <th className="px-3 py-2 font-medium">审核状态</th>
+                      <th className="px-3 py-2 font-medium">完整性</th>
                       <th className="px-3 py-2 font-medium">备注</th>
                       <th className="px-3 py-2 font-medium">文件</th>
+                      <th className="px-3 py-2 font-medium">审核</th>
                       {canWrite && <th className="px-3 py-2 font-medium">操作</th>}
                     </tr>
                   </thead>
@@ -241,40 +260,24 @@ export function SubjectDetailPage() {
                           </td>
                           <td className="px-3 py-3 text-slate-500">{item.item_code}</td>
                           <td className="px-3 py-3">
-                            {canWrite && draft ? (
-                              <SelectField
-                                value={draft.upload_status}
-                                onChange={(event) =>
-                                  updateDraft(item.id, { upload_status: event.target.value })
-                                }
-                              >
-                                <option value="not_uploaded">未上传</option>
-                                <option value="uploaded">已上传</option>
-                                <option value="not_applicable">不适用</option>
-                              </SelectField>
-                            ) : (
-                              <Badge tone={statusTone(item.upload_status)}>
-                                {statusLabel(uploadStatusLabels, item.upload_status)}
-                              </Badge>
-                            )}
+                            <Badge tone={item.required ? "warning" : "neutral"}>
+                              {item.required ? "必填" : "选填"}
+                            </Badge>
                           </td>
                           <td className="px-3 py-3">
-                            {canWrite && draft ? (
-                              <SelectField
-                                value={draft.review_status}
-                                onChange={(event) =>
-                                  updateDraft(item.id, { review_status: event.target.value })
-                                }
-                              >
-                                <option value="pending_review">待审核</option>
-                                <option value="approved">已通过</option>
-                                <option value="rejected">已驳回</option>
-                              </SelectField>
-                            ) : (
-                              <Badge tone={statusTone(item.review_status)}>
-                                {statusLabel(reviewStatusLabels, item.review_status)}
-                              </Badge>
-                            )}
+                            <Badge tone={statusTone(item.upload_status)}>
+                              {statusLabel(uploadStatusLabels, item.upload_status)}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-3">
+                            <Badge tone={statusTone(item.review_status)}>
+                              {statusLabel(reviewStatusLabels, item.review_status)}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-3">
+                            <Badge tone={statusTone(itemCompletenessStatus(item))}>
+                              {statusLabel(dataStatusLabels, itemCompletenessStatus(item))}
+                            </Badge>
                           </td>
                           <td className="px-3 py-3">
                             {canWrite && draft ? (
@@ -295,6 +298,18 @@ export function SubjectDetailPage() {
                               canRead={canReadFiles}
                               canWrite={canWriteFiles}
                               canDelete={canDeleteFiles}
+                              onChanged={() => void loadData()}
+                            />
+                          </td>
+                          <td className="px-3 py-3">
+                            <ReviewActions
+                              targetType="subject_item"
+                              targetId={item.id}
+                              uploadStatus={item.upload_status}
+                              reviewStatus={item.review_status}
+                              canSubmit={canSubmitReview}
+                              canReview={canReview}
+                              canReadRecords={canReadReviews}
                               onChanged={() => void loadData()}
                             />
                           </td>

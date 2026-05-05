@@ -104,8 +104,8 @@ def create_subject(
             "gender": "女",
             "age": 42,
             "enrolled_at": "2026-05-04",
-            "review_status": "pending_review",
-            "data_status": "not_started",
+            "review_status": "unreviewed",
+            "data_status": "incomplete",
         },
     )
     assert response.status_code == 201
@@ -247,4 +247,3 @@ def test_clinical_data_scope_and_write_permission(
         },
     )
     assert denied_write.status_code == 403
-

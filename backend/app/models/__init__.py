@@ -12,6 +12,7 @@ from app.models.identity import (
     user_roles,
 )
 from app.models.project import Project
+from app.models.review import ReviewRecord
 from app.models.stage import Stage
 from app.models.stage_template import StageTemplate
 
@@ -22,6 +23,7 @@ __all__ = [
     "FileVersion",
     "Permission",
     "Project",
+    "ReviewRecord",
     "Role",
     "Stage",
     "StageFile",

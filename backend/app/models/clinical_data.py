@@ -1,6 +1,16 @@
 from datetime import date
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.clinical_data import (
@@ -48,6 +58,7 @@ class Subject(Base):
         default=DEFAULT_DATA_STATUS,
         nullable=False,
     )
+    completed_at = mapped_column(DateTime(timezone=True))
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = mapped_column(
         DateTime(timezone=True),
@@ -126,6 +137,7 @@ class SubjectItem(Base):
     item_name: Mapped[str] = mapped_column(String(150), nullable=False)
     item_code: Mapped[str] = mapped_column(String(100), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     upload_status: Mapped[str] = mapped_column(
         String(30),
         default=DEFAULT_UPLOAD_STATUS,

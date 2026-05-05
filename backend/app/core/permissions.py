@@ -24,6 +24,12 @@ PERMISSIONS = [
     PermissionSpec("files:read", "查看和下载文件", "files"),
     PermissionSpec("files:write", "上传和替换文件", "files"),
     PermissionSpec("files:delete", "删除文件", "files"),
+    PermissionSpec("reviews:read", "查看审核记录", "reviews"),
+    PermissionSpec("reviews:submit", "提交资料审核", "reviews"),
+    PermissionSpec("reviews:review", "审核资料", "reviews"),
+    PermissionSpec("completeness:read", "查看完整性", "completeness"),
+    PermissionSpec("completeness:recalculate", "重算完整性", "completeness"),
+    PermissionSpec("dashboard:read", "查看数据看板", "dashboard"),
 ]
 
 ROLE_SPECS = {
@@ -44,6 +50,12 @@ ROLE_SPECS = {
             "files:read",
             "files:write",
             "files:delete",
+            "reviews:read",
+            "reviews:submit",
+            "reviews:review",
+            "completeness:read",
+            "completeness:recalculate",
+            "dashboard:read",
         ],
     },
     "center_manager": {
@@ -56,6 +68,11 @@ ROLE_SPECS = {
             "clinical_data:write",
             "files:read",
             "files:write",
+            "reviews:read",
+            "reviews:submit",
+            "completeness:read",
+            "completeness:recalculate",
+            "dashboard:read",
         ],
     },
     "clinical_coordinator": {
@@ -68,6 +85,11 @@ ROLE_SPECS = {
             "clinical_data:write",
             "files:read",
             "files:write",
+            "reviews:read",
+            "reviews:submit",
+            "completeness:read",
+            "completeness:recalculate",
+            "dashboard:read",
         ],
     },
     "reviewer": {
@@ -78,6 +100,11 @@ ROLE_SPECS = {
             "dictionaries:read",
             "clinical_data:read",
             "files:read",
+            "reviews:read",
+            "reviews:review",
+            "completeness:read",
+            "completeness:recalculate",
+            "dashboard:read",
         ],
     },
     "rd_user": {
@@ -88,6 +115,9 @@ ROLE_SPECS = {
             "dictionaries:read",
             "clinical_data:read",
             "files:read",
+            "reviews:read",
+            "completeness:read",
+            "dashboard:read",
         ],
     },
     "readonly": {
@@ -98,6 +128,9 @@ ROLE_SPECS = {
             "dictionaries:read",
             "clinical_data:read",
             "files:read",
+            "reviews:read",
+            "completeness:read",
+            "dashboard:read",
         ],
     },
 }

@@ -3,6 +3,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { FileActions } from "@/components/files/FileActions";
+import { ReviewActions } from "@/components/reviews/ReviewActions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,25 +12,27 @@ import { inputClassName } from "@/lib/form-styles";
 import { clinicalDataApi } from "@/services/clinical-data";
 import { masterDataApi } from "@/services/master-data";
 import { useAuthStore } from "@/stores/auth-store";
-import type { ClinicalDataset, StageFile, Subject } from "@/types/clinical-data";
+import type { ClinicalDataset, CompletenessSummary, StageFile, Subject } from "@/types/clinical-data";
 import type { Center, Project, Stage } from "@/types/master-data";
 
 const uploadStatusLabels: Record<string, string> = {
   not_uploaded: "未上传",
   uploaded: "已上传",
-  not_applicable: "不适用",
+  supplement_required: "待补充",
+  replaced: "已替换",
 };
 
 const reviewStatusLabels: Record<string, string> = {
-  pending_review: "待审核",
+  unreviewed: "未审核",
+  pending: "待审核",
   approved: "已通过",
   rejected: "已驳回",
 };
 
 const dataStatusLabels: Record<string, string> = {
-  not_started: "未开始",
-  in_progress: "进行中",
-  complete: "已完成",
+  incomplete: "资料不全",
+  checking: "核查中",
+  complete: "资料齐全",
 };
 
 type SubjectForm = {
@@ -37,8 +40,6 @@ type SubjectForm = {
   gender: string;
   age: string;
   enrolled_at: string;
-  review_status: string;
-  data_status: string;
 };
 
 const defaultSubjectForm: SubjectForm = {
@@ -46,14 +47,14 @@ const defaultSubjectForm: SubjectForm = {
   gender: "",
   age: "",
   enrolled_at: "",
-  review_status: "pending_review",
-  data_status: "not_started",
 };
 
 function statusTone(status: string) {
   if (status === "approved" || status === "complete" || status === "uploaded") return "success";
-  if (status === "rejected") return "danger";
-  if (status === "in_progress" || status === "pending_review") return "warning";
+  if (status === "rejected" || status === "incomplete" || status === "supplement_required") return "danger";
+  if (status === "checking" || status === "pending" || status === "unreviewed" || status === "replaced") {
+    return "warning";
+  }
   return "neutral";
 }
 
@@ -61,17 +62,36 @@ function statusLabel(labels: Record<string, string>, status: string) {
   return labels[status] ?? status;
 }
 
+function fileCompletenessStatus(file: StageFile) {
+  if (file.upload_status === "supplement_required" || file.review_status === "rejected") {
+    return "incomplete";
+  }
+  if ((file.upload_status === "uploaded" || file.upload_status === "replaced") && file.review_status === "approved") {
+    return "complete";
+  }
+  if (file.upload_status === "uploaded" || file.upload_status === "replaced") {
+    return "checking";
+  }
+  return "incomplete";
+}
+
 function StageFileTable({
   files,
   canReadFiles,
   canWriteFiles,
   canDeleteFiles,
+  canSubmitReview,
+  canReview,
+  canReadReviews,
   onChanged,
 }: {
   files: StageFile[];
   canReadFiles: boolean;
   canWriteFiles: boolean;
   canDeleteFiles: boolean;
+  canSubmitReview: boolean;
+  canReview: boolean;
+  canReadReviews: boolean;
   onChanged: () => void;
 }) {
   if (files.length === 0) {
@@ -83,15 +103,17 @@ function StageFileTable({
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[620px] text-left text-sm">
+      <table className="w-full min-w-[820px] text-left text-sm">
         <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
           <tr>
             <th className="px-3 py-2 font-medium">资料名称</th>
             <th className="px-3 py-2 font-medium">资料类型</th>
             <th className="px-3 py-2 font-medium">上传状态</th>
             <th className="px-3 py-2 font-medium">审核状态</th>
+            <th className="px-3 py-2 font-medium">完整性</th>
             <th className="px-3 py-2 font-medium">更新时间</th>
             <th className="px-3 py-2 font-medium">文件</th>
+            <th className="px-3 py-2 font-medium">审核</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -109,6 +131,11 @@ function StageFileTable({
                   {statusLabel(reviewStatusLabels, file.review_status)}
                 </Badge>
               </td>
+              <td className="px-3 py-3">
+                <Badge tone={statusTone(fileCompletenessStatus(file))}>
+                  {statusLabel(dataStatusLabels, fileCompletenessStatus(file))}
+                </Badge>
+              </td>
               <td className="px-3 py-3 text-slate-500">
                 {new Date(file.updated_at).toLocaleDateString()}
               </td>
@@ -119,6 +146,18 @@ function StageFileTable({
                   canRead={canReadFiles}
                   canWrite={canWriteFiles}
                   canDelete={canDeleteFiles}
+                  onChanged={onChanged}
+                />
+              </td>
+              <td className="px-3 py-3">
+                <ReviewActions
+                  targetType="stage_file"
+                  targetId={file.id}
+                  uploadStatus={file.upload_status}
+                  reviewStatus={file.review_status}
+                  canSubmit={canSubmitReview}
+                  canReview={canReview}
+                  canReadRecords={canReadReviews}
                   onChanged={onChanged}
                 />
               </td>
@@ -201,6 +240,76 @@ function SubjectTable({
   );
 }
 
+function CountRow({ label, counts }: { label: string; counts: CompletenessSummary["subjects"] }) {
+  return (
+    <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 text-sm">
+      <span className="text-slate-600">{label}</span>
+      <Badge tone="success">齐全 {counts.complete}</Badge>
+      <Badge tone="warning">核查 {counts.checking}</Badge>
+      <Badge tone="danger">不全 {counts.incomplete}</Badge>
+    </div>
+  );
+}
+
+function CompletenessOverview({
+  summary,
+  canRecalculate,
+  onRecalculate,
+}: {
+  summary: CompletenessSummary | null;
+  canRecalculate: boolean;
+  onRecalculate: () => void;
+}) {
+  if (!summary) {
+    return <p className="text-sm text-slate-500">选择项目和中心后显示完整性</p>;
+  }
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <Badge tone={statusTone(summary.status)}>
+          {statusLabel(dataStatusLabels, summary.status)}
+        </Badge>
+        {canRecalculate && (
+          <Button size="sm" variant="secondary" onClick={onRecalculate}>
+            <RotateCcw className="size-4" aria-hidden="true" />
+            重算
+          </Button>
+        )}
+      </div>
+      <div className="space-y-2">
+        <CountRow label="阶段资料" counts={summary.stage_files} />
+        <CountRow label="受试者" counts={summary.subjects} />
+      </div>
+      {summary.stages.length > 0 && (
+        <div className="space-y-2 border-t border-slate-100 pt-3">
+          <p className="text-xs font-medium text-slate-500">阶段资料分布</p>
+          {summary.stages.map((stage) => (
+            <div key={stage.stage_id} className="flex items-center justify-between gap-3 text-sm">
+              <span className="min-w-0 truncate text-slate-600">{stage.stage_name}</span>
+              <Badge tone={statusTone(stage.status)}>
+                {stage.complete_count}/{stage.required_count}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      )}
+      {summary.centers.length > 0 && (
+        <div className="space-y-2 border-t border-slate-100 pt-3">
+          <p className="text-xs font-medium text-slate-500">中心状态</p>
+          {summary.centers.map((center) => (
+            <div key={center.center_id} className="flex items-center justify-between gap-3 text-sm">
+              <span className="min-w-0 truncate text-slate-600">{center.center_name}</span>
+              <Badge tone={statusTone(center.status)}>
+                {statusLabel(dataStatusLabels, center.status)}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ClinicalDatasetPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [centers, setCenters] = useState<Center[]>([]);
@@ -208,6 +317,7 @@ export function ClinicalDatasetPage() {
   const [projectId, setProjectId] = useState<number | undefined>();
   const [centerId, setCenterId] = useState<number | undefined>();
   const [dataset, setDataset] = useState<ClinicalDataset | null>(null);
+  const [completeness, setCompleteness] = useState<CompletenessSummary | null>(null);
   const [form, setForm] = useState<SubjectForm>(defaultSubjectForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -217,6 +327,11 @@ export function ClinicalDatasetPage() {
   const canReadFiles = hasPermission("files:read");
   const canWriteFiles = hasPermission("files:write");
   const canDeleteFiles = hasPermission("files:delete");
+  const canReadReviews = hasPermission("reviews:read");
+  const canSubmitReview = hasPermission("reviews:submit");
+  const canReview = hasPermission("reviews:review");
+  const canReadCompleteness = hasPermission("completeness:read");
+  const canRecalculateCompleteness = hasPermission("completeness:recalculate");
 
   const stageByCode = useMemo(
     () => new Map((dataset?.stages ?? stages).map((stage) => [stage.code, stage])),
@@ -226,14 +341,27 @@ export function ClinicalDatasetPage() {
   const trialStage = stageByCode.get("TRIAL");
   const closeoutStage = stageByCode.get("CLOSEOUT");
 
+  const loadCompleteness = useCallback(async () => {
+    if (!projectId || !centerId || !canReadCompleteness) {
+      setCompleteness(null);
+      return;
+    }
+    const summary = await clinicalDataApi.getCompletenessSummary(projectId, centerId);
+    setCompleteness(summary);
+  }, [canReadCompleteness, centerId, projectId]);
+
   const loadDataset = useCallback(async () => {
     if (!projectId || !centerId) {
       setDataset(null);
+      setCompleteness(null);
       return;
     }
     setLoading(true);
     try {
-      const data = await clinicalDataApi.getDataset(projectId, centerId);
+      const [data] = await Promise.all([
+        clinicalDataApi.getDataset(projectId, centerId),
+        loadCompleteness(),
+      ]);
       setDataset(data);
       setMessage(null);
     } catch {
@@ -242,7 +370,7 @@ export function ClinicalDatasetPage() {
     } finally {
       setLoading(false);
     }
-  }, [centerId, projectId]);
+  }, [centerId, loadCompleteness, projectId]);
 
   useEffect(() => {
     async function initialize() {
@@ -297,8 +425,6 @@ export function ClinicalDatasetPage() {
       gender: subject.gender ?? "",
       age: subject.age === null ? "" : String(subject.age),
       enrolled_at: subject.enrolled_at ?? "",
-      review_status: subject.review_status,
-      data_status: subject.data_status,
     });
   }
 
@@ -315,8 +441,6 @@ export function ClinicalDatasetPage() {
       gender: form.gender || null,
       age: form.age ? Number(form.age) : null,
       enrolled_at: form.enrolled_at || null,
-      review_status: form.review_status,
-      data_status: form.data_status,
     };
     try {
       if (editingId) {
@@ -330,6 +454,21 @@ export function ClinicalDatasetPage() {
       await loadDataset();
     } catch {
       setMessage("保存失败，请检查筛选号是否重复或权限范围");
+    }
+  }
+
+  async function handleRecalculateCompleteness() {
+    if (!projectId || !centerId) return;
+    try {
+      const summary = await clinicalDataApi.recalculateCompleteness({
+        project_id: projectId,
+        center_id: centerId,
+      });
+      setCompleteness(summary);
+      await loadDataset();
+      setMessage("完整性已重算");
+    } catch {
+      setMessage("完整性重算失败");
     }
   }
 
@@ -401,6 +540,9 @@ export function ClinicalDatasetPage() {
                   canReadFiles={canReadFiles}
                   canWriteFiles={canWriteFiles}
                   canDeleteFiles={canDeleteFiles}
+                  canSubmitReview={canSubmitReview}
+                  canReview={canReview}
+                  canReadReviews={canReadReviews}
                   onChanged={() => void loadDataset()}
                 />
               ) : (
@@ -437,6 +579,9 @@ export function ClinicalDatasetPage() {
                   canReadFiles={canReadFiles}
                   canWriteFiles={canWriteFiles}
                   canDeleteFiles={canDeleteFiles}
+                  canSubmitReview={canSubmitReview}
+                  canReview={canReview}
+                  canReadReviews={canReadReviews}
                   onChanged={() => void loadDataset()}
                 />
               ) : (
@@ -452,7 +597,7 @@ export function ClinicalDatasetPage() {
               <CardTitle>概览</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="mb-4 grid grid-cols-2 gap-3">
                 <div className="rounded-md border border-slate-200 p-3">
                   <p className="text-xs text-slate-500">阶段资料</p>
                   <p className="mt-1 text-2xl font-semibold">{dataset?.stage_file_count ?? 0}</p>
@@ -462,6 +607,13 @@ export function ClinicalDatasetPage() {
                   <p className="mt-1 text-2xl font-semibold">{dataset?.subject_count ?? 0}</p>
                 </div>
               </div>
+              {canReadCompleteness && (
+                <CompletenessOverview
+                  summary={completeness}
+                  canRecalculate={canRecalculateCompleteness}
+                  onRecalculate={() => void handleRecalculateCompleteness()}
+                />
+              )}
               {loading && <p className="mt-3 text-sm text-slate-500">正在加载</p>}
             </CardContent>
           </Card>
@@ -525,38 +677,6 @@ export function ClinicalDatasetPage() {
                       }
                     />
                   </Field>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="资料状态">
-                      <SelectField
-                        value={form.data_status}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            data_status: event.target.value,
-                          }))
-                        }
-                      >
-                        <option value="not_started">未开始</option>
-                        <option value="in_progress">进行中</option>
-                        <option value="complete">已完成</option>
-                      </SelectField>
-                    </Field>
-                    <Field label="审核状态">
-                      <SelectField
-                        value={form.review_status}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            review_status: event.target.value,
-                          }))
-                        }
-                      >
-                        <option value="pending_review">待审核</option>
-                        <option value="approved">已通过</option>
-                        <option value="rejected">已驳回</option>
-                      </SelectField>
-                    </Field>
-                  </div>
                   <div className="flex gap-2">
                     <Button type="submit" disabled={!projectId || !centerId}>
                       {editingId ? (

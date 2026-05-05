@@ -1,6 +1,10 @@
 import { http } from "@/services/http";
 import type {
   ClinicalDataset,
+  CompletenessSummary,
+  ReviewActionPayload,
+  ReviewRecord,
+  ReviewTargetType,
   StageFile,
   Subject,
   SubjectItem,
@@ -46,4 +50,25 @@ export const clinicalDataApi = {
   listSubjectItems: (id: number) => read<SubjectItem[]>(`/subjects/${id}/items`),
   updateSubjectItem: (id: number, payload: SubjectItemPayload) =>
     update<SubjectItem, SubjectItemPayload>(`/subject-items/${id}`, payload),
+  submitReview: (payload: ReviewActionPayload) =>
+    create<ReviewRecord, ReviewActionPayload>("/reviews/submit", payload),
+  approveReview: (payload: ReviewActionPayload) =>
+    create<ReviewRecord, ReviewActionPayload>("/reviews/approve", payload),
+  rejectReview: (payload: ReviewActionPayload) =>
+    create<ReviewRecord, ReviewActionPayload>("/reviews/reject", payload),
+  listReviewRecords: (targetType: ReviewTargetType, targetId: number) =>
+    read<ReviewRecord[]>("/reviews", {
+      target_type: targetType,
+      target_id: targetId,
+    }),
+  recalculateCompleteness: (payload: {
+    project_id?: number;
+    center_id?: number;
+    subject_id?: number;
+  }) => create<CompletenessSummary, typeof payload>("/completeness/recalculate", payload),
+  getCompletenessSummary: (projectId?: number, centerId?: number) =>
+    read<CompletenessSummary>("/completeness/summary", {
+      project_id: projectId,
+      center_id: centerId,
+    }),
 };

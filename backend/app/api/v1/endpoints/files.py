@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 from starlette.responses import FileResponse
 
 from app.api.deps import AccessContext, require_permission
-from app.core.clinical_data import DEFAULT_REVIEW_STATUS, DEFAULT_UPLOAD_STATUS
+from app.core.clinical_data import (
+    DEFAULT_REVIEW_STATUS,
+    DEFAULT_UPLOAD_STATUS,
+    UPLOAD_REPLACED,
+    UPLOAD_UPLOADED,
+)
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.files import (
@@ -32,7 +37,7 @@ from app.models import (
     SubjectItem,
 )
 from app.schemas import FileRead, FileVersionRead
-from app.services.clinical_status import recalculate_subject_status
+from app.services.clinical_status import recalculate_subject_status, reset_stage_file_status
 
 router = APIRouter()
 ModelT = TypeVar(
@@ -221,20 +226,21 @@ def write_upload(upload_file: UploadFile, target_dir: Path) -> StoredUpload:
     )
 
 
-def mark_binding_uploaded(
+def mark_binding_file_changed(
     db: Session,
     binding: dict[str, int | None | Project | Center | Stage | StageFile | Subject | SubjectItem],
+    upload_status: str,
 ) -> None:
     stage_file = binding["stage_file"]
     if isinstance(stage_file, StageFile):
-        stage_file.upload_status = "uploaded"
+        stage_file.upload_status = upload_status
         stage_file.review_status = DEFAULT_REVIEW_STATUS
         return
 
     subject_item = binding["subject_item"]
     subject = binding["subject"]
     if isinstance(subject_item, SubjectItem) and isinstance(subject, Subject):
-        subject_item.upload_status = "uploaded"
+        subject_item.upload_status = upload_status
         subject_item.review_status = DEFAULT_REVIEW_STATUS
         recalculate_subject_status(db, subject)
 
@@ -256,8 +262,7 @@ def reset_binding_if_empty(db: Session, file_asset: FileAsset) -> None:
     if file_asset.stage_file_id is not None:
         stage_file = db.get(StageFile, file_asset.stage_file_id)
         if stage_file is not None:
-            stage_file.upload_status = DEFAULT_UPLOAD_STATUS
-            stage_file.review_status = DEFAULT_REVIEW_STATUS
+            reset_stage_file_status(stage_file)
         return
     if file_asset.subject_item_id is not None:
         subject_item = db.get(SubjectItem, file_asset.subject_item_id)
@@ -397,7 +402,7 @@ def upload_file(
             change_note=change_note,
         )
     )
-    mark_binding_uploaded(db, binding)
+    mark_binding_file_changed(db, binding, UPLOAD_UPLOADED)
     db.commit()
     db.refresh(file_asset)
     return file_asset
@@ -499,7 +504,7 @@ def replace_file(
             change_note=change_note,
         )
     )
-    mark_binding_uploaded(db, binding)
+    mark_binding_file_changed(db, binding, UPLOAD_REPLACED)
     db.commit()
     db.refresh(file_asset)
     return file_asset
