@@ -52,6 +52,12 @@ class FileAsset(Base):
         ForeignKey("subject_items.id", ondelete="CASCADE"),
         index=True,
     )
+    source_pdf_packet_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pdf_packets.id", ondelete="SET NULL"),
+        index=True,
+    )
+    source_page_start: Mapped[int | None] = mapped_column(Integer)
+    source_page_end: Mapped[int | None] = mapped_column(Integer)
     file_category: Mapped[str] = mapped_column(String(50), nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
@@ -64,6 +70,7 @@ class FileAsset(Base):
     stage = relationship("Stage", back_populates="file_assets")
     stage_file = relationship("StageFile", back_populates="file_assets")
     subject_item = relationship("SubjectItem", back_populates="file_assets")
+    source_pdf_packet = relationship("PdfPacket")
     versions = relationship(
         "FileVersion",
         back_populates="file_asset",

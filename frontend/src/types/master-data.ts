@@ -41,6 +41,11 @@ export type Stage = {
   project_id: number;
   name: string;
   code: string;
+  parent_id: number | null;
+  phase_code: string | null;
+  option_code: string | null;
+  is_system: boolean;
+  enabled: boolean;
   sort_order: number;
   description: string | null;
   created_at: string;
@@ -49,10 +54,30 @@ export type Stage = {
 
 export type StagePayload = {
   project_id: number;
-  name: string;
-  code: string;
-  sort_order: number;
+  phase_code?: string | null;
+  parent_id?: number | null;
+  option_code?: string | null;
+  name?: string | null;
+  code?: string | null;
+  sort_order?: number | null;
+  enabled?: boolean;
   description?: string | null;
+};
+
+export type StageOption = {
+  phase_code: string;
+  option_code: string;
+  name: string;
+  sort_order: number;
+  default_enabled: boolean;
+  description: string | null;
+};
+
+export type StageOptionGroup = {
+  phase_code: string;
+  phase_name: string;
+  sort_order: number;
+  options: StageOption[];
 };
 
 export type StageTemplate = {
@@ -61,8 +86,10 @@ export type StageTemplate = {
   stage_id: number;
   item_name: string;
   item_code: string;
+  template_scope: "center_file" | "subject_item";
   required: boolean;
   sort_order: number;
+  recognition_keywords: string | null;
   description: string | null;
   created_at: string;
   updated_at: string;
@@ -73,8 +100,10 @@ export type StageTemplatePayload = {
   stage_id: number;
   item_name: string;
   item_code: string;
+  template_scope: "center_file" | "subject_item";
   required: boolean;
   sort_order: number;
+  recognition_keywords?: string | null;
   description?: string | null;
 };
 
@@ -98,4 +127,3 @@ export type DictionaryPayload = {
   sort_order: number;
   enabled: boolean;
 };
-

@@ -11,6 +11,8 @@ from app.models.identity import (
     user_project_scopes,
     user_roles,
 )
+from app.models.operation_log import OperationLog
+from app.models.pdf_packet import PdfPacket, PdfPacketSegment
 from app.models.project import Project
 from app.models.review import ReviewRecord
 from app.models.stage import Stage
@@ -21,6 +23,9 @@ __all__ = [
     "Dictionary",
     "FileAsset",
     "FileVersion",
+    "OperationLog",
+    "PdfPacket",
+    "PdfPacketSegment",
     "Permission",
     "Project",
     "ReviewRecord",

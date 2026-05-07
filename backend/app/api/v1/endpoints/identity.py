@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from collections.abc import Callable
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -15,6 +17,7 @@ from app.schemas import (
     UserRead,
     UserUpdate,
 )
+from app.services.audit import record_operation
 
 router = APIRouter()
 UsersRead = Depends(require_permission("users:read"))
@@ -26,6 +29,20 @@ PermissionsRead = Depends(require_permission("permissions:read"))
 
 def commit_or_conflict(db: DBSession, message: str) -> None:
     try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message) from exc
+
+
+def commit_with_audit_or_conflict(
+    db: DBSession,
+    message: str,
+    audit_callback: Callable[[], None],
+) -> None:
+    try:
+        db.flush()
+        audit_callback()
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -141,7 +158,12 @@ def list_users(db: DBSession) -> list[UserRead]:
     status_code=status.HTTP_201_CREATED,
     dependencies=[UsersWrite],
 )
-def create_user(payload: UserCreate, db: DBSession) -> UserRead:
+def create_user(
+    payload: UserCreate,
+    db: DBSession,
+    current_user: CurrentUser,
+    request: Request,
+) -> UserRead:
     user = User(
         username=payload.username,
         full_name=payload.full_name,
@@ -153,13 +175,36 @@ def create_user(payload: UserCreate, db: DBSession) -> UserRead:
     user.project_scopes = load_projects(db, payload.project_ids)
     user.center_scopes = load_centers(db, payload.center_ids)
     db.add(user)
-    commit_or_conflict(db, "username or email already exists")
+    commit_with_audit_or_conflict(
+        db,
+        "username or email already exists",
+        lambda: record_operation(
+            db,
+            action="user.create",
+            request=request,
+            user=current_user,
+            target_type="user",
+            target_id=user.id,
+            detail={
+                "username": user.username,
+                "role_ids": payload.role_ids,
+                "project_ids": payload.project_ids,
+                "center_ids": payload.center_ids,
+            },
+        ),
+    )
     db.refresh(user)
     return serialize_user(get_user_or_404(db, user.id))
 
 
 @router.put("/users/{user_id}", response_model=UserRead, dependencies=[UsersWrite])
-def update_user(user_id: int, payload: UserUpdate, db: DBSession) -> UserRead:
+def update_user(
+    user_id: int,
+    payload: UserUpdate,
+    db: DBSession,
+    current_user: CurrentUser,
+    request: Request,
+) -> UserRead:
     user = get_user_or_404(db, user_id)
     update_data = payload.model_dump(exclude_unset=True)
     if "full_name" in update_data:
@@ -176,7 +221,26 @@ def update_user(user_id: int, payload: UserUpdate, db: DBSession) -> UserRead:
         user.project_scopes = load_projects(db, update_data["project_ids"])
     if "center_ids" in update_data:
         user.center_scopes = load_centers(db, update_data["center_ids"])
-    commit_or_conflict(db, "username or email already exists")
+    changed_fields = sorted("password" if field == "password" else field for field in update_data)
+    commit_with_audit_or_conflict(
+        db,
+        "username or email already exists",
+        lambda: record_operation(
+            db,
+            action="user.update",
+            request=request,
+            user=current_user,
+            target_type="user",
+            target_id=user.id,
+            detail={
+                "username": user.username,
+                "changed_fields": changed_fields,
+                "role_ids": update_data.get("role_ids"),
+                "project_ids": update_data.get("project_ids"),
+                "center_ids": update_data.get("center_ids"),
+            },
+        ),
+    )
     db.refresh(user)
     return serialize_user(user)
 
@@ -186,13 +250,28 @@ def update_user(user_id: int, payload: UserUpdate, db: DBSession) -> UserRead:
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[UsersWrite],
 )
-def delete_user(user_id: int, current_user: CurrentUser, db: DBSession) -> None:
+def delete_user(
+    user_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+    request: Request,
+) -> None:
     if user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="cannot delete yourself",
         )
     user = get_user_or_404(db, user_id)
+    deleted_username = user.username
+    record_operation(
+        db,
+        action="user.delete",
+        request=request,
+        user=current_user,
+        target_type="user",
+        target_id=user.id,
+        detail={"username": deleted_username},
+    )
     db.delete(user)
     db.commit()
 
@@ -209,7 +288,12 @@ def list_roles(db: DBSession) -> list[RoleRead]:
     status_code=status.HTTP_201_CREATED,
     dependencies=[RolesWrite],
 )
-def create_role(payload: RoleCreate, db: DBSession) -> RoleRead:
+def create_role(
+    payload: RoleCreate,
+    db: DBSession,
+    current_user: CurrentUser,
+    request: Request,
+) -> RoleRead:
     role = Role(
         name=payload.name,
         label=payload.label,
@@ -218,13 +302,31 @@ def create_role(payload: RoleCreate, db: DBSession) -> RoleRead:
     )
     role.permissions = load_permissions(db, payload.permission_ids)
     db.add(role)
-    commit_or_conflict(db, "role name already exists")
+    commit_with_audit_or_conflict(
+        db,
+        "role name already exists",
+        lambda: record_operation(
+            db,
+            action="role.create",
+            request=request,
+            user=current_user,
+            target_type="role",
+            target_id=role.id,
+            detail={"name": role.name, "permission_ids": payload.permission_ids},
+        ),
+    )
     db.refresh(role)
     return serialize_role(role)
 
 
 @router.put("/roles/{role_id}", response_model=RoleRead, dependencies=[RolesWrite])
-def update_role(role_id: int, payload: RoleUpdate, db: DBSession) -> RoleRead:
+def update_role(
+    role_id: int,
+    payload: RoleUpdate,
+    db: DBSession,
+    current_user: CurrentUser,
+    request: Request,
+) -> RoleRead:
     role = get_role_or_404(db, role_id)
     update_data = payload.model_dump(exclude_unset=True)
     if "label" in update_data:
@@ -233,7 +335,23 @@ def update_role(role_id: int, payload: RoleUpdate, db: DBSession) -> RoleRead:
         role.description = update_data["description"]
     if "permission_ids" in update_data:
         role.permissions = load_permissions(db, update_data["permission_ids"])
-    commit_or_conflict(db, "role update failed")
+    commit_with_audit_or_conflict(
+        db,
+        "role update failed",
+        lambda: record_operation(
+            db,
+            action="role.update",
+            request=request,
+            user=current_user,
+            target_type="role",
+            target_id=role.id,
+            detail={
+                "name": role.name,
+                "changed_fields": sorted(update_data),
+                "permission_ids": update_data.get("permission_ids"),
+            },
+        ),
+    )
     db.refresh(role)
     return serialize_role(role)
 

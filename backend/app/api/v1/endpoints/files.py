@@ -4,7 +4,17 @@ from pathlib import Path
 from typing import Annotated, TypeVar
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse
@@ -37,6 +47,7 @@ from app.models import (
     SubjectItem,
 )
 from app.schemas import FileRead, FileVersionRead
+from app.services.audit import record_operation
 from app.services.clinical_status import recalculate_subject_status, reset_stage_file_status
 
 router = APIRouter()
@@ -352,6 +363,7 @@ def list_files(
 def upload_file(
     db: DBSession,
     access: FileWriteAccess,
+    request: Request,
     file: Annotated[UploadFile, File()],
     file_category: Annotated[str, Form()],
     stage_file_id: Annotated[int | None, Form()] = None,
@@ -403,6 +415,23 @@ def upload_file(
         )
     )
     mark_binding_file_changed(db, binding, UPLOAD_UPLOADED)
+    record_operation(
+        db,
+        action="file.upload",
+        request=request,
+        access=access,
+        target_type="file",
+        target_id=file_asset.id,
+        project_id=file_asset.project_id,
+        center_id=file_asset.center_id,
+        detail={
+            "original_name": file_asset.original_name,
+            "file_category": file_asset.file_category,
+            "file_size": file_asset.file_size,
+            "stage_file_id": file_asset.stage_file_id,
+            "subject_item_id": file_asset.subject_item_id,
+        },
+    )
     db.commit()
     db.refresh(file_asset)
     return file_asset
@@ -420,6 +449,7 @@ def download_file(
     file_id: int,
     db: DBSession,
     access: FileReadAccess,
+    request: Request,
     version: int | None = None,
 ) -> FileResponse:
     file_asset = get_or_404(db, FileAsset, file_id, "file")
@@ -431,6 +461,22 @@ def download_file(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found") from exc
     if not path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found")
+    record_operation(
+        db,
+        action="file.download",
+        request=request,
+        access=access,
+        target_type="file",
+        target_id=file_asset.id,
+        project_id=file_asset.project_id,
+        center_id=file_asset.center_id,
+        detail={
+            "original_name": file_version.original_name,
+            "version": file_version.version,
+            "file_size": file_version.file_size,
+        },
+    )
+    db.commit()
     return FileResponse(
         path,
         media_type=file_version.mime_type,
@@ -472,6 +518,7 @@ def replace_file(
     file_id: int,
     db: DBSession,
     access: FileWriteAccess,
+    request: Request,
     file: Annotated[UploadFile, File()],
     change_note: Annotated[str | None, Form()] = None,
 ) -> FileAsset:
@@ -505,6 +552,22 @@ def replace_file(
         )
     )
     mark_binding_file_changed(db, binding, UPLOAD_REPLACED)
+    record_operation(
+        db,
+        action="file.replace",
+        request=request,
+        access=access,
+        target_type="file",
+        target_id=file_asset.id,
+        project_id=file_asset.project_id,
+        center_id=file_asset.center_id,
+        detail={
+            "original_name": file_asset.original_name,
+            "version": file_asset.version,
+            "file_size": file_asset.file_size,
+            "change_note": change_note,
+        },
+    )
     db.commit()
     db.refresh(file_asset)
     return file_asset
@@ -528,9 +591,24 @@ def list_file_versions(
 
 
 @router.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_file(file_id: int, db: DBSession, access: FileDeleteAccess) -> None:
+def delete_file(file_id: int, db: DBSession, access: FileDeleteAccess, request: Request) -> None:
     file_asset = get_or_404(db, FileAsset, file_id, "file")
     ensure_file_scope(access, file_asset)
+    record_operation(
+        db,
+        action="file.delete",
+        request=request,
+        access=access,
+        target_type="file",
+        target_id=file_asset.id,
+        project_id=file_asset.project_id,
+        center_id=file_asset.center_id,
+        detail={
+            "original_name": file_asset.original_name,
+            "version": file_asset.version,
+            "file_category": file_asset.file_category,
+        },
+    )
     reset_binding_if_empty(db, file_asset)
     remove_physical_files(file_asset)
     db.delete(file_asset)

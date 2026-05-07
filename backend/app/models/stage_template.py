@@ -7,7 +7,13 @@ from app.core.database import Base
 class StageTemplate(Base):
     __tablename__ = "stage_templates"
     __table_args__ = (
-        UniqueConstraint("project_id", "stage_id", "item_code", name="uq_stage_templates_item"),
+        UniqueConstraint(
+            "project_id",
+            "stage_id",
+            "template_scope",
+            "item_code",
+            name="uq_stage_templates_item_scope",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -23,8 +29,10 @@ class StageTemplate(Base):
     )
     item_name: Mapped[str] = mapped_column(String(150), nullable=False)
     item_code: Mapped[str] = mapped_column(String(80), nullable=False)
+    template_scope: Mapped[str] = mapped_column(String(30), default="center_file", nullable=False)
     required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    recognition_keywords: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = mapped_column(

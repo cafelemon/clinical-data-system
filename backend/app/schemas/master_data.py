@@ -63,18 +63,35 @@ class StageBase(BaseModel):
     project_id: int
     name: str = Field(min_length=1, max_length=100)
     code: str = Field(min_length=1, max_length=50)
+    parent_id: int | None = None
+    phase_code: str | None = Field(default=None, max_length=30)
+    option_code: str | None = Field(default=None, max_length=80)
+    is_system: bool = False
+    enabled: bool = True
     sort_order: int = 0
     description: str | None = None
 
 
-class StageCreate(StageBase):
-    pass
+class StageCreate(BaseModel):
+    project_id: int
+    phase_code: str | None = Field(default=None, max_length=30)
+    parent_id: int | None = None
+    option_code: str | None = Field(default=None, max_length=80)
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    code: str | None = Field(default=None, min_length=1, max_length=50)
+    sort_order: int | None = None
+    enabled: bool = True
+    description: str | None = None
 
 
 class StageUpdate(BaseModel):
     project_id: int | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     code: str | None = Field(default=None, min_length=1, max_length=50)
+    parent_id: int | None = None
+    phase_code: str | None = Field(default=None, max_length=30)
+    option_code: str | None = Field(default=None, max_length=80)
+    enabled: bool | None = None
     sort_order: int | None = None
     description: str | None = None
 
@@ -92,8 +109,10 @@ class StageTemplateBase(BaseModel):
     stage_id: int
     item_name: str = Field(min_length=1, max_length=150)
     item_code: str = Field(min_length=1, max_length=80)
+    template_scope: str = Field(default="center_file", max_length=30)
     required: bool = True
     sort_order: int = 0
+    recognition_keywords: str | None = None
     description: str | None = None
 
 
@@ -106,8 +125,10 @@ class StageTemplateUpdate(BaseModel):
     stage_id: int | None = None
     item_name: str | None = Field(default=None, min_length=1, max_length=150)
     item_code: str | None = Field(default=None, min_length=1, max_length=80)
+    template_scope: str | None = Field(default=None, max_length=30)
     required: bool | None = None
     sort_order: int | None = None
+    recognition_keywords: str | None = None
     description: str | None = None
 
 
@@ -117,6 +138,22 @@ class StageTemplateRead(StageTemplateBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class StageOptionRead(BaseModel):
+    phase_code: str
+    option_code: str
+    name: str
+    sort_order: int
+    default_enabled: bool = True
+    description: str | None = None
+
+
+class StageOptionGroupRead(BaseModel):
+    phase_code: str
+    phase_name: str
+    sort_order: int
+    options: list[StageOptionRead]
 
 
 class DictionaryBase(BaseModel):
@@ -147,4 +184,3 @@ class DictionaryRead(DictionaryBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-

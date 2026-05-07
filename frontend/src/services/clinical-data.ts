@@ -3,6 +3,8 @@ import type {
   ClinicalDataset,
   CompletenessSummary,
   ReviewActionPayload,
+  ReviewBatchApprovePayload,
+  ReviewBatchApproveResult,
   ReviewRecord,
   ReviewTargetType,
   StageFile,
@@ -45,6 +47,7 @@ export const clinicalDataApi = {
   createSubject: (payload: SubjectPayload) => create<Subject, SubjectPayload>("/subjects", payload),
   updateSubject: (id: number, payload: Partial<SubjectPayload>) =>
     update<Subject, SubjectPayload>(`/subjects/${id}`, payload),
+  deleteSubject: (id: number) => http.delete(`/subjects/${id}`),
   getSubject: (id: number) => read<Subject>(`/subjects/${id}`),
   listSubjectSections: (id: number) => read<SubjectSection[]>(`/subjects/${id}/sections`),
   listSubjectItems: (id: number) => read<SubjectItem[]>(`/subjects/${id}/items`),
@@ -54,6 +57,8 @@ export const clinicalDataApi = {
     create<ReviewRecord, ReviewActionPayload>("/reviews/submit", payload),
   approveReview: (payload: ReviewActionPayload) =>
     create<ReviewRecord, ReviewActionPayload>("/reviews/approve", payload),
+  approveReviewsBatch: (payload: ReviewBatchApprovePayload) =>
+    create<ReviewBatchApproveResult, ReviewBatchApprovePayload>("/reviews/approve-batch", payload),
   rejectReview: (payload: ReviewActionPayload) =>
     create<ReviewRecord, ReviewActionPayload>("/reviews/reject", payload),
   listReviewRecords: (targetType: ReviewTargetType, targetId: number) =>

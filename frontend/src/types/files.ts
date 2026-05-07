@@ -15,6 +15,9 @@ export type FileRecord = {
   stage_id: number | null;
   stage_file_id: number | null;
   subject_item_id: number | null;
+  source_pdf_packet_id: number | null;
+  source_page_start: number | null;
+  source_page_end: number | null;
   file_category: string;
   version: number;
   uploaded_by: number | null;

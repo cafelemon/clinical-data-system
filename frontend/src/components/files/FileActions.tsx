@@ -1,9 +1,10 @@
 import { Download, Eye, FileText, History, RefreshCw, Trash2, Upload } from "lucide-react";
-import { ChangeEvent, useCallback, useEffect, useState } from "react";
+import { ChangeEvent, DragEvent, useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SelectField } from "@/components/ui/form";
+import { cn } from "@/lib/utils";
 import { filesApi } from "@/services/files";
 import type { FileRecord, FileVersion } from "@/types/files";
 
@@ -66,6 +67,8 @@ export function FileActions({
   const [category, setCategory] = useState(defaultCategory);
   const [versions, setVersions] = useState<Record<number, FileVersion[]>>({});
   const [message, setMessage] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const loadFiles = useCallback(async () => {
     if (!canRead) return;
@@ -77,23 +80,59 @@ export function FileActions({
     void loadFiles();
   }, [loadFiles]);
 
+  const uploadSelectedFile = useCallback(
+    async (selectedFile: File) => {
+      setUploading(true);
+      try {
+        await filesApi.uploadFile({
+          file: selectedFile,
+          fileCategory: category,
+          stageFileId,
+          subjectItemId,
+        });
+        setMessage("上传成功");
+        await loadFiles();
+        onChanged?.();
+      } catch {
+        setMessage("上传失败");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [category, loadFiles, onChanged, stageFileId, subjectItemId],
+  );
+
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const selectedFile = event.target.files?.[0];
     event.target.value = "";
     if (!selectedFile) return;
-    try {
-      await filesApi.uploadFile({
-        file: selectedFile,
-        fileCategory: category,
-        stageFileId,
-        subjectItemId,
-      });
-      setMessage("上传成功");
-      await loadFiles();
-      onChanged?.();
-    } catch {
-      setMessage("上传失败");
+    await uploadSelectedFile(selectedFile);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (!canWrite || uploading) return;
+    event.dataTransfer.dropEffect = "copy";
+    setDragging(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setDragging(false);
     }
+  }
+
+  async function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDragging(false);
+    if (!canWrite || uploading) return;
+    const droppedFiles = Array.from(event.dataTransfer.files);
+    if (droppedFiles.length === 0) return;
+    if (droppedFiles.length > 1) {
+      setMessage("一次只能上传一个文件");
+      return;
+    }
+    await uploadSelectedFile(droppedFiles[0]);
   }
 
   async function handleReplace(file: FileRecord, event: ChangeEvent<HTMLInputElement>) {
@@ -159,27 +198,53 @@ export function FileActions({
 
   return (
     <div className="space-y-2">
-      {message && <Badge tone={message.includes("失败") || message.includes("不支持") ? "danger" : "success"}>{message}</Badge>}
+      {message && (
+        <Badge
+          tone={
+            message.includes("失败") || message.includes("不支持") || message.includes("只能")
+              ? "danger"
+              : "success"
+          }
+        >
+          {message}
+        </Badge>
+      )}
       {canWrite && (
-        <div className="flex flex-wrap items-center gap-2">
-          <SelectField
-            value={category}
-            onChange={(event) => setCategory(event.target.value)}
-            className="h-8 w-32 text-xs"
+        <div className="space-y-2">
+          <div
+            className={cn(
+              "flex min-h-12 w-48 max-w-full items-center justify-center gap-2 rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 transition",
+              dragging && "border-emerald-500 bg-emerald-50 text-emerald-700",
+              uploading && "opacity-60",
+            )}
+            onDragOver={handleDragOver}
+            onDragEnter={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={(event) => void handleDrop(event)}
           >
-            {categories.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </SelectField>
-          <Button asChild size="sm" variant="secondary">
-            <label>
-              <Upload className="size-4" aria-hidden="true" />
-              上传
-              <input type="file" className="hidden" onChange={handleUpload} />
-            </label>
-          </Button>
+            <Upload className="size-4 shrink-0" aria-hidden="true" />
+            <span>{uploading ? "上传中" : "拖入上传"}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SelectField
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+              className="h-8 w-32 text-xs"
+            >
+              {categories.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </SelectField>
+            <Button asChild size="sm" variant="secondary">
+              <label>
+                <Upload className="size-4" aria-hidden="true" />
+                上传
+                <input type="file" className="hidden" onChange={handleUpload} />
+              </label>
+            </Button>
+          </div>
         </div>
       )}
       {files.length === 0 ? (

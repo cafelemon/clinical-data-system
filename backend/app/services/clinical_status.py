@@ -18,6 +18,7 @@ from app.core.clinical_data import (
     UPLOADED_STATUSES,
 )
 from app.models import Center, Stage, StageFile, StageTemplate, Subject, SubjectItem
+from app.services.stage_config import CENTER_FILE_SCOPE
 
 
 @dataclass(frozen=True)
@@ -221,6 +222,7 @@ def build_stage_file_statuses(
             select(StageTemplate)
             .where(
                 StageTemplate.project_id.in_(visible_project_ids),
+                StageTemplate.template_scope == CENTER_FILE_SCOPE,
                 StageTemplate.required.is_(True),
             )
             .order_by(StageTemplate.project_id, StageTemplate.stage_id, StageTemplate.sort_order)

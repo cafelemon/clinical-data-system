@@ -15,10 +15,21 @@ const defaultForm: StageTemplatePayload = {
   stage_id: 0,
   item_name: "",
   item_code: "",
+  template_scope: "center_file",
   required: true,
   sort_order: 0,
+  recognition_keywords: "",
   description: "",
 };
+
+function stageMatchesScope(stage: Stage, scope: StageTemplatePayload["template_scope"]) {
+  if (scope === "subject_item") return stage.phase_code === "TRIAL";
+  return stage.phase_code === "STARTUP" || stage.phase_code === "CLOSEOUT";
+}
+
+function scopeLabel(scope: string) {
+  return scope === "subject_item" ? "受试者资料项" : "中心资料项";
+}
 
 export function StageTemplatesPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -26,6 +37,7 @@ export function StageTemplatesPage() {
   const [templates, setTemplates] = useState<StageTemplate[]>([]);
   const [projectFilter, setProjectFilter] = useState<number | undefined>();
   const [stageFilter, setStageFilter] = useState<number | undefined>();
+  const [scopeFilter, setScopeFilter] = useState<StageTemplatePayload["template_scope"]>("center_file");
   const [form, setForm] = useState<StageTemplatePayload>(defaultForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -35,27 +47,36 @@ export function StageTemplatesPage() {
     [projects],
   );
   const stageById = useMemo(() => new Map(stages.map((stage) => [stage.id, stage])), [stages]);
-  const formStages = stages.filter((stage) => stage.project_id === form.project_id);
+  const formStages = stages.filter(
+    (stage) => stage.project_id === form.project_id && stageMatchesScope(stage, form.template_scope),
+  );
   const filteredStageOptions = projectFilter
-    ? stages.filter((stage) => stage.project_id === projectFilter)
-    : stages;
+    ? stages.filter((stage) => stage.project_id === projectFilter && stageMatchesScope(stage, scopeFilter))
+    : stages.filter((stage) => stageMatchesScope(stage, scopeFilter));
 
-  async function loadData(nextProjectFilter = projectFilter, nextStageFilter = stageFilter) {
+  async function loadData(
+    nextProjectFilter = projectFilter,
+    nextStageFilter = stageFilter,
+    nextScopeFilter = scopeFilter,
+  ) {
     const [projectData, stageData, templateData] = await Promise.all([
       masterDataApi.listProjects(),
       masterDataApi.listStages(),
-      masterDataApi.listStageTemplates(nextProjectFilter, nextStageFilter),
+      masterDataApi.listStageTemplates(nextProjectFilter, nextStageFilter, nextScopeFilter),
     ]);
     setProjects(projectData);
     setStages(stageData);
     setTemplates(templateData);
     if (!form.project_id && projectData.length > 0) {
       const firstProject = projectData[0];
-      const firstStage = stageData.find((stage) => stage.project_id === firstProject.id);
+      const firstStage = stageData.find(
+        (stage) => stage.project_id === firstProject.id && stageMatchesScope(stage, nextScopeFilter),
+      );
       setForm((current) => ({
         ...current,
         project_id: firstProject.id,
         stage_id: firstStage?.id ?? 0,
+        template_scope: nextScopeFilter,
       }));
     }
   }
@@ -65,14 +86,16 @@ export function StageTemplatesPage() {
       const [projectData, stageData, templateData] = await Promise.all([
         masterDataApi.listProjects(),
         masterDataApi.listStages(),
-        masterDataApi.listStageTemplates(),
+        masterDataApi.listStageTemplates(undefined, undefined, "center_file"),
       ]);
       setProjects(projectData);
       setStages(stageData);
       setTemplates(templateData);
       if (projectData.length > 0) {
         const firstProject = projectData[0];
-        const firstStage = stageData.find((stage) => stage.project_id === firstProject.id);
+        const firstStage = stageData.find(
+          (stage) => stage.project_id === firstProject.id && stageMatchesScope(stage, "center_file"),
+        );
         setForm((current) => ({
           ...current,
           project_id: firstProject.id,
@@ -86,14 +109,34 @@ export function StageTemplatesPage() {
 
   function resetForm() {
     const projectId = form.project_id || projects[0]?.id || 0;
-    const firstStage = stages.find((stage) => stage.project_id === projectId);
+    const firstStage = stages.find(
+      (stage) => stage.project_id === projectId && stageMatchesScope(stage, form.template_scope),
+    );
     setEditingId(null);
-    setForm({ ...defaultForm, project_id: projectId, stage_id: firstStage?.id ?? 0 });
+    setForm({
+      ...defaultForm,
+      project_id: projectId,
+      stage_id: firstStage?.id ?? 0,
+      template_scope: form.template_scope,
+    });
   }
 
   function handleProjectChange(projectId: number) {
-    const firstStage = stages.find((stage) => stage.project_id === projectId);
+    const firstStage = stages.find(
+      (stage) => stage.project_id === projectId && stageMatchesScope(stage, form.template_scope),
+    );
     setForm((current) => ({ ...current, project_id: projectId, stage_id: firstStage?.id ?? 0 }));
+  }
+
+  function handleScopeChange(scope: StageTemplatePayload["template_scope"]) {
+    const firstStage = stages.find(
+      (stage) => stage.project_id === form.project_id && stageMatchesScope(stage, scope),
+    );
+    setForm((current) => ({
+      ...current,
+      template_scope: scope,
+      stage_id: firstStage?.id ?? 0,
+    }));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -107,6 +150,8 @@ export function StageTemplatesPage() {
       item_name: form.item_name.trim(),
       item_code: form.item_code.trim(),
       sort_order: Number(form.sort_order) || 0,
+      template_scope: form.template_scope,
+      recognition_keywords: form.recognition_keywords?.trim() || null,
       description: form.description?.trim() || null,
     };
     try {
@@ -137,8 +182,10 @@ export function StageTemplatesPage() {
       stage_id: template.stage_id,
       item_name: template.item_name,
       item_code: template.item_code,
+      template_scope: template.template_scope,
       required: template.required,
       sort_order: template.sort_order,
+      recognition_keywords: template.recognition_keywords ?? "",
       description: template.description ?? "",
     });
   }
@@ -147,13 +194,20 @@ export function StageTemplatesPage() {
     const nextProjectId = value ? Number(value) : undefined;
     setProjectFilter(nextProjectId);
     setStageFilter(undefined);
-    await loadData(nextProjectId, undefined);
+    await loadData(nextProjectId, undefined, scopeFilter);
   }
 
   async function handleStageFilterChange(value: string) {
     const nextStageId = value ? Number(value) : undefined;
     setStageFilter(nextStageId);
-    await loadData(projectFilter, nextStageId);
+    await loadData(projectFilter, nextStageId, scopeFilter);
+  }
+
+  async function handleScopeFilterChange(value: string) {
+    const nextScope = value as StageTemplatePayload["template_scope"];
+    setScopeFilter(nextScope);
+    setStageFilter(undefined);
+    await loadData(projectFilter, undefined, nextScope);
   }
 
   return (
@@ -212,6 +266,18 @@ export function StageTemplatesPage() {
                   ))}
                 </SelectField>
               </Field>
+              <Field label="模板用途">
+                <SelectField
+                  value={form.template_scope}
+                  onChange={(event) =>
+                    handleScopeChange(event.target.value as StageTemplatePayload["template_scope"])
+                  }
+                  required
+                >
+                  <option value="center_file">中心资料项</option>
+                  <option value="subject_item">受试者资料项</option>
+                </SelectField>
+              </Field>
               <Field label="资料名称">
                 <input
                   className={inputClassName()}
@@ -265,6 +331,18 @@ export function StageTemplatesPage() {
                   }
                 />
               </Field>
+              <Field label="识别关键词">
+                <TextAreaField
+                  value={form.recognition_keywords ?? ""}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      recognition_keywords: event.target.value,
+                    }))
+                  }
+                  placeholder="知情同意书，ICF"
+                />
+              </Field>
               <div className="flex gap-2">
                 <Button type="submit">
                   <Save className="size-4" aria-hidden="true" />
@@ -284,7 +362,7 @@ export function StageTemplatesPage() {
           <CardHeader>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <CardTitle>资料项列表</CardTitle>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <SelectField
                   value={projectFilter ?? ""}
                   onChange={(event) => void handleProjectFilterChange(event.target.value)}
@@ -295,6 +373,13 @@ export function StageTemplatesPage() {
                       {project.name}
                     </option>
                   ))}
+                </SelectField>
+                <SelectField
+                  value={scopeFilter}
+                  onChange={(event) => void handleScopeFilterChange(event.target.value)}
+                >
+                  <option value="center_file">中心资料项</option>
+                  <option value="subject_item">受试者资料项</option>
                 </SelectField>
                 <SelectField
                   value={stageFilter ?? ""}
@@ -320,8 +405,10 @@ export function StageTemplatesPage() {
               columns={[
                 { key: "project", label: "项目", render: (template) => projectNameById.get(template.project_id) ?? "-" },
                 { key: "stage", label: "阶段", render: (template) => stageById.get(template.stage_id)?.name ?? "-" },
+                { key: "scope", label: "用途", render: (template) => scopeLabel(template.template_scope) },
                 { key: "name", label: "资料", render: (template) => template.item_name },
                 { key: "code", label: "编码", render: (template) => template.item_code },
+                { key: "keywords", label: "识别关键词", render: (template) => template.recognition_keywords || "-" },
                 { key: "required", label: "要求", render: (template) => (template.required ? "必填" : "选填") },
                 { key: "sort", label: "排序", render: (template) => template.sort_order },
               ]}

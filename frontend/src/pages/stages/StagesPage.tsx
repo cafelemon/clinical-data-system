@@ -1,4 +1,4 @@
-import { RotateCcw, Save } from "lucide-react";
+import { Power, RotateCcw, Save } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { EntityTable } from "@/components/master-data/EntityTable";
@@ -8,21 +8,33 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, SelectField, TextAreaField } from "@/components/ui/form";
 import { inputClassName } from "@/lib/form-styles";
 import { masterDataApi } from "@/services/master-data";
-import type { Project, Stage, StagePayload } from "@/types/master-data";
+import type { Project, Stage, StageOptionGroup } from "@/types/master-data";
 
-const defaultForm: StagePayload = {
+type StageForm = {
+  project_id: number;
+  phase_code: string;
+  option_code: string;
+  sort_order: number;
+  enabled: boolean;
+  description: string;
+};
+
+const defaultForm: StageForm = {
   project_id: 0,
-  name: "",
-  code: "",
+  phase_code: "STARTUP",
+  option_code: "",
   sort_order: 0,
+  enabled: true,
   description: "",
 };
 
 export function StagesPage() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [stageOptions, setStageOptions] = useState<StageOptionGroup[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [projectFilter, setProjectFilter] = useState<number | undefined>();
-  const [form, setForm] = useState<StagePayload>(defaultForm);
+  const [phaseFilter, setPhaseFilter] = useState("STARTUP");
+  const [form, setForm] = useState<StageForm>(defaultForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -30,74 +42,114 @@ export function StagesPage() {
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects],
   );
+  const phaseNameByCode = useMemo(
+    () => new Map(stageOptions.map((group) => [group.phase_code, group.phase_name])),
+    [stageOptions],
+  );
+  const optionGroupsByCode = useMemo(
+    () => new Map(stageOptions.map((group) => [group.phase_code, group])),
+    [stageOptions],
+  );
+  const selectedOptions = optionGroupsByCode.get(form.phase_code)?.options ?? [];
 
-  async function loadData(nextProjectFilter = projectFilter) {
-    const [projectData, stageData] = await Promise.all([
+  async function loadData(nextProjectFilter = projectFilter, nextPhaseFilter = phaseFilter) {
+    const [projectData, optionData, stageData] = await Promise.all([
       masterDataApi.listProjects(),
-      masterDataApi.listStages(nextProjectFilter),
+      masterDataApi.listStageOptions(),
+      masterDataApi.listStages(nextProjectFilter, nextPhaseFilter),
     ]);
     setProjects(projectData);
+    setStageOptions(optionData);
     setStages(stageData);
-    if (!form.project_id && projectData.length > 0) {
-      setForm((current) => ({ ...current, project_id: projectData[0].id }));
+    const projectId = form.project_id || nextProjectFilter || projectData[0]?.id || 0;
+    const optionCode =
+      form.option_code ||
+      optionData.find((group) => group.phase_code === nextPhaseFilter)?.options[0]?.option_code ||
+      "";
+    if (!form.project_id || !form.option_code) {
+      setForm((current) => ({
+        ...current,
+        project_id: projectId,
+        phase_code: nextPhaseFilter,
+        option_code: optionCode,
+      }));
     }
   }
 
   useEffect(() => {
     async function initialize() {
-      const [projectData, stageData] = await Promise.all([
+      const [projectData, optionData, stageData] = await Promise.all([
         masterDataApi.listProjects(),
-        masterDataApi.listStages(),
+        masterDataApi.listStageOptions(),
+        masterDataApi.listStages(undefined, "STARTUP"),
       ]);
       setProjects(projectData);
+      setStageOptions(optionData);
       setStages(stageData);
-      if (projectData.length > 0) {
-        setForm((current) => ({ ...current, project_id: projectData[0].id }));
-      }
+      setForm((current) => ({
+        ...current,
+        project_id: projectData[0]?.id ?? 0,
+        option_code: optionData.find((group) => group.phase_code === "STARTUP")?.options[0]?.option_code ?? "",
+      }));
     }
 
     void initialize();
   }, []);
 
   function resetForm() {
+    const projectId = form.project_id || projectFilter || projects[0]?.id || 0;
+    const optionCode = optionGroupsByCode.get(phaseFilter)?.options[0]?.option_code ?? "";
     setEditingId(null);
-    setForm((current) => ({
+    setForm({
       ...defaultForm,
-      project_id: current.project_id || projects[0]?.id || 0,
+      project_id: projectId,
+      phase_code: phaseFilter,
+      option_code: optionCode,
+    });
+  }
+
+  function handlePhaseChange(phaseCode: string) {
+    const optionCode = optionGroupsByCode.get(phaseCode)?.options[0]?.option_code ?? "";
+    setForm((current) => ({
+      ...current,
+      phase_code: phaseCode,
+      option_code: optionCode,
+      sort_order: optionGroupsByCode.get(phaseCode)?.options[0]?.sort_order ?? 0,
     }));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!form.project_id) {
-      setMessage("请先选择项目");
+    if (!form.project_id || !form.phase_code || !form.option_code) {
+      setMessage("请先选择项目、大阶段和二级阶段");
       return;
     }
+    const option = selectedOptions.find((item) => item.option_code === form.option_code);
     const payload = {
-      ...form,
-      name: form.name.trim(),
-      code: form.code.trim(),
-      sort_order: Number(form.sort_order) || 0,
-      description: form.description?.trim() || null,
+      project_id: form.project_id,
+      phase_code: form.phase_code,
+      option_code: form.option_code,
+      sort_order: Number(form.sort_order) || option?.sort_order || 0,
+      enabled: form.enabled,
+      description: form.description.trim() || null,
     };
     try {
       if (editingId) {
         await masterDataApi.updateStage(editingId, payload);
-        setMessage("阶段已更新");
+        setMessage("二级阶段已更新");
       } else {
         await masterDataApi.createStage(payload);
-        setMessage("阶段已创建");
+        setMessage("二级阶段已启用");
       }
       resetForm();
       await loadData();
     } catch {
-      setMessage("保存失败，请检查阶段编码是否重复");
+      setMessage("保存失败，请确认二级阶段来自样例库");
     }
   }
 
-  async function handleDelete(stage: Stage) {
-    if (!window.confirm(`确认删除阶段：${stage.name}？`)) return;
-    await masterDataApi.deleteStage(stage.id);
+  async function handleToggle(stage: Stage) {
+    await masterDataApi.updateStage(stage.id, { enabled: !stage.enabled });
     await loadData();
   }
 
@@ -105,25 +157,32 @@ export function StagesPage() {
     setEditingId(stage.id);
     setForm({
       project_id: stage.project_id,
-      name: stage.name,
-      code: stage.code,
+      phase_code: stage.phase_code ?? "STARTUP",
+      option_code: stage.option_code ?? stage.code,
       sort_order: stage.sort_order,
+      enabled: stage.enabled,
       description: stage.description ?? "",
     });
   }
 
-  async function handleFilterChange(value: string) {
+  async function handleProjectFilterChange(value: string) {
     const nextProjectId = value ? Number(value) : undefined;
     setProjectFilter(nextProjectId);
-    await loadData(nextProjectId);
+    await loadData(nextProjectId, phaseFilter);
+  }
+
+  async function handlePhaseFilterChange(value: string) {
+    setPhaseFilter(value);
+    handlePhaseChange(value);
+    await loadData(projectFilter, value);
   }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">阶段管理</h1>
-          <p className="mt-1 text-sm text-slate-500">配置启动、进行、总结等项目阶段</p>
+          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">二级阶段管理</h1>
+          <p className="mt-1 text-sm text-slate-500">按项目维护三大阶段下的二级阶段配置</p>
         </div>
         <Button variant="secondary" onClick={() => void loadData()}>
           <RotateCcw className="size-4" aria-hidden="true" />
@@ -131,12 +190,16 @@ export function StagesPage() {
         </Button>
       </div>
 
-      {message && <Badge tone={message.includes("失败") || message.includes("选择") ? "danger" : "success"}>{message}</Badge>}
+      {message && (
+        <Badge tone={message.includes("失败") || message.includes("选择") ? "danger" : "success"}>
+          {message}
+        </Badge>
+      )}
 
-      <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
+      <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>{editingId ? "编辑阶段" : "新建阶段"}</CardTitle>
+            <CardTitle>{editingId ? "编辑二级阶段" : "添加二级阶段"}</CardTitle>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={handleSubmit}>
@@ -158,37 +221,72 @@ export function StagesPage() {
                   ))}
                 </SelectField>
               </Field>
-              <Field label="阶段名称">
-                <input
-                  className={inputClassName()}
-                  value={form.name}
-                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="启动阶段"
+              <Field label="大阶段">
+                <SelectField
+                  value={form.phase_code}
+                  onChange={(event) => handlePhaseChange(event.target.value)}
                   required
-                />
+                >
+                  {stageOptions.map((group) => (
+                    <option key={group.phase_code} value={group.phase_code}>
+                      {group.phase_name}
+                    </option>
+                  ))}
+                </SelectField>
               </Field>
-              <Field label="阶段编码">
-                <input
-                  className={inputClassName()}
-                  value={form.code}
-                  onChange={(event) => setForm((current) => ({ ...current, code: event.target.value }))}
-                  placeholder="STARTUP"
+              <Field label="二级阶段">
+                <SelectField
+                  value={form.option_code}
+                  onChange={(event) => {
+                    const option = selectedOptions.find(
+                      (item) => item.option_code === event.target.value,
+                    );
+                    setForm((current) => ({
+                      ...current,
+                      option_code: event.target.value,
+                      sort_order: option?.sort_order ?? current.sort_order,
+                      description: option?.description ?? current.description,
+                    }));
+                  }}
+                  disabled={Boolean(editingId)}
                   required
-                />
+                >
+                  <option value="" disabled>
+                    从样例库选择
+                  </option>
+                  {selectedOptions.map((option) => (
+                    <option key={option.option_code} value={option.option_code}>
+                      {option.name}
+                    </option>
+                  ))}
+                </SelectField>
               </Field>
-              <Field label="排序">
-                <input
-                  className={inputClassName()}
-                  type="number"
-                  value={form.sort_order}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, sort_order: Number(event.target.value) }))
-                  }
-                />
-              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="启用状态">
+                  <SelectField
+                    value={form.enabled ? "true" : "false"}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, enabled: event.target.value === "true" }))
+                    }
+                  >
+                    <option value="true">启用</option>
+                    <option value="false">停用</option>
+                  </SelectField>
+                </Field>
+                <Field label="排序">
+                  <input
+                    className={inputClassName()}
+                    type="number"
+                    value={form.sort_order}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, sort_order: Number(event.target.value) }))
+                    }
+                  />
+                </Field>
+              </div>
               <Field label="说明">
                 <TextAreaField
-                  value={form.description ?? ""}
+                  value={form.description}
                   onChange={(event) =>
                     setForm((current) => ({ ...current, description: event.target.value }))
                   }
@@ -211,35 +309,68 @@ export function StagesPage() {
 
         <Card>
           <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <CardTitle>阶段列表</CardTitle>
-              <SelectField
-                className="sm:w-56"
-                value={projectFilter ?? ""}
-                onChange={(event) => void handleFilterChange(event.target.value)}
-              >
-                <option value="">全部项目</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </SelectField>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <CardTitle>二级阶段列表</CardTitle>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <SelectField
+                  value={projectFilter ?? ""}
+                  onChange={(event) => void handleProjectFilterChange(event.target.value)}
+                >
+                  <option value="">全部项目</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </SelectField>
+                <SelectField
+                  value={phaseFilter}
+                  onChange={(event) => void handlePhaseFilterChange(event.target.value)}
+                >
+                  {stageOptions.map((group) => (
+                    <option key={group.phase_code} value={group.phase_code}>
+                      {group.phase_name}
+                    </option>
+                  ))}
+                </SelectField>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
             <EntityTable
               rows={stages}
               getRowKey={(stage) => stage.id}
-              emptyLabel="暂无阶段"
+              emptyLabel="暂无二级阶段"
               onEdit={handleEdit}
-              onDelete={(stage) => void handleDelete(stage)}
               columns={[
-                { key: "project", label: "项目", render: (stage) => projectNameById.get(stage.project_id) ?? "-" },
-                { key: "name", label: "阶段", render: (stage) => stage.name },
-                { key: "code", label: "编码", render: (stage) => stage.code },
+                {
+                  key: "project",
+                  label: "项目",
+                  render: (stage) => projectNameById.get(stage.project_id) ?? "-",
+                },
+                {
+                  key: "phase",
+                  label: "大阶段",
+                  render: (stage) => phaseNameByCode.get(stage.phase_code ?? "") ?? "-",
+                },
+                { key: "name", label: "二级阶段", render: (stage) => stage.name },
+                { key: "code", label: "样例编码", render: (stage) => stage.option_code ?? stage.code },
+                {
+                  key: "enabled",
+                  label: "状态",
+                  render: (stage) => (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={stage.enabled ? "secondary" : "ghost"}
+                      onClick={() => void handleToggle(stage)}
+                    >
+                      <Power className="size-4" aria-hidden="true" />
+                      {stage.enabled ? "启用" : "停用"}
+                    </Button>
+                  ),
+                },
                 { key: "sort", label: "排序", render: (stage) => stage.sort_order },
-                { key: "description", label: "说明", render: (stage) => stage.description || "-" },
               ]}
             />
           </CardContent>

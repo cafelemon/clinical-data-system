@@ -1,4 +1,4 @@
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -16,6 +16,14 @@ class Stage(Base):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     code: Mapped[str] = mapped_column(String(50), nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stages.id", ondelete="CASCADE"),
+        index=True,
+    )
+    phase_code: Mapped[str | None] = mapped_column(String(30), index=True)
+    option_code: Mapped[str | None] = mapped_column(String(80), index=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -27,6 +35,13 @@ class Stage(Base):
     )
 
     project = relationship("Project", back_populates="stages")
+    parent = relationship("Stage", remote_side=[id], back_populates="children")
+    children = relationship(
+        "Stage",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        order_by="Stage.sort_order",
+    )
     stage_templates = relationship(
         "StageTemplate",
         back_populates="stage",

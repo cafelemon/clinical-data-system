@@ -20,6 +20,9 @@ class FileRead(BaseModel):
     stage_id: int | None = None
     stage_file_id: int | None = None
     subject_item_id: int | None = None
+    source_pdf_packet_id: int | None = None
+    source_page_start: int | None = None
+    source_page_end: int | None = None
     file_category: str
     version: int
     uploaded_by: int | None = None

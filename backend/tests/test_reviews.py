@@ -183,6 +183,14 @@ def review_action(
     return client.post(f"/api/reviews/{action}", headers=headers, json=payload)
 
 
+def batch_approve(
+    client: TestClient,
+    headers: dict[str, str],
+    targets: list[dict[str, int | str]],
+):
+    return client.post("/api/reviews/approve-batch", headers=headers, json={"targets": targets})
+
+
 def test_review_flow_records_stage_file_and_subject_item(
     client: TestClient,
     admin_headers: dict[str, str],
@@ -324,6 +332,115 @@ def test_review_permissions_and_scope(
         json={"project_id": stage_file_b["project_id"]},
     )
     assert scoped_recalculate.status_code == 403
+
+
+def test_batch_approve_auto_submits_pending_targets_and_skips(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
+    uploaded_stage_file = create_stage_file_bundle(client, admin_headers, "BATCH_UPLOADED")
+    empty_stage_file = create_stage_file_bundle(client, admin_headers, "BATCH_EMPTY")
+    upload_stage_file(client, admin_headers, uploaded_stage_file["id"])
+
+    _, _, subject, items = create_subject_bundle(client, admin_headers, "BATCH")
+    pending_item = items[0]
+    empty_item = items[1]
+    upload_subject_item(client, admin_headers, pending_item["id"], "pending-consent.pdf")
+    assert (
+        review_action(
+            client,
+            admin_headers,
+            "submit",
+            "subject_item",
+            pending_item["id"],
+        ).status_code
+        == 201
+    )
+
+    response = batch_approve(
+        client,
+        admin_headers,
+        [
+            {"target_type": "stage_file", "target_id": uploaded_stage_file["id"]},
+            {"target_type": "stage_file", "target_id": empty_stage_file["id"]},
+            {"target_type": "subject_item", "target_id": pending_item["id"]},
+            {"target_type": "subject_item", "target_id": empty_item["id"]},
+        ],
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["approved_count"] == 2
+    assert body["skipped_count"] == 2
+    results = {(row["target_type"], row["target_id"]): row for row in body["results"]}
+    assert results[("stage_file", uploaded_stage_file["id"])]["submitted"] is True
+    assert results[("stage_file", uploaded_stage_file["id"])]["approved"] is True
+    assert results[("subject_item", pending_item["id"])]["submitted"] is False
+    assert results[("subject_item", pending_item["id"])]["approved"] is True
+    assert results[("stage_file", empty_stage_file["id"])]["status"] == "skipped"
+    assert results[("subject_item", empty_item["id"])]["status"] == "skipped"
+
+    stage_files = client.get(
+        (
+            f"/api/stage-files?project_id={uploaded_stage_file['project_id']}"
+            f"&center_id={uploaded_stage_file['center_id']}"
+        ),
+        headers=admin_headers,
+    )
+    assert stage_files.status_code == 200
+    refreshed_stage_file = next(
+        row for row in stage_files.json() if row["id"] == uploaded_stage_file["id"]
+    )
+    assert refreshed_stage_file["review_status"] == "approved"
+
+    refreshed_items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers)
+    assert refreshed_items.status_code == 200
+    refreshed_pending_item = next(
+        row for row in refreshed_items.json() if row["id"] == pending_item["id"]
+    )
+    assert refreshed_pending_item["review_status"] == "approved"
+
+    stage_records = client.get(
+        f"/api/reviews?target_type=stage_file&target_id={uploaded_stage_file['id']}",
+        headers=admin_headers,
+    )
+    assert stage_records.status_code == 200
+    assert [record["action"] for record in stage_records.json()] == ["approve", "submit"]
+
+    logs = client.get(
+        "/api/operation-logs?action=review.approve_batch",
+        headers=admin_headers,
+    )
+    assert logs.status_code == 200
+    assert logs.json()["total"] == 1
+
+
+def test_batch_approve_requires_review_permission(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
+    stage_file = create_stage_file_bundle(client, admin_headers, "BATCH_PERMISSION")
+    upload_stage_file(client, admin_headers, stage_file["id"])
+    coordinator_headers = create_user(
+        client,
+        admin_headers,
+        "p5_batch_coordinator",
+        "clinical_coordinator",
+        [stage_file["project_id"]],
+    )
+
+    response = batch_approve(
+        client,
+        coordinator_headers,
+        [{"target_type": "stage_file", "target_id": stage_file["id"]}],
+    )
+
+    assert response.status_code == 403
 
 
 def test_subject_completeness_recalculate_scenarios(

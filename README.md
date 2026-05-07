@@ -32,6 +32,19 @@ npm run dev
 - 后端健康检查: http://localhost:8000/api/health
 - 后端 OpenAPI: http://localhost:8000/docs
 
+局域网访问：
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+cd frontend
+npm run dev
+```
+
+同一局域网设备访问 `http://<本机局域网IP>:5173`。
+
 开发默认管理员：
 
 - 用户名：`admin`

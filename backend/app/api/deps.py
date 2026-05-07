@@ -40,7 +40,7 @@ class AccessContext:
         )
 
     def can_access_center(self, center_id: int, project_id: int) -> bool:
-        return self.is_admin or center_id in self.center_ids or self.can_access_project(project_id)
+        return self.is_admin or center_id in self.center_ids or project_id in self.project_ids
 
 
 def build_access_context(user: User) -> AccessContext:

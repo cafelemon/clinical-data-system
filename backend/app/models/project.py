@@ -1,4 +1,4 @@
-from sqlalchemy import DateTime, String, Text, func
+from sqlalchemy import Boolean, DateTime, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -12,6 +12,11 @@ class Project(Base):
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), default="active", nullable=False)
+    stage_template_defaults_initialized: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = mapped_column(
         DateTime(timezone=True),
@@ -30,3 +35,4 @@ class Project(Base):
     subjects = relationship("Subject", back_populates="project", cascade="all, delete-orphan")
     stage_files = relationship("StageFile", back_populates="project", cascade="all, delete-orphan")
     file_assets = relationship("FileAsset", back_populates="project", cascade="all, delete-orphan")
+    pdf_packets = relationship("PdfPacket", back_populates="project", cascade="all, delete-orphan")

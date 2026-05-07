@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { FileActions } from "@/components/files/FileActions";
+import { BatchApproveButton } from "@/components/reviews/BatchApproveButton";
 import { ReviewActions } from "@/components/reviews/ReviewActions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,10 @@ function statusLabel(labels: Record<string, string>, status: string) {
   return labels[status] ?? status;
 }
 
+function formatDateTime(value: string | null) {
+  return value ? new Date(value).toLocaleDateString() : "-";
+}
+
 function itemCompletenessStatus(item: SubjectItem) {
   if (!item.required) return "complete";
   if (item.upload_status === "supplement_required" || item.review_status === "rejected") {
@@ -89,6 +94,17 @@ export function SubjectDetailPage() {
       })),
     [items, sections],
   );
+  const batchTargets = useMemo(
+    () =>
+      items.map((item) => ({
+        target_type: "subject_item" as const,
+        target_id: item.id,
+      })),
+    [items],
+  );
+  const backPath = subject
+    ? `/clinical-dataset?project_id=${subject.project_id}&center_id=${subject.center_id}&stage=TRIAL`
+    : "/clinical-dataset";
 
   const loadData = useCallback(async () => {
     if (!subjectId) {
@@ -156,7 +172,7 @@ export function SubjectDetailPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <Button asChild variant="ghost" className="mb-3 px-0">
-            <Link to="/clinical-dataset">
+            <Link to={backPath}>
               <ArrowLeft className="size-4" aria-hidden="true" />
               返回数据集
             </Link>
@@ -220,6 +236,14 @@ export function SubjectDetailPage() {
       {loading && <p className="text-sm text-slate-500">正在加载</p>}
 
       <div className="space-y-4">
+        {canReview && batchTargets.length > 0 && (
+          <BatchApproveButton
+            targets={batchTargets}
+            label="一键审批当前受试者资料"
+            confirmText={`确认一键审批当前受试者 ${batchTargets.length} 项资料？已上传未提交的资料会自动提交并通过。`}
+            onChanged={() => void loadData()}
+          />
+        )}
         {groupedSections.map(({ section, items: sectionItems }) => (
           <Card key={section.id}>
             <CardHeader>
@@ -235,11 +259,14 @@ export function SubjectDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] text-left text-sm">
+                <table className="w-full min-w-[1180px] text-left text-sm">
                   <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
                     <tr>
                       <th className="px-3 py-2 font-medium">数据项</th>
                       <th className="px-3 py-2 font-medium">编码</th>
+                      <th className="px-3 py-2 font-medium">更新时间</th>
+                      <th className="px-3 py-2 font-medium">上传人</th>
+                      <th className="px-3 py-2 font-medium">审核人</th>
                       <th className="px-3 py-2 font-medium">必填</th>
                       <th className="px-3 py-2 font-medium">上传状态</th>
                       <th className="px-3 py-2 font-medium">审核状态</th>
@@ -259,6 +286,15 @@ export function SubjectDetailPage() {
                             {item.item_name}
                           </td>
                           <td className="px-3 py-3 text-slate-500">{item.item_code}</td>
+                          <td className="px-3 py-3 text-slate-500">
+                            {formatDateTime(item.updated_at)}
+                          </td>
+                          <td className="px-3 py-3 text-slate-600">
+                            {item.uploaded_by_name || "-"}
+                          </td>
+                          <td className="px-3 py-3 text-slate-600">
+                            {item.reviewer_name || "-"}
+                          </td>
                           <td className="px-3 py-3">
                             <Badge tone={item.required ? "warning" : "neutral"}>
                               {item.required ? "必填" : "选填"}
@@ -276,7 +312,10 @@ export function SubjectDetailPage() {
                           </td>
                           <td className="px-3 py-3">
                             <Badge tone={statusTone(itemCompletenessStatus(item))}>
-                              {statusLabel(dataStatusLabels, itemCompletenessStatus(item))}
+                              {statusLabel(
+                                dataStatusLabels,
+                                item.completeness_status ?? itemCompletenessStatus(item),
+                              )}
                             </Badge>
                           </td>
                           <td className="px-3 py-3">

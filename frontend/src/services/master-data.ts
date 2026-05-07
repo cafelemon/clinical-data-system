@@ -7,6 +7,7 @@ import type {
   Project,
   ProjectPayload,
   Stage,
+  StageOptionGroup,
   StagePayload,
   StageTemplate,
   StageTemplatePayload,
@@ -44,14 +45,25 @@ export const masterDataApi = {
     update<Center, CenterPayload>(`/centers/${id}`, payload),
   deleteCenter: (id: number) => remove(`/centers/${id}`),
 
-  listStages: (projectId?: number) => read<Stage[]>("/stages", { project_id: projectId }),
+  listStageOptions: () => read<StageOptionGroup[]>("/stage-options"),
+  listStages: (projectId?: number, phaseCode?: string, includeSystem = false, enabled?: boolean) =>
+    read<Stage[]>("/stages", {
+      project_id: projectId,
+      phase_code: phaseCode,
+      include_system: includeSystem,
+      enabled,
+    }),
   createStage: (payload: StagePayload) => create<Stage, StagePayload>("/stages", payload),
   updateStage: (id: number, payload: Partial<StagePayload>) =>
     update<Stage, StagePayload>(`/stages/${id}`, payload),
   deleteStage: (id: number) => remove(`/stages/${id}`),
 
-  listStageTemplates: (projectId?: number, stageId?: number) =>
-    read<StageTemplate[]>("/stage-templates", { project_id: projectId, stage_id: stageId }),
+  listStageTemplates: (projectId?: number, stageId?: number, templateScope?: string) =>
+    read<StageTemplate[]>("/stage-templates", {
+      project_id: projectId,
+      stage_id: stageId,
+      template_scope: templateScope,
+    }),
   createStageTemplate: (payload: StageTemplatePayload) =>
     create<StageTemplate, StageTemplatePayload>("/stage-templates", payload),
   updateStageTemplate: (id: number, payload: Partial<StageTemplatePayload>) =>
@@ -66,4 +78,3 @@ export const masterDataApi = {
     update<DictionaryItem, DictionaryPayload>(`/dictionaries/${id}`, payload),
   deleteDictionary: (id: number) => remove(`/dictionaries/${id}`),
 };
-

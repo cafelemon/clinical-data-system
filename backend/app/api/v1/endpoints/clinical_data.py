@@ -1,6 +1,6 @@
 from typing import Annotated, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -9,13 +9,28 @@ from app.api.deps import AccessContext, require_permission
 from app.core.clinical_data import (
     DEFAULT_REVIEW_STATUS,
     DEFAULT_UPLOAD_STATUS,
-    SUBJECT_SECTION_SPECS,
 )
+from app.core.config import settings
 from app.core.database import get_db
-from app.models import Center, Project, Stage, StageFile, StageTemplate, Subject, SubjectItem
+from app.core.files import ensure_relative_path
+from app.models import (
+    Center,
+    FileAsset,
+    PdfPacket,
+    Project,
+    ReviewRecord,
+    Stage,
+    StageFile,
+    StageTemplate,
+    Subject,
+    SubjectItem,
+    User,
+)
 from app.models.clinical_data import SubjectSection
 from app.schemas import (
     ClinicalDatasetRead,
+    ClinicalPhaseRead,
+    StageFileGroupRead,
     StageFileRead,
     SubjectCreate,
     SubjectItemRead,
@@ -24,13 +39,22 @@ from app.schemas import (
     SubjectSectionRead,
     SubjectUpdate,
 )
-from app.services.clinical_status import recalculate_subject_status
+from app.services.audit import record_operation
+from app.services.clinical_status import recalculate_subject_status, required_item_status
+from app.services.pdf_packets import remove_packet_physical_file
+from app.services.stage_config import (
+    CENTER_FILE_SCOPE,
+    PARENT_STAGE_CODES,
+    ensure_project_stage_config,
+)
+from app.services.subject_setup import create_default_subject_sections
 
 router = APIRouter()
 ModelT = TypeVar("ModelT", Project, Center, Stage, StageFile, Subject, SubjectItem)
 DBSession = Annotated[Session, Depends(get_db)]
 ClinicalRead = Annotated[AccessContext, Depends(require_permission("clinical_data:read"))]
 ClinicalWrite = Annotated[AccessContext, Depends(require_permission("clinical_data:write"))]
+ClinicalDelete = Annotated[AccessContext, Depends(require_permission("clinical_data:delete"))]
 
 
 def get_or_404(db: Session, model: type[ModelT], item_id: int, label: str) -> ModelT:
@@ -91,15 +115,173 @@ def ensure_dataset_scope(
     return center
 
 
+def child_stage_ids_for_phase(db: Session, project_id: int, phase_code: str) -> list[int]:
+    return list(
+        db.scalars(
+            select(Stage.id)
+            .where(
+                Stage.project_id == project_id,
+                Stage.phase_code == phase_code,
+                Stage.parent_id.is_not(None),
+                Stage.enabled.is_(True),
+            )
+            .order_by(Stage.sort_order, Stage.id)
+        )
+    )
+
+
+def stage_ids_for_center_files(
+    db: Session,
+    project_id: int,
+    stage_id: int | None = None,
+) -> list[int]:
+    if stage_id is None:
+        return list(
+            db.scalars(
+                select(Stage.id)
+                .where(
+                    Stage.project_id == project_id,
+                    Stage.parent_id.is_not(None),
+                    Stage.phase_code.in_(["STARTUP", "CLOSEOUT"]),
+                    Stage.enabled.is_(True),
+                )
+                .order_by(Stage.phase_code, Stage.sort_order, Stage.id)
+            )
+        )
+    stage = ensure_stage_belongs_to_project(db, project_id, stage_id)
+    if stage.parent_id is None:
+        if stage.code == "TRIAL":
+            return []
+        if stage.code in PARENT_STAGE_CODES:
+            return child_stage_ids_for_phase(db, project_id, stage.code)
+    if stage.phase_code == "TRIAL":
+        return []
+    return [stage.id]
+
+
+def user_display_names(db: Session, user_ids: set[int]) -> dict[int, str]:
+    if not user_ids:
+        return {}
+    users = db.scalars(select(User).where(User.id.in_(user_ids)))
+    return {user.id: user.full_name or user.username for user in users}
+
+
+def enrich_stage_files(db: Session, stage_files: list[StageFile]) -> None:
+    ids = [stage_file.id for stage_file in stage_files]
+    if not ids:
+        return
+    latest_uploads: dict[int, FileAsset] = {}
+    uploads = db.scalars(
+        select(FileAsset)
+        .where(FileAsset.stage_file_id.in_(ids), FileAsset.status == "active")
+        .order_by(FileAsset.uploaded_at.desc(), FileAsset.id.desc())
+    )
+    for upload in uploads:
+        if upload.stage_file_id is not None and upload.stage_file_id not in latest_uploads:
+            latest_uploads[upload.stage_file_id] = upload
+
+    latest_reviews: dict[int, ReviewRecord] = {}
+    reviews = db.scalars(
+        select(ReviewRecord)
+        .where(
+            ReviewRecord.target_type == "stage_file",
+            ReviewRecord.target_id.in_(ids),
+            ReviewRecord.action.in_(["approve", "reject"]),
+        )
+        .order_by(ReviewRecord.created_at.desc(), ReviewRecord.id.desc())
+    )
+    for review in reviews:
+        latest_reviews.setdefault(review.target_id, review)
+
+    user_ids = {
+        user_id
+        for item in [*latest_uploads.values(), *latest_reviews.values()]
+        if (user_id := getattr(item, "uploaded_by", None) or getattr(item, "reviewer_id", None))
+        is not None
+    }
+    names = user_display_names(db, user_ids)
+    for stage_file in stage_files:
+        upload = latest_uploads.get(stage_file.id)
+        review = latest_reviews.get(stage_file.id)
+        required = True if stage_file.stage_template is None else stage_file.stage_template.required
+        stage_file.uploaded_by = upload.uploaded_by if upload else None
+        stage_file.uploaded_by_name = names.get(upload.uploaded_by) if upload else None
+        stage_file.uploaded_at = upload.uploaded_at if upload else None
+        stage_file.reviewer_id = review.reviewer_id if review else None
+        stage_file.reviewer_name = names.get(review.reviewer_id) if review else None
+        stage_file.reviewed_at = review.created_at if review else None
+        stage_file.completeness_status = required_item_status(
+            stage_file.upload_status,
+            stage_file.review_status,
+            required,
+        )
+
+
+def enrich_subject_items(db: Session, subject_items: list[SubjectItem]) -> None:
+    ids = [item.id for item in subject_items]
+    if not ids:
+        return
+    latest_uploads: dict[int, FileAsset] = {}
+    uploads = db.scalars(
+        select(FileAsset)
+        .where(FileAsset.subject_item_id.in_(ids), FileAsset.status == "active")
+        .order_by(FileAsset.uploaded_at.desc(), FileAsset.id.desc())
+    )
+    for upload in uploads:
+        if upload.subject_item_id is not None and upload.subject_item_id not in latest_uploads:
+            latest_uploads[upload.subject_item_id] = upload
+
+    latest_reviews: dict[int, ReviewRecord] = {}
+    reviews = db.scalars(
+        select(ReviewRecord)
+        .where(
+            ReviewRecord.target_type == "subject_item",
+            ReviewRecord.target_id.in_(ids),
+            ReviewRecord.action.in_(["approve", "reject"]),
+        )
+        .order_by(ReviewRecord.created_at.desc(), ReviewRecord.id.desc())
+    )
+    for review in reviews:
+        latest_reviews.setdefault(review.target_id, review)
+
+    user_ids = {
+        user_id
+        for item in [*latest_uploads.values(), *latest_reviews.values()]
+        if (user_id := getattr(item, "uploaded_by", None) or getattr(item, "reviewer_id", None))
+        is not None
+    }
+    names = user_display_names(db, user_ids)
+    for subject_item in subject_items:
+        upload = latest_uploads.get(subject_item.id)
+        review = latest_reviews.get(subject_item.id)
+        subject_item.uploaded_by = upload.uploaded_by if upload else None
+        subject_item.uploaded_by_name = names.get(upload.uploaded_by) if upload else None
+        subject_item.uploaded_at = upload.uploaded_at if upload else None
+        subject_item.reviewer_id = review.reviewer_id if review else None
+        subject_item.reviewer_name = names.get(review.reviewer_id) if review else None
+        subject_item.reviewed_at = review.created_at if review else None
+        subject_item.completeness_status = required_item_status(
+            subject_item.upload_status,
+            subject_item.review_status,
+            subject_item.required,
+        )
+
+
 def materialize_stage_files(
     db: Session,
     project_id: int,
     center_id: int,
     stage_id: int | None = None,
 ) -> list[StageFile]:
-    template_statement = select(StageTemplate).where(StageTemplate.project_id == project_id)
-    if stage_id is not None:
-        template_statement = template_statement.where(StageTemplate.stage_id == stage_id)
+    ensure_project_stage_config(db, project_id)
+    stage_ids = stage_ids_for_center_files(db, project_id, stage_id)
+    if not stage_ids:
+        return []
+    template_statement = select(StageTemplate).where(
+        StageTemplate.project_id == project_id,
+        StageTemplate.stage_id.in_(stage_ids),
+        StageTemplate.template_scope == CENTER_FILE_SCOPE,
+    )
     templates = list(
         db.scalars(
             template_statement.order_by(
@@ -141,10 +323,9 @@ def materialize_stage_files(
     stage_file_statement = select(StageFile).where(
         StageFile.project_id == project_id,
         StageFile.center_id == center_id,
+        StageFile.stage_id.in_(stage_ids),
     )
-    if stage_id is not None:
-        stage_file_statement = stage_file_statement.where(StageFile.stage_id == stage_id)
-    return list(
+    stage_files = list(
         db.scalars(
             stage_file_statement.order_by(
                 StageFile.stage_id,
@@ -152,35 +333,8 @@ def materialize_stage_files(
             )
         )
     )
-
-
-def create_default_subject_sections(db: Session, subject: Subject) -> None:
-    for section_spec in SUBJECT_SECTION_SPECS:
-        section = SubjectSection(
-            project_id=subject.project_id,
-            subject_id=subject.id,
-            section_code=section_spec.code,
-            name=section_spec.name,
-            visit_name=section_spec.visit_name,
-            time_window=section_spec.time_window,
-            sort_order=section_spec.sort_order,
-            description=section_spec.description,
-        )
-        db.add(section)
-        db.flush()
-        for item_spec in section_spec.items:
-            db.add(
-                SubjectItem(
-                    subject_id=subject.id,
-                    section_id=section.id,
-                    item_name=item_spec.name,
-                    item_code=item_spec.code,
-                    sort_order=item_spec.sort_order,
-                    required=True,
-                    upload_status=DEFAULT_UPLOAD_STATUS,
-                    review_status=DEFAULT_REVIEW_STATUS,
-                )
-            )
+    enrich_stage_files(db, stage_files)
+    return stage_files
 
 
 def scoped_subject_statement(access: AccessContext):
@@ -202,6 +356,30 @@ def ensure_subject_access(access: AccessContext, subject: Subject) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Subject scope denied")
 
 
+def remove_subject_physical_files(file_assets: list[FileAsset]) -> None:
+    paths: set[str] = set()
+    for file_asset in file_assets:
+        paths.add(file_asset.storage_path)
+        for version in file_asset.versions:
+            paths.add(version.storage_path)
+
+    for storage_path in paths:
+        try:
+            path = ensure_relative_path(settings.file_storage_root, storage_path)
+        except ValueError:
+            continue
+        if not path.exists():
+            continue
+        path.unlink()
+        for parent in path.parents:
+            if parent == settings.file_storage_root.resolve():
+                break
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+
+
 @router.get("/clinical-datasets", response_model=ClinicalDatasetRead)
 def get_clinical_dataset(
     db: DBSession,
@@ -212,22 +390,34 @@ def get_clinical_dataset(
     if project_id is None or center_id is None:
         return ClinicalDatasetRead(project_id=project_id, center_id=center_id)
     ensure_dataset_scope(db, access, project_id, center_id)
-    stages = list(
+    ensure_project_stage_config(db, project_id)
+    db.commit()
+    phases = list(
         db.scalars(
             select(Stage)
-            .where(Stage.project_id == project_id)
+            .where(Stage.project_id == project_id, Stage.parent_id.is_(None))
             .order_by(Stage.sort_order, Stage.id)
         )
     )
-    stage_by_code = {stage.code: stage for stage in stages}
+    children = list(
+        db.scalars(
+            select(Stage)
+            .where(Stage.project_id == project_id, Stage.parent_id.is_not(None))
+            .order_by(Stage.phase_code, Stage.sort_order, Stage.id)
+        )
+    )
+    phase_by_code = {stage.code: stage for stage in phases}
+    children_by_phase: dict[str, list[Stage]] = {}
+    for child in children:
+        children_by_phase.setdefault(child.phase_code or "", []).append(child)
     startup_files = (
-        materialize_stage_files(db, project_id, center_id, stage_by_code["STARTUP"].id)
-        if "STARTUP" in stage_by_code
+        materialize_stage_files(db, project_id, center_id, phase_by_code["STARTUP"].id)
+        if "STARTUP" in phase_by_code
         else []
     )
     closeout_files = (
-        materialize_stage_files(db, project_id, center_id, stage_by_code["CLOSEOUT"].id)
-        if "CLOSEOUT" in stage_by_code
+        materialize_stage_files(db, project_id, center_id, phase_by_code["CLOSEOUT"].id)
+        if "CLOSEOUT" in phase_by_code
         else []
     )
     subjects = list(
@@ -237,16 +427,54 @@ def get_clinical_dataset(
             .order_by(Subject.id)
         )
     )
+    startup_groups = stage_file_groups(children_by_phase.get("STARTUP", []), startup_files)
+    closeout_groups = stage_file_groups(children_by_phase.get("CLOSEOUT", []), closeout_files)
+    phase_reads = []
+    for phase in phases:
+        phase_files: list[StageFile] = []
+        phase_file_groups: list[StageFileGroupRead] = []
+        if phase.code == "STARTUP":
+            phase_files = startup_files
+            phase_file_groups = startup_groups
+        if phase.code == "CLOSEOUT":
+            phase_files = closeout_files
+            phase_file_groups = closeout_groups
+        phase_reads.append(
+            ClinicalPhaseRead(
+                phase=phase,
+                child_stages=children_by_phase.get(phase.code, []),
+                files=phase_files,
+                file_groups=phase_file_groups,
+                subjects=subjects if phase.code == "TRIAL" else [],
+            )
+        )
     return ClinicalDatasetRead(
         project_id=project_id,
         center_id=center_id,
-        stages=stages,
+        stages=phases,
+        child_stages=children,
+        phases=phase_reads,
+        startup_file_groups=startup_groups,
         startup_files=startup_files,
+        trial_stages=children_by_phase.get("TRIAL", []),
+        trial_files=[],
         subjects=subjects,
+        closeout_file_groups=closeout_groups,
         closeout_files=closeout_files,
         stage_file_count=len(startup_files) + len(closeout_files),
         subject_count=len(subjects),
     )
+
+
+def stage_file_groups(stages: list[Stage], files: list[StageFile]) -> list[StageFileGroupRead]:
+    files_by_stage: dict[int, list[StageFile]] = {}
+    for file in files:
+        files_by_stage.setdefault(file.stage_id, []).append(file)
+    return [
+        StageFileGroupRead(stage=stage, files=files_by_stage.get(stage.id, []))
+        for stage in stages
+        if stage.enabled
+    ]
 
 
 @router.get("/stage-files", response_model=list[StageFileRead])
@@ -290,7 +518,12 @@ def list_subjects(
 
 
 @router.post("/subjects", response_model=SubjectRead, status_code=status.HTTP_201_CREATED)
-def create_subject(payload: SubjectCreate, db: DBSession, access: ClinicalWrite) -> Subject:
+def create_subject(
+    payload: SubjectCreate,
+    db: DBSession,
+    access: ClinicalWrite,
+    request: Request,
+) -> Subject:
     center = ensure_dataset_scope(db, access, payload.project_id, payload.center_id)
     subject_data = payload.model_dump()
     subject_data["center_id"] = center.id
@@ -299,6 +532,17 @@ def create_subject(payload: SubjectCreate, db: DBSession, access: ClinicalWrite)
     try:
         db.flush()
         create_default_subject_sections(db, subject)
+        record_operation(
+            db,
+            action="subject.create",
+            request=request,
+            access=access,
+            target_type="subject",
+            target_id=subject.id,
+            project_id=subject.project_id,
+            center_id=subject.center_id,
+            detail={"screening_no": subject.screening_no},
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -323,6 +567,7 @@ def update_subject(
     payload: SubjectUpdate,
     db: DBSession,
     access: ClinicalWrite,
+    request: Request,
 ) -> Subject:
     subject = get_or_404(db, Subject, subject_id, "subject")
     ensure_subject_access(access, subject)
@@ -336,9 +581,60 @@ def update_subject(
         ensure_center_access(access, target_center)
     for field, value in update_data.items():
         setattr(subject, field, value)
+    record_operation(
+        db,
+        action="subject.update",
+        request=request,
+        access=access,
+        target_type="subject",
+        target_id=subject.id,
+        project_id=subject.project_id,
+        center_id=subject.center_id,
+        detail={"changed_fields": sorted(update_data), "screening_no": subject.screening_no},
+    )
     commit_or_conflict(db, "screening number already exists in this project center")
     db.refresh(subject)
     return subject
+
+
+@router.delete("/subjects/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_subject(
+    subject_id: int,
+    db: DBSession,
+    access: ClinicalDelete,
+    request: Request,
+) -> None:
+    subject = get_or_404(db, Subject, subject_id, "subject")
+    ensure_subject_access(access, subject)
+    subject_item_ids = list(
+        db.scalars(select(SubjectItem.id).where(SubjectItem.subject_id == subject.id))
+    )
+    file_condition = FileAsset.subject_id == subject.id
+    if subject_item_ids:
+        file_condition = or_(file_condition, FileAsset.subject_item_id.in_(subject_item_ids))
+    file_assets = list(db.scalars(select(FileAsset).where(file_condition)))
+    pdf_packets = list(db.scalars(select(PdfPacket).where(PdfPacket.subject_id == subject.id)))
+    record_operation(
+        db,
+        action="subject.delete",
+        request=request,
+        access=access,
+        target_type="subject",
+        target_id=subject.id,
+        project_id=subject.project_id,
+        center_id=subject.center_id,
+        detail={
+            "screening_no": subject.screening_no,
+            "subject_item_count": len(subject_item_ids),
+            "file_count": len(file_assets),
+            "pdf_packet_count": len(pdf_packets),
+        },
+    )
+    remove_subject_physical_files(file_assets)
+    for packet in pdf_packets:
+        remove_packet_physical_file(packet)
+    db.delete(subject)
+    db.commit()
 
 
 @router.get("/subjects/{subject_id}/sections", response_model=list[SubjectSectionRead])
@@ -366,7 +662,7 @@ def list_subject_items(
 ) -> list[SubjectItem]:
     subject = get_or_404(db, Subject, subject_id, "subject")
     ensure_subject_access(access, subject)
-    return list(
+    items = list(
         db.scalars(
             select(SubjectItem)
             .join(SubjectSection, SubjectItem.section_id == SubjectSection.id)
@@ -374,6 +670,8 @@ def list_subject_items(
             .order_by(SubjectSection.sort_order, SubjectItem.sort_order, SubjectItem.id)
         )
     )
+    enrich_subject_items(db, items)
+    return items
 
 
 @router.put("/subject-items/{item_id}", response_model=SubjectItemRead)
@@ -382,6 +680,7 @@ def update_subject_item(
     payload: SubjectItemUpdate,
     db: DBSession,
     access: ClinicalWrite,
+    request: Request,
 ) -> SubjectItem:
     item = get_or_404(db, SubjectItem, item_id, "subject item")
     subject = get_or_404(db, Subject, item.subject_id, "subject")
@@ -389,6 +688,19 @@ def update_subject_item(
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(item, field, value)
     recalculate_subject_status(db, subject)
+    update_data = payload.model_dump(exclude_unset=True)
+    record_operation(
+        db,
+        action="subject_item.update",
+        request=request,
+        access=access,
+        target_type="subject_item",
+        target_id=item.id,
+        project_id=subject.project_id,
+        center_id=subject.center_id,
+        detail={"changed_fields": sorted(update_data), "item_code": item.item_code},
+    )
     db.commit()
     db.refresh(item)
+    enrich_subject_items(db, [item])
     return item

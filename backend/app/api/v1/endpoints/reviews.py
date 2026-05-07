@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
@@ -20,9 +20,13 @@ from app.schemas import (
     CompletenessStatusCount,
     CompletenessSummaryRead,
     ReviewActionRequest,
+    ReviewBatchApproveRead,
+    ReviewBatchApproveRequest,
+    ReviewBatchApproveResultItem,
     ReviewRecordRead,
     StageCompletenessRead,
 )
+from app.services.audit import record_operation
 from app.services.clinical_status import (
     build_completeness_summary,
     recalculate_subject_status,
@@ -229,8 +233,11 @@ def submit_review(
     payload: ReviewActionRequest,
     db: DBSession,
     access: ReviewSubmitAccess,
+    request: Request,
 ) -> ReviewRecord:
-    target, subject, _, _ = resolve_target(db, access, payload.target_type, payload.target_id)
+    target, subject, project_id, center_id = resolve_target(
+        db, access, payload.target_type, payload.target_id
+    )
     if target.review_status == REVIEW_APPROVED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="target already approved"
@@ -247,6 +254,17 @@ def submit_review(
     target.review_status = REVIEW_PENDING
     record = create_review_record(db, access, payload, "submit", REVIEW_PENDING)
     apply_target_recalculation(db, target, subject)
+    record_operation(
+        db,
+        action="review.submit",
+        request=request,
+        access=access,
+        target_type=payload.target_type,
+        target_id=payload.target_id,
+        project_id=project_id,
+        center_id=center_id,
+        detail={"comment": payload.comment},
+    )
     db.commit()
     db.refresh(record)
     return record
@@ -259,16 +277,115 @@ def approve_review(
     payload: ReviewActionRequest,
     db: DBSession,
     access: ReviewApproveAccess,
+    request: Request,
 ) -> ReviewRecord:
-    target, subject, _, _ = resolve_target(db, access, payload.target_type, payload.target_id)
+    target, subject, project_id, center_id = resolve_target(
+        db, access, payload.target_type, payload.target_id
+    )
     if target.review_status != REVIEW_PENDING:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target is not pending")
     target.review_status = REVIEW_APPROVED
     record = create_review_record(db, access, payload, "approve", REVIEW_APPROVED)
     apply_target_recalculation(db, target, subject)
+    record_operation(
+        db,
+        action="review.approve",
+        request=request,
+        access=access,
+        target_type=payload.target_type,
+        target_id=payload.target_id,
+        project_id=project_id,
+        center_id=center_id,
+        detail={"comment": payload.comment},
+    )
     db.commit()
     db.refresh(record)
     return record
+
+
+@router.post("/reviews/approve-batch", response_model=ReviewBatchApproveRead)
+def approve_reviews_batch(
+    payload: ReviewBatchApproveRequest,
+    db: DBSession,
+    access: ReviewApproveAccess,
+    request: Request,
+) -> ReviewBatchApproveRead:
+    results: list[ReviewBatchApproveResultItem] = []
+    approved_count = 0
+    skipped_count = 0
+    project_ids: set[int] = set()
+    center_ids: set[int] = set()
+
+    for target_payload in payload.targets:
+        target, subject, project_id, center_id = resolve_target(
+            db,
+            access,
+            target_payload.target_type,
+            target_payload.target_id,
+        )
+        project_ids.add(project_id)
+        center_ids.add(center_id)
+        result = ReviewBatchApproveResultItem(
+            target_type=target_payload.target_type,
+            target_id=target_payload.target_id,
+            status="skipped",
+            message="",
+        )
+        action_payload = ReviewActionRequest(
+            target_type=target_payload.target_type,
+            target_id=target_payload.target_id,
+        )
+
+        if target.review_status == REVIEW_APPROVED:
+            result.message = "已通过，跳过"
+        elif target.upload_status not in UPLOADED_STATUSES:
+            result.message = "未处于已上传或已替换状态，跳过"
+        elif not target_has_file(db, target_payload.target_type, target_payload.target_id):
+            result.message = "没有已上传文件，跳过"
+        elif target.review_status == REVIEW_PENDING:
+            target.review_status = REVIEW_APPROVED
+            create_review_record(db, access, action_payload, "approve", REVIEW_APPROVED)
+            apply_target_recalculation(db, target, subject)
+            result.status = "approved"
+            result.message = "已通过"
+            result.approved = True
+        else:
+            target.review_status = REVIEW_PENDING
+            create_review_record(db, access, action_payload, "submit", REVIEW_PENDING)
+            target.review_status = REVIEW_APPROVED
+            create_review_record(db, access, action_payload, "approve", REVIEW_APPROVED)
+            apply_target_recalculation(db, target, subject)
+            result.status = "approved"
+            result.message = "已自动提交并通过"
+            result.submitted = True
+            result.approved = True
+
+        if result.approved:
+            approved_count += 1
+        else:
+            skipped_count += 1
+        results.append(result)
+
+    record_operation(
+        db,
+        action="review.approve_batch",
+        request=request,
+        access=access,
+        target_type="review_batch",
+        project_id=next(iter(project_ids)) if len(project_ids) == 1 else None,
+        center_id=next(iter(center_ids)) if len(center_ids) == 1 else None,
+        detail={
+            "approved_count": approved_count,
+            "skipped_count": skipped_count,
+            "targets": [item.model_dump() for item in results],
+        },
+    )
+    db.commit()
+    return ReviewBatchApproveRead(
+        approved_count=approved_count,
+        skipped_count=skipped_count,
+        results=results,
+    )
 
 
 @router.post(
@@ -278,18 +395,32 @@ def reject_review(
     payload: ReviewActionRequest,
     db: DBSession,
     access: ReviewApproveAccess,
+    request: Request,
 ) -> ReviewRecord:
     if not payload.comment:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="reject reason required"
         )
-    target, subject, _, _ = resolve_target(db, access, payload.target_type, payload.target_id)
+    target, subject, project_id, center_id = resolve_target(
+        db, access, payload.target_type, payload.target_id
+    )
     if target.review_status != REVIEW_PENDING:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target is not pending")
     target.review_status = REVIEW_REJECTED
     target.upload_status = UPLOAD_SUPPLEMENT_REQUIRED
     record = create_review_record(db, access, payload, "reject", REVIEW_REJECTED)
     apply_target_recalculation(db, target, subject)
+    record_operation(
+        db,
+        action="review.reject",
+        request=request,
+        access=access,
+        target_type=payload.target_type,
+        target_id=payload.target_id,
+        project_id=project_id,
+        center_id=center_id,
+        detail={"comment": payload.comment},
+    )
     db.commit()
     db.refresh(record)
     return record
@@ -330,6 +461,7 @@ def recalculate_completeness(
     payload: CompletenessRecalculateRequest,
     db: DBSession,
     access: CompletenessRecalculateAccess,
+    request: Request,
 ) -> CompletenessSummaryRead:
     ensure_completeness_scope(db, access, payload.project_id, payload.center_id, payload.subject_id)
     recalculate_subjects_for_access(
@@ -338,6 +470,24 @@ def recalculate_completeness(
         project_id=payload.project_id,
         center_id=payload.center_id,
         subject_id=payload.subject_id,
+    )
+    audit_project_id = payload.project_id
+    audit_center_id = payload.center_id
+    if payload.subject_id is not None:
+        subject = db.get(Subject, payload.subject_id)
+        if subject is not None:
+            audit_project_id = subject.project_id
+            audit_center_id = subject.center_id
+    record_operation(
+        db,
+        action="completeness.recalculate",
+        request=request,
+        access=access,
+        target_type="completeness",
+        target_id=payload.subject_id,
+        project_id=audit_project_id,
+        center_id=audit_center_id,
+        detail=payload.model_dump(exclude_none=True),
     )
     db.commit()
     return completeness_summary(db, access, payload.project_id, payload.center_id)

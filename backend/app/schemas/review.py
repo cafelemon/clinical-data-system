@@ -28,6 +28,30 @@ class ReviewRecordRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ReviewBatchApproveTarget(BaseModel):
+    target_type: str = Field(pattern="^(stage_file|subject_item)$")
+    target_id: int
+
+
+class ReviewBatchApproveRequest(BaseModel):
+    targets: list[ReviewBatchApproveTarget] = Field(min_length=1, max_length=200)
+
+
+class ReviewBatchApproveResultItem(BaseModel):
+    target_type: str
+    target_id: int
+    status: str
+    message: str
+    submitted: bool = False
+    approved: bool = False
+
+
+class ReviewBatchApproveRead(BaseModel):
+    approved_count: int
+    skipped_count: int
+    results: list[ReviewBatchApproveResultItem]
+
+
 class CompletenessRecalculateRequest(BaseModel):
     project_id: int | None = None
     center_id: int | None = None

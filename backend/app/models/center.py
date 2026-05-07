@@ -31,3 +31,4 @@ class Center(Base):
     subjects = relationship("Subject", back_populates="center", cascade="all, delete-orphan")
     stage_files = relationship("StageFile", back_populates="center", cascade="all, delete-orphan")
     file_assets = relationship("FileAsset", back_populates="center", cascade="all, delete-orphan")
+    pdf_packets = relationship("PdfPacket", back_populates="center", cascade="all, delete-orphan")

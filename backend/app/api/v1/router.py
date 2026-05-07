@@ -4,10 +4,13 @@ from app.api.v1.endpoints import (
     auth,
     clinical_data,
     dashboard,
+    excel_io,
     files,
     health,
     identity,
     master_data,
+    operation_logs,
+    pdf_packets,
     reviews,
 )
 
@@ -18,5 +21,8 @@ api_router.include_router(identity.router, tags=["identity"])
 api_router.include_router(master_data.router, tags=["master-data"])
 api_router.include_router(clinical_data.router, tags=["clinical-data"])
 api_router.include_router(files.router, tags=["files"])
+api_router.include_router(pdf_packets.router, tags=["pdf-packets"])
 api_router.include_router(reviews.router, tags=["reviews"])
 api_router.include_router(dashboard.router, tags=["dashboard"])
+api_router.include_router(excel_io.router, tags=["excel-io"])
+api_router.include_router(operation_logs.router, tags=["operation-logs"])

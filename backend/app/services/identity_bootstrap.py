@@ -43,7 +43,8 @@ def bootstrap_identity(db: Session) -> None:
             role.label = spec["label"]
             role.description = spec["description"]
             role.system = True
-        role.permissions = [permissions_by_code[code] for code in spec["permissions"]]
+        if not role.permissions:
+            role.permissions = [permissions_by_code[code] for code in spec["permissions"]]
         roles_by_name[name] = role
 
     admin = db.scalar(select(User).where(User.username == settings.initial_admin_username))
@@ -66,4 +67,3 @@ def try_bootstrap_identity(db: Session) -> None:
         bootstrap_identity(db)
     except SQLAlchemyError:
         db.rollback()
-

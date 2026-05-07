@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -47,6 +47,12 @@ class Subject(Base):
     gender: Mapped[str | None] = mapped_column(String(30))
     age: Mapped[int | None] = mapped_column(Integer)
     enrolled_at: Mapped[date | None] = mapped_column(Date)
+    informed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    visit1_date: Mapped[date | None] = mapped_column(Date)
+    visit2_date: Mapped[date | None] = mapped_column(Date)
+    visit3_date: Mapped[date | None] = mapped_column(Date)
+    visit4_date: Mapped[date | None] = mapped_column(Date)
+    visit5_date: Mapped[date | None] = mapped_column(Date)
     added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     review_status: Mapped[str] = mapped_column(
         String(30),
@@ -82,6 +88,7 @@ class Subject(Base):
         order_by="SubjectItem.sort_order",
     )
     file_assets = relationship("FileAsset", back_populates="subject", cascade="all, delete-orphan")
+    pdf_packets = relationship("PdfPacket", back_populates="subject", cascade="all, delete-orphan")
 
 
 class SubjectSection(Base):
@@ -95,6 +102,10 @@ class SubjectSection(Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
+    )
+    stage_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stages.id", ondelete="SET NULL"),
+        index=True,
     )
     subject_id: Mapped[int] = mapped_column(
         ForeignKey("subjects.id", ondelete="CASCADE"),
@@ -133,6 +144,10 @@ class SubjectItem(Base):
         ForeignKey("subject_sections.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
+    )
+    stage_template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stage_templates.id", ondelete="SET NULL"),
+        index=True,
     )
     item_name: Mapped[str] = mapped_column(String(150), nullable=False)
     item_code: Mapped[str] = mapped_column(String(100), nullable=False)
