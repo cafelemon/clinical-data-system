@@ -303,8 +303,8 @@ def test_dashboard_project_metrics_distributions_and_trend(
         headers=admin_headers,
     )
     assert review_status.status_code == 200
-    assert review_status.json()["approved"] == 31
-    assert review_status.json()["unreviewed"] == 16
+    assert review_status.json()["approved"] == 39
+    assert review_status.json()["unreviewed"] == 20
 
     completeness = client.get(
         f"/api/dashboard/project/{project_id}/completeness",

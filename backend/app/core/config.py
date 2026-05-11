@@ -25,6 +25,9 @@ class Settings(BaseSettings):
 
     file_storage_root: Path = PROJECT_ROOT / "data-dev" / "file-storage"
     max_upload_size_mb: int = 200
+    pdf_packet_ocr_api_url: str | None = "http://127.0.0.1:8048"
+    pdf_packet_ocr_dpi: int = 120
+    pdf_packet_ocr_timeout_seconds: int = 600
     pdf_packet_ocr_command: str | None = None
     backend_cors_origins: list[str] = [
         "http://localhost:5173",

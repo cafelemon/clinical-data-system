@@ -205,7 +205,7 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
 
     items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers)
     assert items.status_code == 200
-    assert len(items.json()) == 15
+    assert len(items.json()) == 19
 
     item_id = items.json()[0]["id"]
     update_item = client.put(

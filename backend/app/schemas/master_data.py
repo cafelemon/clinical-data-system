@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -138,6 +139,31 @@ class StageTemplateRead(StageTemplateBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class StageTemplateKeywordGenerateRequest(BaseModel):
+    subject_id: int
+    mode: Literal["replace", "merge"] = "replace"
+    max_keywords_per_item: int = Field(default=12, ge=3, le=30)
+
+
+class StageTemplateKeywordGenerateItemRead(BaseModel):
+    subject_item_id: int
+    stage_template_id: int | None = None
+    item_name: str
+    item_code: str
+    status: str
+    keywords: list[str] = []
+    keyword_count: int = 0
+    ocr_page_count: int = 0
+    message: str | None = None
+
+
+class StageTemplateKeywordGenerateRead(BaseModel):
+    subject_id: int
+    updated_count: int
+    skipped_count: int
+    items: list[StageTemplateKeywordGenerateItemRead]
 
 
 class StageOptionRead(BaseModel):

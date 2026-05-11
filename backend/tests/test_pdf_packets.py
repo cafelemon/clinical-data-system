@@ -261,6 +261,97 @@ def test_pdf_packet_recognizes_segments_and_uploads_selected_pages(
     assert refreshed_consent["upload_status"] == "uploaded"
 
 
+def test_pdf_packet_uses_ocr_text_when_pdf_has_no_text_layer(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
+    monkeypatch.setattr("app.services.pdf_packets.extract_text_with_pypdf", lambda *_: ["", ""])
+    monkeypatch.setattr("app.services.pdf_packets.extract_text_with_pdftotext", lambda *_: ["", ""])
+    monkeypatch.setattr(
+        "app.services.pdf_packets.extract_text_with_ocr_api",
+        lambda *_: ["知情同意书", "CT报告"],
+    )
+    project_id = create_project(client, admin_headers)
+    center_id = create_center(client, admin_headers, project_id)
+    subject = create_subject(client, admin_headers, project_id, center_id)
+    items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers).json()
+    consent_item = next(item for item in items if item["item_code"] == "知情同意书")
+    ct_item = next(item for item in items if item["item_code"] == "CT报告")
+
+    upload = client.post(
+        "/api/pdf-packets/upload",
+        headers=admin_headers,
+        data={
+            "project_id": str(project_id),
+            "center_id": str(center_id),
+            "subject_id": str(subject["id"]),
+        },
+        files={"file": ("010001.pdf", create_pdf(["", ""]), "application/pdf")},
+    )
+
+    assert upload.status_code == 201
+    segments = client.get(
+        f"/api/pdf-packets/{upload.json()['id']}/segments",
+        headers=admin_headers,
+    )
+    assert segments.status_code == 200
+    suggested_ids = {segment["suggested_subject_item_id"] for segment in segments.json()}
+    assert {consent_item["id"], ct_item["id"]}.issubset(suggested_ids)
+
+
+def test_generate_stage_template_keywords_from_subject_files(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
+    project_id = create_project(client, admin_headers)
+    center_id = create_center(client, admin_headers, project_id)
+    subject = create_subject(client, admin_headers, project_id, center_id)
+    items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers).json()
+    consent_item = next(item for item in items if item["item_code"] == "知情同意书")
+    upload = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={"file_category": "clinical_document", "subject_item_id": str(consent_item["id"])},
+        files={
+            "file": (
+                "010001-知情同意书.pdf",
+                create_pdf(["受试者知情同意声明"]),
+                "application/pdf",
+            )
+        },
+    )
+    assert upload.status_code == 201
+    monkeypatch.setattr(
+        "app.services.template_keywords.extract_page_texts",
+        lambda *_: ["受试者知情同意声明"],
+    )
+
+    generated = client.post(
+        "/api/stage-templates/recognition-keywords/from-subject",
+        headers=admin_headers,
+        json={"subject_id": subject["id"], "mode": "replace"},
+    )
+
+    assert generated.status_code == 200
+    assert generated.json()["updated_count"] == len(items)
+    templates = client.get(
+        f"/api/stage-templates?project_id={project_id}&template_scope=subject_item",
+        headers=admin_headers,
+    )
+    assert templates.status_code == 200
+    consent_template = next(
+        template for template in templates.json() if template["item_code"] == "知情同意书"
+    )
+    assert "知情同意书" in consent_template["recognition_keywords"]
+    assert "受试者知情同意声明" in consent_template["recognition_keywords"]
+
+
 def test_pdf_packet_write_permission_required(
     client: TestClient,
     admin_headers: dict[str, str],

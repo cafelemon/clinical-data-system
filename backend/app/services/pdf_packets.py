@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.files import CATEGORY_FOLDERS, StoredUpload, ensure_relative_path, safe_path_part
 from app.models import Center, PdfPacket, PdfPacketSegment, Project, StageTemplate, Subject
 from app.models.clinical_data import SubjectItem
+from app.services.ocr_client import OcrClientError, PaddleOcrClient
 
 
 class PdfPacketError(RuntimeError):
@@ -257,10 +258,27 @@ def extract_text_with_ocr_command(path: Path, page_count: int) -> list[str] | No
     return texts
 
 
+def extract_text_with_ocr_api(path: Path, page_count: int) -> list[str] | None:
+    if not settings.pdf_packet_ocr_api_url:
+        return None
+    try:
+        client = PaddleOcrClient(
+            settings.pdf_packet_ocr_api_url,
+            timeout_seconds=settings.pdf_packet_ocr_timeout_seconds,
+        )
+        return client.ocr_pdf(path, page_count=page_count, dpi=settings.pdf_packet_ocr_dpi)
+    except OcrClientError as exc:
+        raise PdfPacketError(f"OCR API failed: {exc}") from exc
+
+
 def extract_page_texts(path: Path, page_count: int) -> list[str]:
     texts = extract_text_with_pypdf(path, page_count)
     if texts is None or not any(text.strip() for text in texts):
         texts = extract_text_with_pdftotext(path, page_count)
+    if texts is None or not any(text.strip() for text in texts):
+        ocr_api_texts = extract_text_with_ocr_api(path, page_count)
+        if ocr_api_texts is not None:
+            texts = ocr_api_texts
     if texts is None or not any(text.strip() for text in texts):
         ocr_texts = extract_text_with_ocr_command(path, page_count)
         if ocr_texts is not None:

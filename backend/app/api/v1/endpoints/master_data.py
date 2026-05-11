@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AccessContext, require_permission
 from app.core.database import get_db
-from app.models import Center, Dictionary, Project, Stage, StageTemplate
+from app.models import Center, Dictionary, Project, Stage, StageTemplate, Subject
 from app.schemas import (
     CenterCreate,
     CenterRead,
@@ -24,6 +24,8 @@ from app.schemas import (
     StageOptionRead,
     StageRead,
     StageTemplateCreate,
+    StageTemplateKeywordGenerateRead,
+    StageTemplateKeywordGenerateRequest,
     StageTemplateRead,
     StageTemplateUpdate,
     StageUpdate,
@@ -39,9 +41,10 @@ from app.services.stage_config import (
     option_for,
     validate_template_stage,
 )
+from app.services.template_keywords import generate_keywords_from_subject
 
 router = APIRouter()
-ModelT = TypeVar("ModelT", Project, Center, Stage, StageTemplate, Dictionary)
+ModelT = TypeVar("ModelT", Project, Center, Stage, StageTemplate, Dictionary, Subject)
 DBSession = Annotated[Session, Depends(get_db)]
 MasterRead = Annotated[AccessContext, Depends(require_permission("master_data:read"))]
 MasterWrite = Annotated[AccessContext, Depends(require_permission("master_data:write"))]
@@ -803,6 +806,49 @@ def update_stage_template(
     )
     db.refresh(template)
     return template
+
+
+@router.post(
+    "/stage-templates/recognition-keywords/from-subject",
+    response_model=StageTemplateKeywordGenerateRead,
+)
+def generate_stage_template_keywords(
+    payload: StageTemplateKeywordGenerateRequest,
+    db: DBSession,
+    access: MasterWrite,
+    request: Request,
+) -> StageTemplateKeywordGenerateRead:
+    subject = get_or_404(db, Subject, payload.subject_id, "subject")
+    ensure_project_write_access(access, subject.project_id)
+    ensure_project_stage_config(db, subject.project_id)
+    result = generate_keywords_from_subject(
+        db,
+        subject,
+        mode=payload.mode,
+        max_keywords_per_item=payload.max_keywords_per_item,
+    )
+    record_operation(
+        db,
+        action="stage_template.generate_keywords",
+        request=request,
+        access=access,
+        target_type="subject",
+        target_id=subject.id,
+        project_id=subject.project_id,
+        center_id=subject.center_id,
+        detail={
+            "mode": payload.mode,
+            "updated_count": result.updated_count,
+            "skipped_count": result.skipped_count,
+        },
+    )
+    db.commit()
+    return StageTemplateKeywordGenerateRead(
+        subject_id=result.subject_id,
+        updated_count=result.updated_count,
+        skipped_count=result.skipped_count,
+        items=[item.__dict__ for item in result.items],
+    )
 
 
 @router.delete("/stage-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)

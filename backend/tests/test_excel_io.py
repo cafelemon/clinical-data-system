@@ -283,7 +283,7 @@ def test_import_templates_and_four_import_upserts(
         item_count = db.scalar(
             select(func.count(SubjectItem.id)).where(SubjectItem.subject_id == subject["id"])
         )
-    assert item_count == 15
+    assert item_count == 19
 
 
 def test_import_validation_is_all_or_nothing(
