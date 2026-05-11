@@ -30,11 +30,15 @@ export const pdfPacketsApi = {
     formData.append("project_id", String(payload.projectId));
     formData.append("center_id", String(payload.centerId));
     formData.append("subject_id", String(payload.subjectId));
-    const response = await http.post<PdfPacket>("/pdf-packets/upload", formData);
+    const response = await http.post<PdfPacket>("/pdf-packets/upload", formData, {
+      timeout: 1800000,
+    });
     return response.data;
   },
   analyzePacket: async (id: number) => {
-    const response = await http.post<PdfPacket>(`/pdf-packets/${id}/analyze`);
+    const response = await http.post<PdfPacket>(`/pdf-packets/${id}/analyze`, undefined, {
+      timeout: 1800000,
+    });
     return response.data;
   },
   deletePacket: async (id: number) => {

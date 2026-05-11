@@ -1,0 +1,77 @@
+name: clinical-data-stack
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: clinical-postgres-prod
+    restart: unless-stopped
+    env_file:
+      - ./postgres.env
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ../../../runtime/postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  paddle-ocr-api:
+    build:
+      context: ../../../paddle-ocr-api
+      dockerfile: Dockerfile
+    container_name: paddle-ocr-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8048:8000"
+    volumes:
+      - ../../../runtime/paddle-ocr/test_data:/app/test_data
+      - ../../../runtime/paddle-ocr/ocr_outputs:/app/ocr_outputs
+      - ../../../runtime/paddle-ocr/model_cache/paddlex:/root/.paddlex
+      - ../../../runtime/paddle-ocr/model_cache/paddle:/root/.cache/paddle
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()",
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: clinical-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      paddle-ocr-api:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ../../../runtime/file-storage:/data/file-storage
+    command: >
+      sh -c "alembic upgrade head
+      && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    container_name: clinical-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
