@@ -144,7 +144,12 @@ def create_subject(
     response = client.post(
         "/api/subjects",
         headers=headers,
-        json={"project_id": project_id, "center_id": center_id, "screening_no": "010001"},
+        json={
+            "project_id": project_id,
+            "center_id": center_id,
+            "screening_no": "010001",
+            "subject_arm": "experimental",
+        },
     )
     assert response.status_code == 201
     return response.json()

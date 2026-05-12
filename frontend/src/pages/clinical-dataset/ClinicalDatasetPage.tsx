@@ -20,6 +20,7 @@ import type {
   StageFile,
   StageFileGroup,
   Subject,
+  SubjectArm,
 } from "@/types/clinical-data";
 import type { Center, Project, Stage } from "@/types/master-data";
 
@@ -43,28 +44,25 @@ const dataStatusLabels: Record<string, string> = {
   complete: "资料齐全",
 };
 
+const subjectArmLabels: Record<SubjectArm, string> = {
+  experimental: "实验组",
+  control: "对照组",
+};
+
 type SubjectForm = {
   screening_no: string;
+  subject_arm: "" | SubjectArm;
   gender: string;
   age: string;
   informed_at: string;
-  visit1_date: string;
-  visit2_date: string;
-  visit3_date: string;
-  visit4_date: string;
-  visit5_date: string;
 };
 
 const defaultSubjectForm: SubjectForm = {
   screening_no: "",
+  subject_arm: "",
   gender: "",
   age: "",
   informed_at: "",
-  visit1_date: "",
-  visit2_date: "",
-  visit3_date: "",
-  visit4_date: "",
-  visit5_date: "",
 };
 
 const stageConfigs = [
@@ -290,10 +288,11 @@ function SubjectTable({
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1320px] text-left text-sm">
+      <table className="w-full min-w-[1380px] text-left text-sm">
         <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
           <tr>
             <th className="px-3 py-2 font-medium">筛选号</th>
+            <th className="px-3 py-2 font-medium">分组</th>
             <th className="px-3 py-2 font-medium">性别</th>
             <th className="px-3 py-2 font-medium">年龄</th>
             <th className="px-3 py-2 font-medium">知情时间</th>
@@ -311,6 +310,9 @@ function SubjectTable({
           {subjects.map((subject) => (
             <tr key={subject.id}>
               <td className="px-3 py-3 font-medium text-slate-900">{subject.screening_no}</td>
+              <td className="px-3 py-3 text-slate-600">
+                {subject.subject_arm ? subjectArmLabels[subject.subject_arm] : "未分组"}
+              </td>
               <td className="px-3 py-3 text-slate-600">{subject.gender || "-"}</td>
               <td className="px-3 py-3 text-slate-600">{subject.age ?? "-"}</td>
               <td className="px-3 py-3 text-slate-600">{formatDateTimeMinute(subject.informed_at)}</td>
@@ -807,14 +809,10 @@ export function ClinicalDatasetPage() {
     setEditingId(subject.id);
     setForm({
       screening_no: subject.screening_no,
+      subject_arm: subject.subject_arm ?? "",
       gender: subject.gender ?? "",
       age: subject.age === null ? "" : String(subject.age),
       informed_at: toDateTimeLocalValue(subject.informed_at),
-      visit1_date: subject.visit1_date ?? "",
-      visit2_date: subject.visit2_date ?? "",
-      visit3_date: subject.visit3_date ?? "",
-      visit4_date: subject.visit4_date ?? "",
-      visit5_date: subject.visit5_date ?? "",
     });
   }
 
@@ -824,25 +822,28 @@ export function ClinicalDatasetPage() {
       setMessage("请先选择项目和中心");
       return;
     }
+    if (!editingId && !form.subject_arm) {
+      setMessage("新建受试者必须选择分组");
+      return;
+    }
     const payload = {
       project_id: projectId,
       center_id: centerId,
       screening_no: form.screening_no.trim(),
+      ...(form.subject_arm ? { subject_arm: form.subject_arm } : {}),
       gender: form.gender || null,
       age: form.age ? Number(form.age) : null,
       informed_at: form.informed_at || null,
-      visit1_date: form.visit1_date || null,
-      visit2_date: form.visit2_date || null,
-      visit3_date: form.visit3_date || null,
-      visit4_date: form.visit4_date || null,
-      visit5_date: form.visit5_date || null,
     };
     try {
       if (editingId) {
         await clinicalDataApi.updateSubject(editingId, payload);
         setMessage("受试者已更新");
       } else {
-        await clinicalDataApi.createSubject(payload);
+        await clinicalDataApi.createSubject({
+          ...payload,
+          subject_arm: form.subject_arm as SubjectArm,
+        });
         setMessage("受试者已创建");
       }
       resetForm();
@@ -1040,7 +1041,7 @@ export function ClinicalDatasetPage() {
                       <h3 className="text-sm font-semibold text-slate-950">
                         {editingId ? "编辑受试者" : "新增受试者"}
                       </h3>
-                      <form className="mt-4 grid gap-4 lg:grid-cols-4" onSubmit={handleSubmit}>
+                      <form className="mt-4 grid gap-4 lg:grid-cols-5" onSubmit={handleSubmit}>
                         <Field label="筛选号">
                           <input
                             className={inputClassName()}
@@ -1053,6 +1054,24 @@ export function ClinicalDatasetPage() {
                             }
                             required
                           />
+                        </Field>
+                        <Field label="分组">
+                          <SelectField
+                            value={form.subject_arm}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                subject_arm: event.target.value as SubjectForm["subject_arm"],
+                              }))
+                            }
+                            required={!editingId}
+                          >
+                            <option value="">
+                              {editingId ? "未分组（保留）" : "请选择分组"}
+                            </option>
+                            <option value="experimental">实验组</option>
+                            <option value="control">对照组</option>
+                          </SelectField>
                         </Field>
                         <Field label="性别">
                           <SelectField
@@ -1091,57 +1110,7 @@ export function ClinicalDatasetPage() {
                             }
                           />
                         </Field>
-                        <Field label="访视1日期">
-                          <input
-                            className={inputClassName()}
-                            type="date"
-                            value={form.visit1_date}
-                            onChange={(event) =>
-                              setForm((current) => ({ ...current, visit1_date: event.target.value }))
-                            }
-                          />
-                        </Field>
-                        <Field label="访视2日期">
-                          <input
-                            className={inputClassName()}
-                            type="date"
-                            value={form.visit2_date}
-                            onChange={(event) =>
-                              setForm((current) => ({ ...current, visit2_date: event.target.value }))
-                            }
-                          />
-                        </Field>
-                        <Field label="访视3日期">
-                          <input
-                            className={inputClassName()}
-                            type="date"
-                            value={form.visit3_date}
-                            onChange={(event) =>
-                              setForm((current) => ({ ...current, visit3_date: event.target.value }))
-                            }
-                          />
-                        </Field>
-                        <Field label="访视4日期">
-                          <input
-                            className={inputClassName()}
-                            type="date"
-                            value={form.visit4_date}
-                            onChange={(event) =>
-                              setForm((current) => ({ ...current, visit4_date: event.target.value }))
-                            }
-                          />
-                        </Field>
-                        <Field label="访视5日期">
-                          <input
-                            className={inputClassName()}
-                            type="date"
-                            value={form.visit5_date}
-                            onChange={(event) =>
-                              setForm((current) => ({ ...current, visit5_date: event.target.value }))
-                            }
-                          />
-                        </Field>
-                        <div className="flex items-end gap-2 lg:col-span-4">
+                        <div className="flex items-end gap-2 lg:col-span-5">
                           <Button type="submit" disabled={!projectId || !centerId}>
                             {editingId ? (
                               <Save className="size-4" aria-hidden="true" />

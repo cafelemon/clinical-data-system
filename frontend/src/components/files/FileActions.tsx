@@ -1,24 +1,12 @@
-import { Download, Eye, FileText, History, RefreshCw, Trash2, Upload } from "lucide-react";
+import { Download, Eye, FileText, History, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import { ChangeEvent, DragEvent, useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { SelectField } from "@/components/ui/form";
+import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { filesApi } from "@/services/files";
 import type { FileRecord, FileVersion } from "@/types/files";
-
-const categories = [
-  { value: "clinical_document", label: "临床资料" },
-  { value: "raw_pdf", label: "原始 PDF" },
-  { value: "image_raw", label: "原始图像" },
-  { value: "image_enhanced", label: "增强图像" },
-  { value: "video_raw", label: "原始视频" },
-  { value: "doctor_annotation", label: "医生批注" },
-  { value: "metadata_json", label: "元数据 JSON" },
-  { value: "annotation_json", label: "标注 JSON" },
-  { value: "report", label: "报告文件" },
-];
 
 type FileActionsProps = {
   stageFileId?: number;
@@ -30,14 +18,22 @@ type FileActionsProps = {
   onChanged?: () => void;
 };
 
-function canPreview(file: FileRecord) {
-  return file.mime_type === "application/pdf" || file.mime_type.startsWith("image/");
+function isPdfFile(file: File) {
+  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+}
+
+function canPreview(mimeType: string) {
+  return mimeType === "application/pdf" || mimeType.startsWith("image/");
 }
 
 function formatSize(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDateTime(value: string) {
+  return value.replace("T", " ").slice(0, 16);
 }
 
 function openBlob(blob: Blob, filename?: string) {
@@ -64,15 +60,19 @@ export function FileActions({
   onChanged,
 }: FileActionsProps) {
   const [files, setFiles] = useState<FileRecord[]>([]);
-  const [category, setCategory] = useState(defaultCategory);
   const [versions, setVersions] = useState<Record<number, FileVersion[]>>({});
+  const [historyFile, setHistoryFile] = useState<FileRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
 
   const loadFiles = useCallback(async () => {
     if (!canRead) return;
-    const data = await filesApi.listFiles({ stage_file_id: stageFileId, subject_item_id: subjectItemId });
+    const data = await filesApi.listFiles({
+      stage_file_id: stageFileId,
+      subject_item_id: subjectItemId,
+      status: "active",
+    });
     setFiles(data);
   }, [canRead, stageFileId, subjectItemId]);
 
@@ -82,11 +82,15 @@ export function FileActions({
 
   const uploadSelectedFile = useCallback(
     async (selectedFile: File) => {
+      if (!isPdfFile(selectedFile)) {
+        setMessage("请上传 PDF 文件");
+        return;
+      }
       setUploading(true);
       try {
         await filesApi.uploadFile({
           file: selectedFile,
-          fileCategory: category,
+          fileCategory: defaultCategory,
           stageFileId,
           subjectItemId,
         });
@@ -99,7 +103,7 @@ export function FileActions({
         setUploading(false);
       }
     },
-    [category, loadFiles, onChanged, stageFileId, subjectItemId],
+    [defaultCategory, loadFiles, onChanged, stageFileId, subjectItemId],
   );
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -139,13 +143,17 @@ export function FileActions({
     const selectedFile = event.target.files?.[0];
     event.target.value = "";
     if (!selectedFile) return;
+    if (!isPdfFile(selectedFile)) {
+      setMessage("请上传 PDF 文件");
+      return;
+    }
     try {
-      await filesApi.replaceFile(file.id, selectedFile, "前端替换");
-      setMessage("替换成功");
+      await filesApi.replaceFile(file.id, selectedFile, "前端重新上传");
+      setMessage("重新上传成功");
       await loadFiles();
       onChanged?.();
     } catch {
-      setMessage("替换失败");
+      setMessage("重新上传失败");
     }
   }
 
@@ -163,21 +171,20 @@ export function FileActions({
       const blob = await filesApi.previewFile(file.id, version);
       openBlob(blob);
     } catch {
-      setMessage("该文件暂不支持预览");
+      setMessage("该文件暂不支持查看");
     }
   }
 
-  async function handleVersions(file: FileRecord) {
-    if (versions[file.id]) {
-      setVersions((current) => {
-        const next = { ...current };
-        delete next[file.id];
-        return next;
-      });
-      return;
+  async function openHistory(file: FileRecord) {
+    try {
+      if (!versions[file.id]) {
+        const data = await filesApi.listVersions(file.id);
+        setVersions((current) => ({ ...current, [file.id]: data }));
+      }
+      setHistoryFile(file);
+    } catch {
+      setMessage("历史版本加载失败");
     }
-    const data = await filesApi.listVersions(file.id);
-    setVersions((current) => ({ ...current, [file.id]: data }));
   }
 
   async function handleDelete(file: FileRecord) {
@@ -197,11 +204,14 @@ export function FileActions({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="min-w-[220px] space-y-2">
       {message && (
         <Badge
           tone={
-            message.includes("失败") || message.includes("不支持") || message.includes("只能")
+            message.includes("失败") ||
+            message.includes("不支持") ||
+            message.includes("只能") ||
+            message.includes("请")
               ? "danger"
               : "success"
           }
@@ -209,11 +219,12 @@ export function FileActions({
           {message}
         </Badge>
       )}
-      {canWrite && (
-        <div className="space-y-2">
+
+      {files.length === 0 ? (
+        canWrite ? (
           <div
             className={cn(
-              "flex min-h-12 w-48 max-w-full items-center justify-center gap-2 rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 transition",
+              "flex min-h-10 w-40 max-w-full items-center justify-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 transition",
               dragging && "border-emerald-500 bg-emerald-50 text-emerald-700",
               uploading && "opacity-60",
             )}
@@ -222,42 +233,30 @@ export function FileActions({
             onDragLeave={handleDragLeave}
             onDrop={(event) => void handleDrop(event)}
           >
-            <Upload className="size-4 shrink-0" aria-hidden="true" />
-            <span>{uploading ? "上传中" : "拖入上传"}</span>
+            <label className="inline-flex cursor-pointer items-center gap-2">
+              <Upload className="size-4 shrink-0" aria-hidden="true" />
+              <span>{uploading ? "上传中" : "上传 PDF"}</span>
+              <input
+                type="file"
+                accept="application/pdf,.pdf"
+                className="hidden"
+                onChange={handleUpload}
+                disabled={uploading}
+              />
+            </label>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <SelectField
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
-              className="h-8 w-32 text-xs"
-            >
-              {categories.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </SelectField>
-            <Button asChild size="sm" variant="secondary">
-              <label>
-                <Upload className="size-4" aria-hidden="true" />
-                上传
-                <input type="file" className="hidden" onChange={handleUpload} />
-              </label>
-            </Button>
+        ) : (
+          <div className="rounded-md border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
+            暂无文件
           </div>
-        </div>
-      )}
-      {files.length === 0 ? (
-        <div className="rounded-md border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
-          暂无文件
-        </div>
+        )
       ) : (
         <div className="space-y-2">
           {files.map((file) => (
             <div key={file.id} className="rounded-md border border-slate-200 bg-white p-2">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-xs font-medium text-slate-900">
+                  <p className="truncate text-xs font-medium text-slate-900" title={file.original_name}>
                     <FileText className="mr-1 inline size-3" aria-hidden="true" />
                     {file.original_name}
                   </p>
@@ -265,74 +264,159 @@ export function FileActions({
                     v{file.version} · {formatSize(file.file_size)}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-1">
-                  <Button size="sm" variant="ghost" onClick={() => void handleDownload(file)}>
-                    <Download className="size-4" aria-hidden="true" />
-                  </Button>
-                  {canPreview(file) && (
-                    <Button size="sm" variant="ghost" onClick={() => void handlePreview(file)}>
-                      <Eye className="size-4" aria-hidden="true" />
+                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                  <Tooltip label="下载当前文件">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void handleDownload(file)}
+                      aria-label="下载当前文件"
+                      title="下载当前文件"
+                    >
+                      <Download className="size-4" aria-hidden="true" />
                     </Button>
-                  )}
-                  <Button size="sm" variant="ghost" onClick={() => void handleVersions(file)}>
-                    <History className="size-4" aria-hidden="true" />
-                  </Button>
+                  </Tooltip>
+                  <Tooltip label="查看历史版本">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void openHistory(file)}
+                      aria-label="查看历史版本"
+                      title="查看历史版本"
+                    >
+                      <History className="size-4" aria-hidden="true" />
+                    </Button>
+                  </Tooltip>
                   {canWrite && (
-                    <Button asChild size="sm" variant="ghost">
-                      <label>
-                        <RefreshCw className="size-4" aria-hidden="true" />
-                        <input
-                          type="file"
-                          className="hidden"
-                          onChange={(event) => void handleReplace(file, event)}
-                        />
-                      </label>
-                    </Button>
+                    <Tooltip label="重新上传并生成新版本">
+                      <Button
+                        asChild
+                        size="sm"
+                        variant="ghost"
+                        aria-label="重新上传并生成新版本"
+                        title="重新上传并生成新版本"
+                      >
+                        <label>
+                          <RefreshCw className="size-4" aria-hidden="true" />
+                          <input
+                            type="file"
+                            accept="application/pdf,.pdf"
+                            className="hidden"
+                            onChange={(event) => void handleReplace(file, event)}
+                          />
+                        </label>
+                      </Button>
+                    </Tooltip>
                   )}
                   {canDelete && (
-                    <Button size="sm" variant="ghost" onClick={() => void handleDelete(file)}>
-                      <Trash2 className="size-4" aria-hidden="true" />
-                    </Button>
+                    <Tooltip label="删除当前文件">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void handleDelete(file)}
+                        aria-label="删除当前文件"
+                        title="删除当前文件"
+                      >
+                        <Trash2 className="size-4" aria-hidden="true" />
+                      </Button>
+                    </Tooltip>
                   )}
                 </div>
               </div>
-              {versions[file.id] && (
-                <div className="mt-2 space-y-1 border-t border-slate-100 pt-2">
-                  {versions[file.id].map((version) => (
-                    <div
-                      key={version.id}
-                      className="flex items-center justify-between gap-2 text-xs text-slate-600"
-                    >
-                      <span>
-                        v{version.version} · {version.original_name}
-                      </span>
-                      <div className="flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => void handleDownload(file, version.version)}
-                        >
-                          <Download className="size-4" aria-hidden="true" />
-                        </Button>
-                        {canPreview({
-                          ...file,
-                          mime_type: version.mime_type,
-                        }) && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => void handlePreview(file, version.version)}
-                          >
-                            <Eye className="size-4" aria-hidden="true" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           ))}
+        </div>
+      )}
+
+      {historyFile && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/30 p-4">
+          <div className="w-full max-w-3xl rounded-md bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">文件历史</h2>
+                <p className="mt-1 text-xs text-slate-500">{historyFile.original_name}</p>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setHistoryFile(null)}
+                aria-label="关闭历史版本"
+                title="关闭历史版本"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+            <div className="max-h-[70vh] overflow-auto p-4">
+              <table className="w-full min-w-[680px] text-left text-sm">
+                <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">版本号</th>
+                    <th className="px-3 py-2 font-medium">文件名</th>
+                    <th className="px-3 py-2 font-medium">上传人</th>
+                    <th className="px-3 py-2 font-medium">上传时间</th>
+                    <th className="px-3 py-2 font-medium">文件大小</th>
+                    <th className="px-3 py-2 font-medium">状态</th>
+                    <th className="px-3 py-2 font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(versions[historyFile.id] ?? []).map((version) => (
+                    <tr key={version.id}>
+                      <td className="px-3 py-3 font-medium text-slate-900">v{version.version}</td>
+                      <td className="max-w-72 px-3 py-3 text-slate-600">
+                        <span className="block truncate" title={version.original_name}>
+                          {version.original_name}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">
+                        {version.uploaded_by ? `用户 #${version.uploaded_by}` : "-"}
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">
+                        {formatDateTime(version.uploaded_at)}
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">{formatSize(version.file_size)}</td>
+                      <td className="px-3 py-3">
+                        <Badge tone={version.version === historyFile.version ? "success" : "neutral"}>
+                          {version.version === historyFile.version ? "当前" : "历史"}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex gap-1">
+                          <Tooltip label="下载该版本">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => void handleDownload(historyFile, version.version)}
+                              aria-label="下载该版本"
+                              title="下载该版本"
+                            >
+                              <Download className="size-4" aria-hidden="true" />
+                            </Button>
+                          </Tooltip>
+                          {canPreview(version.mime_type) && (
+                            <Tooltip label="查看该版本">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => void handlePreview(historyFile, version.version)}
+                                aria-label="查看该版本"
+                                title="查看该版本"
+                              >
+                                <Eye className="size-4" aria-hidden="true" />
+                              </Button>
+                            </Tooltip>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {(versions[historyFile.id] ?? []).length === 0 && (
+                <p className="py-8 text-center text-sm text-slate-500">暂无历史版本</p>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

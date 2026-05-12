@@ -1,8 +1,10 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.master_data import StageRead
+
+SUBJECT_ARMS = {"experimental", "control"}
 
 
 class SubjectBase(BaseModel):
@@ -23,12 +25,20 @@ class SubjectBase(BaseModel):
 
 
 class SubjectCreate(SubjectBase):
-    pass
+    subject_arm: str = Field(max_length=20)
+
+    @field_validator("subject_arm")
+    @classmethod
+    def validate_subject_arm(cls, value: str) -> str:
+        if value not in SUBJECT_ARMS:
+            raise ValueError("invalid subject_arm")
+        return value
 
 
 class SubjectUpdate(BaseModel):
     center_id: int | None = None
     screening_no: str | None = Field(default=None, min_length=1, max_length=80)
+    subject_arm: str | None = Field(default=None, max_length=20)
     gender: str | None = Field(default=None, max_length=30)
     age: int | None = Field(default=None, ge=0, le=130)
     enrolled_at: date | None = None
@@ -41,9 +51,17 @@ class SubjectUpdate(BaseModel):
     review_status: str | None = Field(default=None, max_length=30)
     data_status: str | None = Field(default=None, max_length=30)
 
+    @field_validator("subject_arm")
+    @classmethod
+    def validate_subject_arm(cls, value: str | None) -> str | None:
+        if value is not None and value not in SUBJECT_ARMS:
+            raise ValueError("invalid subject_arm")
+        return value
+
 
 class SubjectRead(SubjectBase):
     id: int
+    subject_arm: str | None = None
     added_by: int | None = None
     completed_at: datetime | None = None
     created_at: datetime
@@ -95,6 +113,29 @@ class SubjectItemRead(BaseModel):
 class SubjectItemUpdate(BaseModel):
     upload_status: str | None = Field(default=None, max_length=30)
     review_status: str | None = Field(default=None, max_length=30)
+    remark: str | None = None
+
+
+class SubjectItemRemarkUpdate(BaseModel):
+    remark: str | None = None
+
+
+class SubjectItemRemarkRead(BaseModel):
+    success: bool = True
+    remark: str | None = None
+    updated_at: datetime
+
+
+class SubjectItemTimelineEntryRead(BaseModel):
+    id: str
+    occurred_at: datetime
+    actor: str | None = None
+    action: str
+    action_label: str
+    description: str | None = None
+    file_id: int | None = None
+    file_version: int | None = None
+    task_id: int | None = None
     remark: str | None = None
 
 

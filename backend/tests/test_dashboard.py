@@ -121,6 +121,7 @@ def create_subject(
         "project_id": project_id,
         "center_id": center_id,
         "screening_no": screening_no,
+        "subject_arm": "experimental",
     }
     if enrolled_at is not None:
         payload["enrolled_at"] = enrolled_at.isoformat()

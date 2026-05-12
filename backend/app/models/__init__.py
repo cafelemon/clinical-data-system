@@ -13,6 +13,7 @@ from app.models.identity import (
 )
 from app.models.operation_log import OperationLog
 from app.models.pdf_packet import PdfPacket, PdfPacketSegment
+from app.models.pdf_review import CorrectionTask, CorrectionTaskAnnotation, PdfAnnotation
 from app.models.project import Project
 from app.models.review import ReviewRecord
 from app.models.stage import Stage
@@ -20,12 +21,15 @@ from app.models.stage_template import StageTemplate
 
 __all__ = [
     "Center",
+    "CorrectionTask",
+    "CorrectionTaskAnnotation",
     "Dictionary",
     "FileAsset",
     "FileVersion",
     "OperationLog",
     "PdfPacket",
     "PdfPacketSegment",
+    "PdfAnnotation",
     "Permission",
     "Project",
     "ReviewRecord",

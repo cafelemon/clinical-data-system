@@ -11,6 +11,7 @@ from app.api.v1.endpoints import (
     master_data,
     operation_logs,
     pdf_packets,
+    pdf_review,
     reviews,
 )
 
@@ -22,6 +23,7 @@ api_router.include_router(master_data.router, tags=["master-data"])
 api_router.include_router(clinical_data.router, tags=["clinical-data"])
 api_router.include_router(files.router, tags=["files"])
 api_router.include_router(pdf_packets.router, tags=["pdf-packets"])
+api_router.include_router(pdf_review.router, tags=["pdf-review"])
 api_router.include_router(reviews.router, tags=["reviews"])
 api_router.include_router(dashboard.router, tags=["dashboard"])
 api_router.include_router(excel_io.router, tags=["excel-io"])

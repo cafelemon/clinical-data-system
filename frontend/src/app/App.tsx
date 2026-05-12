@@ -9,12 +9,15 @@ import { useAuthStore } from "@/stores/auth-store";
 import { CentersPage } from "@/pages/centers/CentersPage";
 import { ClinicalDatasetPage } from "@/pages/clinical-dataset/ClinicalDatasetPage";
 import { SubjectDetailPage } from "@/pages/clinical-dataset/SubjectDetailPage";
+import { CorrectionTaskDetailPage } from "@/pages/correction-tasks/CorrectionTaskDetailPage";
+import { CorrectionTasksPage } from "@/pages/correction-tasks/CorrectionTasksPage";
 import { DashboardPage } from "@/pages/dashboard/DashboardPage";
 import { DictionariesPage } from "@/pages/dictionaries/DictionariesPage";
 import { ExcelIoPage } from "@/pages/excel-io/ExcelIoPage";
 import { LoginPage } from "@/pages/login/LoginPage";
 import { OperationLogsPage } from "@/pages/operation-logs/OperationLogsPage";
 import { PdfPacketsPage } from "@/pages/pdf-packets/PdfPacketsPage";
+import { PdfReviewPage } from "@/pages/pdf-review/PdfReviewPage";
 import { ProjectsPage } from "@/pages/projects/ProjectsPage";
 import { RolesPage } from "@/pages/roles/RolesPage";
 import { SettingsPage } from "@/pages/settings/SettingsPage";
@@ -154,6 +157,9 @@ export default function App() {
         />
         <Route path="/excel-io" element={<ExcelIoPage />} />
         <Route path="/pdf-packets" element={<PdfPacketsPage />} />
+        <Route path="/pdf-review/files/:fileId" element={<PdfReviewPage />} />
+        <Route path="/correction-tasks" element={<CorrectionTasksPage />} />
+        <Route path="/correction-tasks/:taskId" element={<CorrectionTaskDetailPage />} />
         <Route
           path="/operation-logs"
           element={

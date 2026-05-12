@@ -163,6 +163,7 @@ def test_import_templates_and_four_import_upserts(
     subject_template = client.get("/api/import/templates/subjects", headers=admin_headers)
     assert subject_template.status_code == 200
     subject_template_rows = workbook_rows(subject_template.content)
+    assert "分组" in subject_template_rows[0]
     assert "知情时间" in subject_template_rows[0]
     assert "访视5日期" in subject_template_rows[0]
 
@@ -242,6 +243,7 @@ def test_import_templates_and_four_import_upserts(
                 "project_code",
                 "center_code",
                 "screening_no",
+                "subject_arm",
                 "gender",
                 "age",
                 "enrolled_at",
@@ -257,6 +259,7 @@ def test_import_templates_and_four_import_upserts(
                     "P7_IMPORT_PROJECT",
                     "P7_IMPORT_CENTER",
                     "P7-S001",
+                    "experimental",
                     "女",
                     38,
                     "2026-05-01",
@@ -276,6 +279,7 @@ def test_import_templates_and_four_import_upserts(
         headers=admin_headers,
     ).json()[0]
     assert subject["screening_no"] == "P7-S001"
+    assert subject["subject_arm"] == "experimental"
     assert subject["informed_at"].startswith("2026-05-01T09:30")
     assert subject["visit5_date"] == "2026-05-06"
 
@@ -301,6 +305,7 @@ def test_import_validation_is_all_or_nothing(
                 "project_code",
                 "center_code",
                 "screening_no",
+                "subject_arm",
                 "gender",
                 "age",
                 "enrolled_at",
@@ -311,6 +316,7 @@ def test_import_validation_is_all_or_nothing(
                     "P7_PROJECT_VALIDATION",
                     "P7_CENTER_VALID",
                     "P7-V-001",
+                    "experimental",
                     "男",
                     45,
                     "2026-05-02",
@@ -320,6 +326,7 @@ def test_import_validation_is_all_or_nothing(
                     "P7_PROJECT_VALIDATION",
                     "MISSING_CENTER",
                     "P7-V-002",
+                    "control",
                     "女",
                     "bad",
                     "2026-99-99",
@@ -387,8 +394,8 @@ def test_import_and_export_permissions_and_scope(
             "file": (
                 "subjects.xlsx",
                 xlsx_bytes(
-                    ["project_code", "center_code", "screening_no"],
-                    [["P7_PROJECT_SCOPE", "P7_CENTER_A", "P7-A-001"]],
+                    ["project_code", "center_code", "screening_no", "subject_arm"],
+                    [["P7_PROJECT_SCOPE", "P7_CENTER_A", "P7-A-001", "experimental"]],
                 ),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -404,8 +411,8 @@ def test_import_and_export_permissions_and_scope(
             "file": (
                 "subjects.xlsx",
                 xlsx_bytes(
-                    ["project_code", "center_code", "screening_no"],
-                    [["P7_PROJECT_SCOPE", "P7_CENTER_B", "P7-B-001"]],
+                    ["project_code", "center_code", "screening_no", "subject_arm"],
+                    [["P7_PROJECT_SCOPE", "P7_CENTER_B", "P7-B-001", "experimental"]],
                 ),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -420,8 +427,8 @@ def test_import_and_export_permissions_and_scope(
             "file": (
                 "subjects.xlsx",
                 xlsx_bytes(
-                    ["project_code", "center_code", "screening_no"],
-                    [["P7_PROJECT_SCOPE", "P7_CENTER_A", "P7-A-002"]],
+                    ["project_code", "center_code", "screening_no", "subject_arm"],
+                    [["P7_PROJECT_SCOPE", "P7_CENTER_A", "P7-A-002", "control"]],
                 ),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -498,8 +505,8 @@ def test_exports_include_expected_workbooks_and_missing_unmaterialized_stage_ite
         admin_headers,
         "/api/import/subjects",
         xlsx_bytes(
-            ["project_code", "center_code", "screening_no"],
-            [["P7_PROJECT_EXPORT", "P7_CENTER_EXPORT", "P7-E-001"]],
+            ["project_code", "center_code", "screening_no", "subject_arm"],
+            [["P7_PROJECT_EXPORT", "P7_CENTER_EXPORT", "P7-E-001", "experimental"]],
         ),
     )
 

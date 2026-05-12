@@ -104,6 +104,7 @@ def create_subject_item(client: TestClient, headers: dict[str, str]) -> dict:
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": "P4-S001",
+            "subject_arm": "experimental",
         },
     )
     assert subject.status_code == 201

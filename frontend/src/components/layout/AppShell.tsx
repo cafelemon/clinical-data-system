@@ -12,11 +12,14 @@ import {
   ListTree,
   LogOut,
   ClipboardList,
+  ClipboardCheck,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -54,6 +57,12 @@ const navItems: NavItem[] = [
     icon: FileSearch,
     permissions: ["pdf_packets:read"],
   },
+  {
+    to: "/correction-tasks",
+    label: "整改任务",
+    icon: ClipboardCheck,
+    permissions: ["correction_tasks:read"],
+  },
   { to: "/projects", label: "项目", icon: FolderKanban, permissions: ["master_data:read"], adminOnly: true },
   { to: "/centers", label: "中心", icon: Building2, permissions: ["master_data:read"], adminOnly: true },
   { to: "/stages", label: "阶段", icon: ListTree, permissions: ["master_data:read"], adminOnly: true },
@@ -82,6 +91,10 @@ type DatasetTreeItem = {
   centers: Center[];
 };
 
+type SidebarMode = "fixed" | "auto-hide";
+
+const SIDEBAR_MODE_STORAGE_KEY = "clinical-data-sidebar-mode";
+
 function buildDatasetPath(projectId?: number, centerId?: number, stage = "STARTUP") {
   const params = new URLSearchParams();
   if (projectId) params.set("project_id", String(projectId));
@@ -104,11 +117,66 @@ export function AppShell() {
   );
   const [datasetTree, setDatasetTree] = useState<DatasetTreeItem[]>([]);
   const [datasetTreeLoading, setDatasetTreeLoading] = useState(false);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => {
+    if (typeof window === "undefined") return "fixed";
+    return window.localStorage.getItem(SIDEBAR_MODE_STORAGE_KEY) === "auto-hide"
+      ? "auto-hide"
+      : "fixed";
+  });
+  const [autoSidebarOpen, setAutoSidebarOpen] = useState(false);
+  const openTimerRef = useRef<number | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
 
   const datasetParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const selectedProjectId = Number(datasetParams.get("project_id")) || undefined;
   const selectedCenterId = Number(datasetParams.get("center_id")) || undefined;
   const selectedStage = datasetParams.get("stage") || "STARTUP";
+  const sidebarExpanded = sidebarMode === "fixed" || autoSidebarOpen;
+
+  function clearSidebarTimer(timerRef: { current: number | null }) {
+    if (timerRef.current === null) return;
+    window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }
+
+  function openAutoSidebarSoon() {
+    if (sidebarMode !== "auto-hide") return;
+    clearSidebarTimer(closeTimerRef);
+    clearSidebarTimer(openTimerRef);
+    openTimerRef.current = window.setTimeout(() => {
+      setAutoSidebarOpen(true);
+      openTimerRef.current = null;
+    }, 3000);
+  }
+
+  function closeAutoSidebarSoon() {
+    if (sidebarMode !== "auto-hide") return;
+    clearSidebarTimer(openTimerRef);
+    clearSidebarTimer(closeTimerRef);
+    closeTimerRef.current = window.setTimeout(() => {
+      setAutoSidebarOpen(false);
+      closeTimerRef.current = null;
+    }, 3000);
+  }
+
+  function toggleSidebarMode() {
+    setSidebarMode((current) => {
+      const next = current === "fixed" ? "auto-hide" : "fixed";
+      window.localStorage.setItem(SIDEBAR_MODE_STORAGE_KEY, next);
+      setAutoSidebarOpen(next === "fixed");
+      return next;
+    });
+    clearSidebarTimer(openTimerRef);
+    clearSidebarTimer(closeTimerRef);
+  }
+
+  useEffect(
+    () => () => {
+      clearSidebarTimer(openTimerRef);
+      clearSidebarTimer(closeTimerRef);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!isClinicalDataset || !canReadClinicalDataset) return;
@@ -163,18 +231,66 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-950">
-      <aside className="fixed inset-y-0 left-0 hidden h-screen w-64 flex-col border-r border-slate-200 bg-white px-4 py-5 lg:flex">
-        <div className="flex shrink-0 items-center gap-3 px-2">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-emerald-600 text-white">
+      {sidebarMode === "auto-hide" && (
+        <div
+          className="fixed inset-y-0 left-0 z-30 hidden w-5 lg:block"
+          onMouseEnter={openAutoSidebarSoon}
+          onMouseLeave={closeAutoSidebarSoon}
+        />
+      )}
+
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 hidden h-screen flex-col border-r border-slate-200 bg-white py-5 transition-[width] duration-200 lg:flex",
+          sidebarExpanded ? "w-64 px-4" : "w-20 px-3",
+        )}
+        onMouseEnter={openAutoSidebarSoon}
+        onMouseLeave={closeAutoSidebarSoon}
+      >
+        <div
+          className={cn(
+            "flex shrink-0 items-center px-2",
+            sidebarExpanded ? "gap-3" : "justify-center",
+          )}
+        >
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white">
             <Activity className="size-5" aria-hidden="true" />
           </div>
-          <div>
-            <p className="text-sm font-semibold leading-5">临床数据收集系统</p>
-            <p className="text-xs text-slate-500">Clinical Data System</p>
-          </div>
+          {sidebarExpanded && (
+            <div className="min-w-0">
+              <p className="text-sm font-semibold leading-5">临床数据收集系统</p>
+              <p className="text-xs text-slate-500">Clinical Data System</p>
+            </div>
+          )}
         </div>
 
-        <nav className="mt-8 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+        <div className="mt-4 flex shrink-0 justify-center">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className={cn("h-8", sidebarExpanded ? "w-full justify-start px-3" : "w-10 px-0")}
+            onClick={toggleSidebarMode}
+            title={sidebarMode === "fixed" ? "切换为自动收起" : "固定展开侧栏"}
+            aria-label={sidebarMode === "fixed" ? "切换为自动收起" : "固定展开侧栏"}
+          >
+            {sidebarMode === "fixed" ? (
+              <PanelLeftClose className="size-4 shrink-0" aria-hidden="true" />
+            ) : (
+              <PanelLeftOpen className="size-4 shrink-0" aria-hidden="true" />
+            )}
+            {sidebarExpanded && (
+              <span>{sidebarMode === "fixed" ? "自动收起" : "固定展开"}</span>
+            )}
+          </Button>
+        </div>
+
+        <nav
+          className={cn(
+            "mt-6 min-h-0 flex-1 space-y-1 overflow-y-auto",
+            sidebarExpanded ? "pr-1" : "",
+          )}
+        >
           {visibleNavItems.map((item) => (
             <div key={item.to}>
               <NavLink
@@ -182,18 +298,23 @@ export function AppShell() {
                 end={item.to === "/"}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950",
+                    "flex items-center rounded-md py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950",
+                    sidebarExpanded ? "gap-3 px-3" : "justify-center px-0",
                     isActive && "bg-slate-900 text-white hover:bg-slate-900 hover:text-white",
                   )
                 }
+                title={!sidebarExpanded ? item.label : undefined}
               >
-                <item.icon className="size-4" aria-hidden="true" />
-                <span className="flex-1">{item.label}</span>
-                {item.to === "/clinical-dataset" && isClinicalDataset && (
+                <item.icon className="size-4 shrink-0" aria-hidden="true" />
+                {sidebarExpanded && <span className="flex-1">{item.label}</span>}
+                {sidebarExpanded && item.to === "/clinical-dataset" && isClinicalDataset && (
                   <ChevronDown className="size-4" aria-hidden="true" />
                 )}
               </NavLink>
-              {item.to === "/clinical-dataset" && isClinicalDataset && canReadClinicalDataset && (
+              {sidebarExpanded &&
+                item.to === "/clinical-dataset" &&
+                isClinicalDataset &&
+                canReadClinicalDataset && (
                 <div className="mt-2 space-y-2 border-l border-slate-200 pl-3">
                   {datasetTreeLoading && (
                     <p className="px-3 py-2 text-xs text-slate-400">正在加载项目中心</p>
@@ -242,24 +363,47 @@ export function AppShell() {
                     );
                   })}
                 </div>
-              )}
+                )}
             </div>
           ))}
         </nav>
 
-        <div className="mt-4 shrink-0 border-t border-slate-200 pt-4">
-          <p className="truncate text-sm font-medium text-slate-800">
-            {user?.full_name || user?.username}
-          </p>
-          <p className="truncate text-xs text-slate-500">{user?.roles.join(", ")}</p>
-          <Button type="button" variant="ghost" className="mt-3 w-full justify-start" onClick={handleLogout}>
+        <div
+          className={cn(
+            "mt-4 shrink-0 border-t border-slate-200 pt-4",
+            sidebarExpanded ? "" : "flex flex-col items-center",
+          )}
+        >
+          {sidebarExpanded ? (
+            <>
+              <p className="truncate text-sm font-medium text-slate-800">
+                {user?.full_name || user?.username}
+              </p>
+              <p className="truncate text-xs text-slate-500">{user?.roles.join(", ")}</p>
+            </>
+          ) : (
+            <div
+              className="flex size-10 items-center justify-center rounded-full bg-slate-100 text-sm font-medium text-slate-700"
+              title={user?.full_name || user?.username}
+            >
+              {(user?.full_name || user?.username || "U").slice(0, 1).toUpperCase()}
+            </div>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            className={cn("mt-3", sidebarExpanded ? "w-full justify-start" : "w-10 px-0")}
+            onClick={handleLogout}
+            title="退出登录"
+            aria-label="退出登录"
+          >
             <LogOut className="size-4" aria-hidden="true" />
-            退出登录
+            {sidebarExpanded && "退出登录"}
           </Button>
         </div>
       </aside>
 
-      <div className="lg:pl-64">
+      <div className={cn(sidebarMode === "fixed" ? "lg:pl-64" : "lg:pl-20")}>
         <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
           <div className="flex items-center justify-between">
             <div>

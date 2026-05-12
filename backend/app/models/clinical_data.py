@@ -44,6 +44,7 @@ class Subject(Base):
         nullable=False,
     )
     screening_no: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    subject_arm: Mapped[str | None] = mapped_column(String(20))
     gender: Mapped[str | None] = mapped_column(String(30))
     age: Mapped[int | None] = mapped_column(Integer)
     enrolled_at: Mapped[date | None] = mapped_column(Date)

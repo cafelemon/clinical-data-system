@@ -1,27 +1,30 @@
-import { ArrowLeft, RotateCcw, Save } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { ArrowLeft, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
 
+import { RemarkAutosaveCell } from "@/components/clinical-data/RemarkAutosaveCell";
+import { UpdateRecordCell } from "@/components/clinical-data/UpdateRecordCell";
 import { FileActions } from "@/components/files/FileActions";
+import { ReviewEntrypoints } from "@/components/files/ReviewEntrypoints";
 import { BatchApproveButton } from "@/components/reviews/BatchApproveButton";
 import { ReviewActions } from "@/components/reviews/ReviewActions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TextAreaField } from "@/components/ui/form";
+import { restoreScrollPosition, saveScrollPosition } from "@/lib/navigation-origin";
 import { clinicalDataApi } from "@/services/clinical-data";
 import { useAuthStore } from "@/stores/auth-store";
-import type { Subject, SubjectItem, SubjectSection } from "@/types/clinical-data";
+import type { Subject, SubjectItem, SubjectItemRemarkResponse, SubjectSection } from "@/types/clinical-data";
 
 const uploadStatusLabels: Record<string, string> = {
   not_uploaded: "未上传",
   uploaded: "已上传",
   supplement_required: "待补充",
-  replaced: "已替换",
+  replaced: "已重新上传",
 };
 
 const reviewStatusLabels: Record<string, string> = {
-  unreviewed: "未审核",
+  unreviewed: "待审核",
   pending: "待审核",
   approved: "已通过",
   rejected: "已驳回",
@@ -33,8 +36,9 @@ const dataStatusLabels: Record<string, string> = {
   complete: "资料齐全",
 };
 
-type ItemDraft = {
-  remark: string;
+const subjectArmLabels = {
+  experimental: "实验组",
+  control: "对照组",
 };
 
 function statusTone(status: string) {
@@ -54,27 +58,15 @@ function formatDateTime(value: string | null) {
   return value ? new Date(value).toLocaleDateString() : "-";
 }
 
-function itemCompletenessStatus(item: SubjectItem) {
-  if (!item.required) return "complete";
-  if (item.upload_status === "supplement_required" || item.review_status === "rejected") {
-    return "incomplete";
-  }
-  if ((item.upload_status === "uploaded" || item.upload_status === "replaced") && item.review_status === "approved") {
-    return "complete";
-  }
-  if (item.upload_status === "uploaded" || item.upload_status === "replaced") {
-    return "checking";
-  }
-  return "incomplete";
-}
-
 export function SubjectDetailPage() {
   const params = useParams();
+  const location = useLocation();
   const subjectId = Number(params.subjectId);
+  const restoredScrollKeyRef = useRef<string | null>(null);
   const [subject, setSubject] = useState<Subject | null>(null);
   const [sections, setSections] = useState<SubjectSection[]>([]);
   const [items, setItems] = useState<SubjectItem[]>([]);
-  const [drafts, setDrafts] = useState<Record<number, ItemDraft>>({});
+  const [detailRefreshKey, setDetailRefreshKey] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const hasPermission = useAuthStore((state) => state.hasPermission);
@@ -102,9 +94,20 @@ export function SubjectDetailPage() {
       })),
     [items],
   );
+  const latestItem = useMemo(
+    () =>
+      [...items].sort(
+        (first, second) =>
+          new Date(second.updated_at).getTime() - new Date(first.updated_at).getTime(),
+      )[0],
+    [items],
+  );
   const backPath = subject
     ? `/clinical-dataset?project_id=${subject.project_id}&center_id=${subject.center_id}&stage=TRIAL`
     : "/clinical-dataset";
+  const restoreState = location.state as
+    | { restoreScrollKey?: string; restoreItemId?: number }
+    | null;
 
   const loadData = useCallback(async () => {
     if (!subjectId) {
@@ -121,16 +124,6 @@ export function SubjectDetailPage() {
       setSubject(subjectData);
       setSections(sectionData);
       setItems(itemData);
-      setDrafts(
-        Object.fromEntries(
-          itemData.map((item) => [
-            item.id,
-            {
-              remark: item.remark ?? "",
-            },
-          ]),
-        ),
-      );
       setMessage(null);
     } catch {
       setMessage("受试者详情加载失败");
@@ -143,28 +136,48 @@ export function SubjectDetailPage() {
     void loadData();
   }, [loadData]);
 
-  function updateDraft(itemId: number, patch: Partial<ItemDraft>) {
-    setDrafts((current) => ({
-      ...current,
-      [itemId]: {
-        ...current[itemId],
-        ...patch,
+  useEffect(() => {
+    const restoreScrollKey = restoreState?.restoreScrollKey;
+    if (loading || !restoreScrollKey) return;
+    if (restoredScrollKeyRef.current === restoreScrollKey) return;
+    restoreScrollPosition(restoreScrollKey, restoreState?.restoreItemId);
+    restoredScrollKeyRef.current = restoreScrollKey;
+  }, [items, loading, restoreState?.restoreItemId, restoreState?.restoreScrollKey]);
+
+  function reviewOriginForItem(itemId: number) {
+    const scrollKey = `subject-detail:${subjectId}:${itemId}`;
+    return {
+      origin: {
+        from: `${location.pathname}${location.search}`,
+        backLabel: "返回详情页",
+        scrollKey,
+        itemId,
       },
-    }));
+    };
   }
 
-  async function handleSaveItem(item: SubjectItem) {
-    const draft = drafts[item.id];
-    if (!draft) return;
-    try {
-      await clinicalDataApi.updateSubjectItem(item.id, {
-        remark: draft.remark.trim() || null,
-      });
-      setMessage("数据项已更新");
-      await loadData();
-    } catch {
-      setMessage("数据项更新失败");
-    }
+  function handleReviewNavigate(itemId: number) {
+    saveScrollPosition(`subject-detail:${subjectId}:${itemId}`, itemId);
+  }
+
+  const handleDataChanged = useCallback(() => {
+    setDetailRefreshKey((current) => current + 1);
+    void loadData();
+  }, [loadData]);
+
+  function handleRemarkSaved(itemId: number, response: SubjectItemRemarkResponse) {
+    setItems((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              remark: response.remark,
+              updated_at: response.updated_at,
+            }
+          : item,
+      ),
+    );
+    setDetailRefreshKey((current) => current + 1);
   }
 
   return (
@@ -188,6 +201,16 @@ export function SubjectDetailPage() {
               <Badge tone={statusTone(subject.review_status)}>
                 {statusLabel(reviewStatusLabels, subject.review_status)}
               </Badge>
+              <Badge tone="neutral">
+                {subject.subject_arm
+                  ? subjectArmLabels[subject.subject_arm] ?? subject.subject_arm
+                  : "未分组"}
+              </Badge>
+              {latestItem && (
+                <Badge tone="neutral">
+                  最近：{latestItem.item_name} · {formatDateTime(latestItem.updated_at)}
+                </Badge>
+              )}
             </div>
           )}
         </div>
@@ -223,6 +246,14 @@ export function SubjectDetailPage() {
                 <p className="mt-1 font-medium">{subject.enrolled_at || "-"}</p>
               </div>
               <div>
+                <p className="text-xs text-slate-500">分组</p>
+                <p className="mt-1 font-medium">
+                  {subject.subject_arm
+                    ? subjectArmLabels[subject.subject_arm] ?? subject.subject_arm
+                    : "未分组"}
+                </p>
+              </div>
+              <div>
                 <p className="text-xs text-slate-500">更新时间</p>
                 <p className="mt-1 font-medium">
                   {new Date(subject.updated_at).toLocaleDateString()}
@@ -241,7 +272,7 @@ export function SubjectDetailPage() {
             targets={batchTargets}
             label="一键审批当前受试者资料"
             confirmText={`确认一键审批当前受试者 ${batchTargets.length} 项资料？已上传未提交的资料会自动提交并通过。`}
-            onChanged={() => void loadData()}
+            onChanged={handleDataChanged}
           />
         )}
         {groupedSections.map(({ section, items: sectionItems }) => (
@@ -259,88 +290,50 @@ export function SubjectDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1180px] text-left text-sm">
+                <table className="w-full min-w-[1260px] text-left text-sm">
                   <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
                     <tr>
                       <th className="px-3 py-2 font-medium">数据项</th>
-                      <th className="px-3 py-2 font-medium">编码</th>
-                      <th className="px-3 py-2 font-medium">更新时间</th>
                       <th className="px-3 py-2 font-medium">上传人</th>
                       <th className="px-3 py-2 font-medium">审核人</th>
                       <th className="px-3 py-2 font-medium">必填</th>
                       <th className="px-3 py-2 font-medium">上传状态</th>
                       <th className="px-3 py-2 font-medium">审核状态</th>
-                      <th className="px-3 py-2 font-medium">完整性</th>
-                      <th className="px-3 py-2 font-medium">备注</th>
                       <th className="px-3 py-2 font-medium">文件</th>
-                      <th className="px-3 py-2 font-medium">审核</th>
-                      {canWrite && <th className="px-3 py-2 font-medium">操作</th>}
+                      <th className="px-3 py-2 font-medium">审阅</th>
+                      <th className="px-3 py-2 font-medium">更新记录</th>
+                      <th className="px-3 py-2 font-medium">备注</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {sectionItems.map((item) => {
-                      const draft = drafts[item.id];
-                      return (
-                        <tr key={item.id}>
-                          <td className="px-3 py-3 font-medium text-slate-900">
+                    {sectionItems.map((item) => (
+                      <tr key={item.id} id={`subject-item-${item.id}`} className="align-top">
+                        <td className="max-w-56 px-3 py-3 font-medium text-slate-900">
+                          <span className="block leading-5" title={item.item_name}>
                             {item.item_name}
-                          </td>
-                          <td className="px-3 py-3 text-slate-500">{item.item_code}</td>
-                          <td className="px-3 py-3 text-slate-500">
-                            {formatDateTime(item.updated_at)}
-                          </td>
-                          <td className="px-3 py-3 text-slate-600">
-                            {item.uploaded_by_name || "-"}
-                          </td>
-                          <td className="px-3 py-3 text-slate-600">
-                            {item.reviewer_name || "-"}
-                          </td>
-                          <td className="px-3 py-3">
-                            <Badge tone={item.required ? "warning" : "neutral"}>
-                              {item.required ? "必填" : "选填"}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-3">
-                            <Badge tone={statusTone(item.upload_status)}>
-                              {statusLabel(uploadStatusLabels, item.upload_status)}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-3">
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {item.uploaded_by_name || "-"}
+                        </td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {item.reviewer_name || "-"}
+                        </td>
+                        <td className="px-3 py-3">
+                          <Badge tone={item.required ? "warning" : "neutral"}>
+                            {item.required ? "必填" : "非必填"}
+                          </Badge>
+                        </td>
+                        <td className="px-3 py-3">
+                          <Badge tone={statusTone(item.upload_status)}>
+                            {statusLabel(uploadStatusLabels, item.upload_status)}
+                          </Badge>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="space-y-2">
                             <Badge tone={statusTone(item.review_status)}>
                               {statusLabel(reviewStatusLabels, item.review_status)}
                             </Badge>
-                          </td>
-                          <td className="px-3 py-3">
-                            <Badge tone={statusTone(itemCompletenessStatus(item))}>
-                              {statusLabel(
-                                dataStatusLabels,
-                                item.completeness_status ?? itemCompletenessStatus(item),
-                              )}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-3">
-                            {canWrite && draft ? (
-                              <TextAreaField
-                                value={draft.remark}
-                                onChange={(event) =>
-                                  updateDraft(item.id, { remark: event.target.value })
-                                }
-                              />
-                            ) : (
-                              <span className="text-slate-600">{item.remark || "-"}</span>
-                            )}
-                          </td>
-                          <td className="px-3 py-3">
-                            <FileActions
-                              subjectItemId={item.id}
-                              defaultCategory="clinical_document"
-                              canRead={canReadFiles}
-                              canWrite={canWriteFiles}
-                              canDelete={canDeleteFiles}
-                              onChanged={() => void loadData()}
-                            />
-                          </td>
-                          <td className="px-3 py-3">
                             <ReviewActions
                               targetType="subject_item"
                               targetId={item.id}
@@ -349,24 +342,43 @@ export function SubjectDetailPage() {
                               canSubmit={canSubmitReview}
                               canReview={canReview}
                               canReadRecords={canReadReviews}
-                              onChanged={() => void loadData()}
+                              showLatest={false}
+                              showRecordsButton={false}
+                              onChanged={handleDataChanged}
                             />
-                          </td>
-                          {canWrite && (
-                            <td className="px-3 py-3">
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => void handleSaveItem(item)}
-                              >
-                                <Save className="size-4" aria-hidden="true" />
-                                保存
-                              </Button>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <FileActions
+                            subjectItemId={item.id}
+                            defaultCategory="clinical_document"
+                            canRead={canReadFiles}
+                            canWrite={canWriteFiles}
+                            canDelete={canDeleteFiles}
+                            onChanged={handleDataChanged}
+                          />
+                        </td>
+                        <td className="px-3 py-3">
+                          <ReviewEntrypoints
+                            subjectItemId={item.id}
+                            canReadFiles={canReadFiles}
+                            refreshKey={detailRefreshKey}
+                            linkState={reviewOriginForItem(item.id)}
+                            onNavigate={() => handleReviewNavigate(item.id)}
+                          />
+                        </td>
+                        <td className="px-3 py-3">
+                          <UpdateRecordCell itemId={item.id} refreshKey={detailRefreshKey} />
+                        </td>
+                        <td className="px-3 py-3">
+                          <RemarkAutosaveCell
+                            item={item}
+                            canWrite={canWrite}
+                            onSaved={handleRemarkSaved}
+                          />
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>

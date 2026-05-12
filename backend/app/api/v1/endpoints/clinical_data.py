@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -15,7 +16,11 @@ from app.core.database import get_db
 from app.core.files import ensure_relative_path
 from app.models import (
     Center,
+    CorrectionTask,
     FileAsset,
+    FileVersion,
+    OperationLog,
+    PdfAnnotation,
     PdfPacket,
     Project,
     ReviewRecord,
@@ -34,6 +39,9 @@ from app.schemas import (
     StageFileRead,
     SubjectCreate,
     SubjectItemRead,
+    SubjectItemRemarkRead,
+    SubjectItemRemarkUpdate,
+    SubjectItemTimelineEntryRead,
     SubjectItemUpdate,
     SubjectRead,
     SubjectSectionRead,
@@ -704,3 +712,271 @@ def update_subject_item(
     db.refresh(item)
     enrich_subject_items(db, [item])
     return item
+
+
+@router.patch("/subject-items/{item_id}/remark", response_model=SubjectItemRemarkRead)
+def update_subject_item_remark(
+    item_id: int,
+    payload: SubjectItemRemarkUpdate,
+    db: DBSession,
+    access: ClinicalWrite,
+    request: Request,
+) -> SubjectItemRemarkRead:
+    item = get_or_404(db, SubjectItem, item_id, "subject item")
+    subject = get_or_404(db, Subject, item.subject_id, "subject")
+    ensure_subject_access(access, subject)
+    next_remark = payload.remark.strip() if payload.remark else None
+    if next_remark == "":
+        next_remark = None
+    if item.remark != next_remark:
+        item.remark = next_remark
+        record_operation(
+            db,
+            action="subject_item.remark.update",
+            request=request,
+            access=access,
+            target_type="subject_item",
+            target_id=item.id,
+            project_id=subject.project_id,
+            center_id=subject.center_id,
+            detail={
+                "item_code": item.item_code,
+                "remark": item.remark,
+            },
+        )
+        db.commit()
+        db.refresh(item)
+    return SubjectItemRemarkRead(success=True, remark=item.remark, updated_at=item.updated_at)
+
+
+TIMELINE_ACTION_LABELS = {
+    "file.upload": "上传",
+    "file.replace": "重新上传",
+    "review.submit": "提交审核",
+    "review.approve": "通过",
+    "review.reject": "驳回",
+    "pdf_annotation.create": "创建批注",
+    "correction_task.create": "生成整改任务",
+    "correction_task.submit": "提交整改",
+    "correction_task.approve": "复审通过",
+    "correction_task.return": "再次退回",
+    "subject_item.remark.update": "修改备注",
+    "subject_item.update": "更新资料项",
+}
+
+
+def timeline_entry(
+    *,
+    source: str,
+    source_id: int,
+    occurred_at: datetime,
+    action: str,
+    actor: str | None = None,
+    description: str | None = None,
+    file_id: int | None = None,
+    file_version: int | None = None,
+    task_id: int | None = None,
+    remark: str | None = None,
+) -> SubjectItemTimelineEntryRead:
+    return SubjectItemTimelineEntryRead(
+        id=f"{source}-{source_id}-{action}",
+        occurred_at=occurred_at,
+        actor=actor,
+        action=action,
+        action_label=TIMELINE_ACTION_LABELS.get(action, action),
+        description=description,
+        file_id=file_id,
+        file_version=file_version,
+        task_id=task_id,
+        remark=remark,
+    )
+
+
+@router.get("/subject-items/{item_id}/timeline", response_model=list[SubjectItemTimelineEntryRead])
+def list_subject_item_timeline(
+    item_id: int,
+    db: DBSession,
+    access: ClinicalRead,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[SubjectItemTimelineEntryRead]:
+    item = get_or_404(db, SubjectItem, item_id, "subject item")
+    subject = get_or_404(db, Subject, item.subject_id, "subject")
+    ensure_subject_access(access, subject)
+
+    files = list(db.scalars(select(FileAsset).where(FileAsset.subject_item_id == item.id)))
+    file_ids = [file_asset.id for file_asset in files]
+    versions = (
+        list(
+            db.scalars(
+                select(FileVersion)
+                .where(FileVersion.file_id.in_(file_ids))
+                .order_by(FileVersion.uploaded_at.desc(), FileVersion.id.desc())
+            )
+        )
+        if file_ids
+        else []
+    )
+    version_by_id = {version.id: version for version in versions}
+    reviews = list(
+        db.scalars(
+            select(ReviewRecord)
+            .where(ReviewRecord.target_type == "subject_item", ReviewRecord.target_id == item.id)
+            .order_by(ReviewRecord.created_at.desc(), ReviewRecord.id.desc())
+        )
+    )
+    annotations = list(
+        db.scalars(
+            select(PdfAnnotation)
+            .where(PdfAnnotation.subject_item_id == item.id, PdfAnnotation.deleted_at.is_(None))
+            .order_by(PdfAnnotation.created_at.desc(), PdfAnnotation.id.desc())
+        )
+    )
+    tasks = list(
+        db.scalars(
+            select(CorrectionTask)
+            .where(CorrectionTask.subject_item_id == item.id)
+            .order_by(CorrectionTask.created_at.desc(), CorrectionTask.id.desc())
+        )
+    )
+    logs = list(
+        db.scalars(
+            select(OperationLog)
+            .where(
+                OperationLog.target_type == "subject_item",
+                OperationLog.target_id == item.id,
+                OperationLog.action.in_(["subject_item.remark.update", "subject_item.update"]),
+            )
+            .order_by(OperationLog.created_at.desc(), OperationLog.id.desc())
+        )
+    )
+
+    user_ids = {
+        user_id
+        for user_id in [
+            *(version.uploaded_by for version in versions),
+            *(review.reviewer_id for review in reviews),
+            *(annotation.created_by for annotation in annotations),
+            *(task.created_by for task in tasks),
+        ]
+        if user_id is not None
+    }
+    names = user_display_names(db, user_ids)
+    entries: list[SubjectItemTimelineEntryRead] = []
+
+    for version in versions:
+        action = "file.upload" if version.version == 1 else "file.replace"
+        entries.append(
+            timeline_entry(
+                source="file-version",
+                source_id=version.id,
+                occurred_at=version.uploaded_at,
+                actor=names.get(version.uploaded_by) if version.uploaded_by else None,
+                action=action,
+                description=version.change_note or version.original_name,
+                file_id=version.file_id,
+                file_version=version.version,
+            )
+        )
+
+    for review in reviews:
+        action = f"review.{review.action}"
+        entries.append(
+            timeline_entry(
+                source="review",
+                source_id=review.id,
+                occurred_at=review.created_at,
+                actor=names.get(review.reviewer_id) if review.reviewer_id else None,
+                action=action,
+                description=review.comment,
+            )
+        )
+
+    for annotation in annotations:
+        version = version_by_id.get(annotation.file_version_id)
+        entries.append(
+            timeline_entry(
+                source="annotation",
+                source_id=annotation.id,
+                occurred_at=annotation.created_at,
+                actor=names.get(annotation.created_by) if annotation.created_by else None,
+                action="pdf_annotation.create",
+                description=annotation.comment,
+                file_id=annotation.file_id,
+                file_version=version.version if version else None,
+            )
+        )
+
+    for task in tasks:
+        source_version = version_by_id.get(task.source_file_version_id)
+        latest_version = version_by_id.get(task.latest_file_version_id or 0)
+        entries.append(
+            timeline_entry(
+                source="task",
+                source_id=task.id,
+                occurred_at=task.created_at,
+                actor=names.get(task.created_by) if task.created_by else None,
+                action="correction_task.create",
+                description=task.title,
+                file_id=task.file_id,
+                file_version=source_version.version if source_version else None,
+                task_id=task.id,
+                remark=task.description,
+            )
+        )
+        if task.submitted_at is not None:
+            entries.append(
+                timeline_entry(
+                    source="task-submit",
+                    source_id=task.id,
+                    occurred_at=task.submitted_at,
+                    actor=names.get(latest_version.uploaded_by)
+                    if latest_version and latest_version.uploaded_by
+                    else None,
+                    action="correction_task.submit",
+                    description=task.submission_remark,
+                    file_id=task.file_id,
+                    file_version=latest_version.version if latest_version else None,
+                    task_id=task.id,
+                )
+            )
+        if task.reviewed_at is not None:
+            action = (
+                "correction_task.approve"
+                if task.review_result == "approved"
+                else "correction_task.return"
+            )
+            entries.append(
+                timeline_entry(
+                    source="task-review",
+                    source_id=task.id,
+                    occurred_at=task.reviewed_at,
+                    action=action,
+                    description=task.review_comment,
+                    file_id=task.file_id,
+                    file_version=latest_version.version if latest_version else None,
+                    task_id=task.id,
+                )
+            )
+
+    for log in logs:
+        detail = log.detail_json if isinstance(log.detail_json, dict) else {}
+        changed_fields = detail.get("changed_fields", [])
+        is_remark_update = log.action == "subject_item.remark.update" or (
+            log.action == "subject_item.update"
+            and isinstance(changed_fields, list)
+            and "remark" in changed_fields
+        )
+        entries.append(
+            timeline_entry(
+                source="operation",
+                source_id=log.id,
+                occurred_at=log.created_at,
+                actor=log.username,
+                action="subject_item.remark.update" if is_remark_update else log.action,
+                description="备注已更新" if is_remark_update else "资料项信息已更新",
+                remark=detail.get("remark") if isinstance(detail.get("remark"), str) else None,
+            )
+        )
+
+    entries.sort(key=lambda entry: (entry.occurred_at, entry.id), reverse=True)
+    return entries[:limit]

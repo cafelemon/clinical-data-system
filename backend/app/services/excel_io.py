@@ -79,6 +79,7 @@ TEMPLATE_COLUMNS: dict[str, list[ExcelColumn]] = {
         ExcelColumn("project_code", "项目编码", True),
         ExcelColumn("center_code", "中心编码", True),
         ExcelColumn("screening_no", "筛选号", True),
+        ExcelColumn("subject_arm", "分组", True, "experimental/control 或 实验组/对照组"),
         ExcelColumn("gender", "性别", False),
         ExcelColumn("age", "年龄", False),
         ExcelColumn("enrolled_at", "入组日期", False, "YYYY-MM-DD"),
@@ -261,6 +262,9 @@ def import_subjects(
         project = project_by_code(db, row, project_code, errors)
         if project is None:
             continue
+        subject_arm = subject_arm_value(row, errors)
+        if subject_arm is None:
+            continue
         age = optional_int(row, "age", errors)
         enrolled_at = optional_date(row, "enrolled_at", errors)
         informed_at = optional_datetime(row, "informed_at", errors)
@@ -284,6 +288,7 @@ def import_subjects(
                     "project_id": project.id,
                     "center_id": center.id,
                     "screening_no": screening_no,
+                    "subject_arm": subject_arm,
                     "gender": optional_text(row, "gender"),
                     "age": age,
                     "enrolled_at": enrolled_at,
@@ -764,6 +769,20 @@ def require_text(row: ParsedRow, key: str, errors: list[RowError]) -> str | None
 def optional_text(row: ParsedRow, key: str) -> str | None:
     value = normalize_text(row.values.get(key))
     return value or None
+
+
+def subject_arm_value(row: ParsedRow, errors: list[RowError]) -> str | None:
+    value = normalize_text(row.values.get("subject_arm"))
+    if value == "":
+        errors.append(RowError(row.row, "subject_arm", "必填"))
+        return None
+    normalized = value.lower()
+    if normalized in {"experimental", "实验组"}:
+        return "experimental"
+    if normalized in {"control", "对照组"}:
+        return "control"
+    errors.append(RowError(row.row, "subject_arm", "需为 experimental/control 或 实验组/对照组"))
+    return None
 
 
 def optional_int(

@@ -1,10 +1,13 @@
 import type { Stage } from "@/types/master-data";
 
+export type SubjectArm = "experimental" | "control";
+
 export type Subject = {
   id: number;
   project_id: number;
   center_id: number;
   screening_no: string;
+  subject_arm: SubjectArm | null;
   gender: string | null;
   age: number | null;
   enrolled_at: string | null;
@@ -26,6 +29,7 @@ export type SubjectPayload = {
   project_id: number;
   center_id: number;
   screening_no: string;
+  subject_arm: SubjectArm;
   gender?: string | null;
   age?: number | null;
   enrolled_at?: string | null;
@@ -79,6 +83,29 @@ export type SubjectItemPayload = {
   upload_status?: string;
   review_status?: string;
   remark?: string | null;
+};
+
+export type SubjectItemRemarkPayload = {
+  remark: string | null;
+};
+
+export type SubjectItemRemarkResponse = {
+  success: boolean;
+  remark: string | null;
+  updated_at: string;
+};
+
+export type SubjectItemTimelineEntry = {
+  id: string;
+  occurred_at: string;
+  actor: string | null;
+  action: string;
+  action_label: string;
+  description: string | null;
+  file_id: number | null;
+  file_version: number | null;
+  task_id: number | null;
+  remark: string | null;
 };
 
 export type StageFile = {

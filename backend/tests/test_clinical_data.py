@@ -1,6 +1,23 @@
+from collections.abc import Generator
+from contextlib import contextmanager
+
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.database import get_db
+from app.models import Subject
+
+
+@contextmanager
+def db_session(client: TestClient) -> Generator[Session, None, None]:
+    override = client.app.dependency_overrides[get_db]
+    session_generator = override()
+    db = next(session_generator)
+    try:
+        yield db
+    finally:
+        session_generator.close()
 
 
 def login_headers(client: TestClient, username: str, password: str) -> dict[str, str]:
@@ -109,6 +126,7 @@ def create_subject(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": screening_no,
+            "subject_arm": "experimental",
             "gender": "女",
             "age": 42,
             "enrolled_at": "2026-05-04",
@@ -171,16 +189,30 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
     ]
 
     subject = create_subject(client, admin_headers, project_id, center_id, "P3-S001")
+    assert subject["subject_arm"] == "experimental"
     assert subject["informed_at"].startswith("2026-05-04T09:30")
     assert subject["visit5_date"] == "2026-05-09"
     update_subject = client.put(
         f"/api/subjects/{subject['id']}",
         headers=admin_headers,
-        json={"informed_at": "2026-05-04T10:45:00", "visit3_date": "2026-05-10"},
+        json={
+            "subject_arm": "control",
+            "informed_at": "2026-05-04T10:45:00",
+            "visit3_date": "2026-05-10",
+        },
     )
     assert update_subject.status_code == 200
+    assert update_subject.json()["subject_arm"] == "control"
     assert update_subject.json()["informed_at"].startswith("2026-05-04T10:45")
     assert update_subject.json()["visit3_date"] == "2026-05-10"
+    with db_session(client) as db:
+        db_subject = db.get(Subject, subject["id"])
+        assert db_subject is not None
+        db_subject.subject_arm = None
+        db.commit()
+    legacy_subject = client.get(f"/api/subjects/{subject['id']}", headers=admin_headers)
+    assert legacy_subject.status_code == 200
+    assert legacy_subject.json()["subject_arm"] is None
     duplicate = client.post(
         "/api/subjects",
         headers=admin_headers,
@@ -188,6 +220,7 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": "P3-S001",
+            "subject_arm": "experimental",
         },
     )
     assert duplicate.status_code == 409
@@ -224,6 +257,7 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
     assert dataset.json()["stage_file_count"] == 2
     assert dataset.json()["subject_count"] == 1
     dataset_subject = dataset.json()["subjects"][0]
+    assert dataset_subject["subject_arm"] is None
     assert dataset_subject["informed_at"].startswith("2026-05-04T10:45")
     assert dataset_subject["visit3_date"] == "2026-05-10"
 
@@ -271,6 +305,7 @@ def test_clinical_data_scope_and_write_permission(
             "project_id": project_a_id,
             "center_id": center_a_id,
             "screening_no": "A-S002",
+            "subject_arm": "experimental",
         },
     )
     assert denied_write.status_code == 403

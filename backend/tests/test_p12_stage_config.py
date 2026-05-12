@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
+
 
 def create_project(client: TestClient, headers: dict[str, str], code: str) -> int:
     response = client.post(
@@ -99,7 +101,10 @@ def test_stage_options_and_project_level_secondary_stage_controls(
 def test_template_scopes_dataset_groups_and_subject_generation(
     client: TestClient,
     admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path,
 ) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
     project_id = create_project(client, admin_headers, "P12_DATASET")
     center_id = create_center(client, admin_headers, project_id, "P12_CENTER")
 
@@ -186,6 +191,7 @@ def test_template_scopes_dataset_groups_and_subject_generation(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": "P12-S001",
+            "subject_arm": "experimental",
         },
     )
     assert subject.status_code == 201
@@ -247,6 +253,7 @@ def test_deleted_default_subject_templates_are_not_regenerated(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": "P12-DELETE-S001",
+            "subject_arm": "experimental",
         },
     )
     assert subject.status_code == 201
