@@ -1,5 +1,6 @@
+import json
 from pathlib import Path
-from typing import Annotated, TypeVar
+from typing import Annotated, Any, TypeVar
 from uuid import uuid4
 
 from fastapi import (
@@ -34,8 +35,11 @@ from app.models import (
 )
 from app.schemas import (
     PdfPacketRead,
+    PdfPacketSegmentConfirmRequest,
     PdfPacketSegmentCreate,
+    PdfPacketSegmentMergeRequest,
     PdfPacketSegmentRead,
+    PdfPacketSegmentSplitRequest,
     PdfPacketSegmentUpdate,
     PdfPacketSegmentUpload,
     PdfPacketSegmentUploadRead,
@@ -43,13 +47,19 @@ from app.schemas import (
 from app.services.audit import record_operation
 from app.services.clinical_status import recalculate_subject_status
 from app.services.pdf_packets import (
+    SEGMENT_STATUS_MANUALLY_CONFIRMED,
+    SEGMENT_STATUS_MANUALLY_MODIFIED,
+    SEGMENT_STATUS_PENDING_REVIEW,
+    SEGMENT_STATUS_UPLOADED,
     PdfPacketError,
     analyze_packet,
+    compact_text,
     derived_relative_directory,
     extract_pdf_pages,
     hash_file,
     packet_relative_directory,
     pdf_page_count,
+    ranges_overlap,
     remove_packet_physical_file,
     write_upload_file,
 )
@@ -124,6 +134,56 @@ def validate_packet_page_range(packet: PdfPacket, page_start: int, page_end: int
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="page range exceeds packet page count",
         )
+
+
+def validate_no_segment_overlap(
+    db: Session,
+    packet: PdfPacket,
+    page_start: int,
+    page_end: int,
+    exclude_ids: set[int] | None = None,
+) -> None:
+    exclude_ids = exclude_ids or set()
+    for segment in db.scalars(
+        select(PdfPacketSegment).where(PdfPacketSegment.packet_id == packet.id)
+    ):
+        if segment.id in exclude_ids:
+            continue
+        if ranges_overlap(page_start, page_end, segment.page_start, segment.page_end):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "page range overlaps existing segment "
+                    f"p{segment.page_start}-{segment.page_end}"
+                ),
+            )
+
+
+def apply_subject_item_to_segment(
+    segment: PdfPacketSegment,
+    subject_item: SubjectItem | None,
+    detected_name: str | None = None,
+) -> None:
+    if subject_item is None:
+        if detected_name is not None:
+            segment.detected_name = detected_name
+        return
+    segment.subject_item_id = subject_item.id
+    segment.suggested_subject_item_id = subject_item.id
+    segment.detected_name = detected_name or subject_item.item_name
+    segment.detected_code = subject_item.item_code
+
+
+def get_optional_subject_item(
+    db: Session,
+    packet: PdfPacket,
+    subject_item_id: int | None,
+) -> SubjectItem | None:
+    if subject_item_id is None:
+        return None
+    subject_item = get_or_404(db, SubjectItem, subject_item_id, "subject item")
+    ensure_item_matches_packet(subject_item, packet)
+    return subject_item
 
 
 def packet_query(access: AccessContext):
@@ -263,10 +323,11 @@ def analyze_pdf_packet(
     db: DBSession,
     access: PacketWriteAccess,
     request: Request,
+    force: bool = False,
 ) -> PdfPacket:
     packet = get_or_404(db, PdfPacket, packet_id, "pdf packet")
     ensure_packet_scope(access, packet)
-    analyze_packet(db, packet)
+    analyze_packet(db, packet, force=force)
     record_operation(
         db,
         action="pdf_packet.analyze",
@@ -281,6 +342,50 @@ def analyze_pdf_packet(
     db.commit()
     db.refresh(packet)
     return response_packet(packet)
+
+
+@router.post("/pdf-packets/{packet_id}/reanalyze", response_model=PdfPacketRead)
+def reanalyze_pdf_packet(
+    packet_id: int,
+    db: DBSession,
+    access: PacketWriteAccess,
+    request: Request,
+    force: bool = False,
+) -> PdfPacket:
+    return analyze_pdf_packet(packet_id, db, access, request, force=force)
+
+
+@router.get("/pdf-packets/{packet_id}/analysis-report")
+def get_pdf_packet_analysis_report(
+    packet_id: int,
+    db: DBSession,
+    access: PacketReadAccess,
+) -> dict[str, Any]:
+    packet = get_or_404(db, PdfPacket, packet_id, "pdf packet")
+    ensure_packet_scope(access, packet)
+    debug_dir = settings.file_storage_root / "_debug" / "pdf-packet-analysis"
+    report_path = debug_dir / f"packet_{packet.id}.json"
+    if not report_path.exists():
+        report_path = debug_dir / "latest.json"
+    if not report_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="analysis report not found",
+        )
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"failed to read analysis report: {exc}",
+        ) from exc
+    packet_meta = report.get("packet") if isinstance(report, dict) else None
+    if isinstance(packet_meta, dict) and packet_meta.get("id") not in {None, packet.id}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="analysis report not found for packet",
+        )
+    return report
 
 
 @router.get("/pdf-packets/{packet_id}/preview")
@@ -368,9 +473,8 @@ def create_pdf_packet_segment(
     packet = get_or_404(db, PdfPacket, packet_id, "pdf packet")
     ensure_packet_scope(access, packet)
     validate_packet_page_range(packet, payload.page_start, payload.page_end)
-    if payload.subject_item_id is not None:
-        subject_item = get_or_404(db, SubjectItem, payload.subject_item_id, "subject item")
-        ensure_item_matches_packet(subject_item, packet)
+    validate_no_segment_overlap(db, packet, payload.page_start, payload.page_end)
+    subject_item = get_optional_subject_item(db, packet, payload.subject_item_id)
     if payload.suggested_subject_item_id is not None:
         suggested_item = get_or_404(
             db,
@@ -379,7 +483,13 @@ def create_pdf_packet_segment(
             "suggested subject item",
         )
         ensure_item_matches_packet(suggested_item, packet)
-    segment = PdfPacketSegment(packet_id=packet.id, status="pending", **payload.model_dump())
+    create_data = payload.model_dump()
+    segment = PdfPacketSegment(
+        packet_id=packet.id,
+        status=SEGMENT_STATUS_MANUALLY_MODIFIED if subject_item is not None else "pending",
+        **create_data,
+    )
+    apply_subject_item_to_segment(segment, subject_item, payload.detected_name)
     db.add(segment)
     db.flush()
     record_operation(
@@ -422,12 +532,18 @@ def update_pdf_packet_segment(
     next_start = update_data.get("page_start", segment.page_start)
     next_end = update_data.get("page_end", segment.page_end)
     validate_packet_page_range(packet, next_start, next_end)
+    validate_no_segment_overlap(db, packet, next_start, next_end, exclude_ids={segment.id})
+    subject_item = None
     for field in ("subject_item_id", "suggested_subject_item_id"):
         if field in update_data and update_data[field] is not None:
             subject_item = get_or_404(db, SubjectItem, update_data[field], "subject item")
             ensure_item_matches_packet(subject_item, packet)
     for field, value in update_data.items():
         setattr(segment, field, value)
+    if subject_item is not None:
+        apply_subject_item_to_segment(segment, subject_item, update_data.get("detected_name"))
+    if any(field in update_data for field in ("page_start", "page_end", "subject_item_id")):
+        segment.status = update_data.get("status") or SEGMENT_STATUS_MANUALLY_MODIFIED
     record_operation(
         db,
         action="pdf_packet.segment_update",
@@ -476,6 +592,242 @@ def delete_pdf_packet_segment(
     )
     db.delete(segment)
     db.commit()
+
+
+@router.post(
+    "/pdf-packets/{packet_id}/segments/{segment_id}/split",
+    response_model=list[PdfPacketSegmentRead],
+)
+def split_pdf_packet_segment(
+    packet_id: int,
+    segment_id: int,
+    payload: PdfPacketSegmentSplitRequest,
+    db: DBSession,
+    access: PacketWriteAccess,
+    request: Request,
+) -> list[PdfPacketSegment]:
+    packet = get_or_404(db, PdfPacket, packet_id, "pdf packet")
+    ensure_packet_scope(access, packet)
+    segment = get_or_404(db, PdfPacketSegment, segment_id, "pdf packet segment")
+    if segment.packet_id != packet.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="segment not found")
+    if segment.file_asset_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="uploaded segment cannot be split",
+        )
+
+    splits = sorted(payload.splits, key=lambda item: (item.page_start, item.page_end))
+    if splits[0].page_start != segment.page_start or splits[-1].page_end != segment.page_end:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="splits must cover the original segment range",
+        )
+    expected_start = segment.page_start
+    for split in splits:
+        if split.page_start != expected_start:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="splits must be continuous and non-overlapping",
+            )
+        if split.page_end > segment.page_end:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="split range exceeds original segment range",
+            )
+        expected_start = split.page_end + 1
+
+    created_segments: list[PdfPacketSegment] = []
+    for split in splits:
+        subject_item = get_optional_subject_item(db, packet, split.subject_item_id)
+        next_segment = PdfPacketSegment(
+            packet_id=packet.id,
+            page_start=split.page_start,
+            page_end=split.page_end,
+            detected_name=split.detected_name or segment.detected_name,
+            detected_code=segment.detected_code,
+            confidence=segment.confidence,
+            suggested_subject_item_id=split.subject_item_id or segment.suggested_subject_item_id,
+            subject_item_id=split.subject_item_id,
+            status=SEGMENT_STATUS_MANUALLY_MODIFIED,
+            ocr_text=segment.ocr_text,
+        )
+        apply_subject_item_to_segment(next_segment, subject_item, split.detected_name)
+        db.add(next_segment)
+        created_segments.append(next_segment)
+    db.delete(segment)
+    db.flush()
+    record_operation(
+        db,
+        action="pdf_packet.segment_split",
+        request=request,
+        access=access,
+        target_type="pdf_packet_segment",
+        target_id=segment_id,
+        project_id=packet.project_id,
+        center_id=packet.center_id,
+        detail={
+            "packet_id": packet.id,
+            "segment_id": segment_id,
+            "splits": [split.model_dump() for split in splits],
+        },
+    )
+    db.commit()
+    for item in created_segments:
+        db.refresh(item)
+    return created_segments
+
+
+@router.post("/pdf-packets/{packet_id}/segments/merge", response_model=PdfPacketSegmentRead)
+def merge_pdf_packet_segments(
+    packet_id: int,
+    payload: PdfPacketSegmentMergeRequest,
+    db: DBSession,
+    access: PacketWriteAccess,
+    request: Request,
+) -> PdfPacketSegment:
+    packet = get_or_404(db, PdfPacket, packet_id, "pdf packet")
+    ensure_packet_scope(access, packet)
+    unique_ids = list(dict.fromkeys(payload.segment_ids))
+    segments = list(
+        db.scalars(
+            select(PdfPacketSegment)
+            .where(PdfPacketSegment.id.in_(unique_ids))
+            .order_by(PdfPacketSegment.page_start, PdfPacketSegment.id)
+        )
+    )
+    if len(segments) != len(unique_ids) or any(
+        segment.packet_id != packet.id for segment in segments
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="segment not found")
+    if any(segment.file_asset_id is not None for segment in segments):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="uploaded segment cannot be merged",
+        )
+    expected_start = segments[0].page_start
+    for segment in segments:
+        if segment.page_start != expected_start:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="segments must be continuous",
+            )
+        expected_start = segment.page_end + 1
+
+    subject_item = get_optional_subject_item(db, packet, payload.subject_item_id)
+    primary = segments[0]
+    primary.page_start = segments[0].page_start
+    primary.page_end = segments[-1].page_end
+    primary.confidence = min(segment.confidence for segment in segments)
+    primary.status = SEGMENT_STATUS_MANUALLY_MODIFIED
+    primary.ocr_text = compact_text([segment.ocr_text or "" for segment in segments])
+    apply_subject_item_to_segment(primary, subject_item, payload.detected_name)
+    if subject_item is None and payload.detected_name is not None:
+        primary.detected_name = payload.detected_name
+    for segment in segments[1:]:
+        db.delete(segment)
+    record_operation(
+        db,
+        action="pdf_packet.segment_merge",
+        request=request,
+        access=access,
+        target_type="pdf_packet_segment",
+        target_id=primary.id,
+        project_id=packet.project_id,
+        center_id=packet.center_id,
+        detail={
+            "packet_id": packet.id,
+            "segment_ids": unique_ids,
+            "page_start": primary.page_start,
+            "page_end": primary.page_end,
+            "subject_item_id": payload.subject_item_id,
+        },
+    )
+    db.commit()
+    db.refresh(primary)
+    return primary
+
+
+@router.post(
+    "/pdf-packets/{packet_id}/segments/{segment_id}/confirm",
+    response_model=PdfPacketSegmentRead,
+)
+def confirm_pdf_packet_segment(
+    packet_id: int,
+    segment_id: int,
+    payload: PdfPacketSegmentConfirmRequest,
+    db: DBSession,
+    access: PacketWriteAccess,
+    request: Request,
+) -> PdfPacketSegment:
+    packet = get_or_404(db, PdfPacket, packet_id, "pdf packet")
+    ensure_packet_scope(access, packet)
+    segment = get_or_404(db, PdfPacketSegment, segment_id, "pdf packet segment")
+    if segment.packet_id != packet.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="segment not found")
+    subject_item_id = (
+        payload.subject_item_id or segment.subject_item_id or segment.suggested_subject_item_id
+    )
+    subject_item = get_optional_subject_item(db, packet, subject_item_id)
+    if subject_item is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="subject item is required to confirm segment",
+        )
+    apply_subject_item_to_segment(segment, subject_item, payload.detected_name)
+    segment.status = SEGMENT_STATUS_MANUALLY_CONFIRMED
+    record_operation(
+        db,
+        action="pdf_packet.segment_confirm",
+        request=request,
+        access=access,
+        target_type="pdf_packet_segment",
+        target_id=segment.id,
+        project_id=packet.project_id,
+        center_id=packet.center_id,
+        detail={"packet_id": packet.id, "subject_item_id": subject_item.id},
+    )
+    db.commit()
+    db.refresh(segment)
+    return segment
+
+
+@router.post(
+    "/pdf-packets/{packet_id}/segments/{segment_id}/unlock",
+    response_model=PdfPacketSegmentRead,
+)
+def unlock_pdf_packet_segment(
+    packet_id: int,
+    segment_id: int,
+    db: DBSession,
+    access: PacketWriteAccess,
+    request: Request,
+) -> PdfPacketSegment:
+    packet = get_or_404(db, PdfPacket, packet_id, "pdf packet")
+    ensure_packet_scope(access, packet)
+    segment = get_or_404(db, PdfPacketSegment, segment_id, "pdf packet segment")
+    if segment.packet_id != packet.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="segment not found")
+    if segment.file_asset_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="uploaded segment cannot be unlocked",
+        )
+    segment.status = SEGMENT_STATUS_PENDING_REVIEW
+    record_operation(
+        db,
+        action="pdf_packet.segment_unlock",
+        request=request,
+        access=access,
+        target_type="pdf_packet_segment",
+        target_id=segment.id,
+        project_id=packet.project_id,
+        center_id=packet.center_id,
+        detail={"packet_id": packet.id},
+    )
+    db.commit()
+    db.refresh(segment)
+    return segment
 
 
 @router.post(
@@ -561,7 +913,7 @@ def upload_pdf_packet_segment(
     recalculate_subject_status(db, subject)
     segment.subject_item_id = subject_item.id
     segment.file_asset_id = file_asset.id
-    segment.status = "uploaded"
+    segment.status = SEGMENT_STATUS_UPLOADED
     record_operation(
         db,
         action="pdf_packet.segment_upload",

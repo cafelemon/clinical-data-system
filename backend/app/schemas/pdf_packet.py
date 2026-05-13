@@ -85,6 +85,34 @@ class PdfPacketSegmentUpload(BaseModel):
     subject_item_id: int
 
 
+class PdfPacketSegmentSplitItem(BaseModel):
+    page_start: int = Field(ge=1)
+    page_end: int = Field(ge=1)
+    subject_item_id: int | None = None
+    detected_name: str | None = Field(default=None, max_length=150)
+
+    @model_validator(mode="after")
+    def validate_page_range(self) -> "PdfPacketSegmentSplitItem":
+        if self.page_end < self.page_start:
+            raise ValueError("page_end must be greater than or equal to page_start")
+        return self
+
+
+class PdfPacketSegmentSplitRequest(BaseModel):
+    splits: list[PdfPacketSegmentSplitItem] = Field(min_length=2)
+
+
+class PdfPacketSegmentMergeRequest(BaseModel):
+    segment_ids: list[int] = Field(min_length=2)
+    subject_item_id: int | None = None
+    detected_name: str | None = Field(default=None, max_length=150)
+
+
+class PdfPacketSegmentConfirmRequest(BaseModel):
+    subject_item_id: int | None = None
+    detected_name: str | None = Field(default=None, max_length=150)
+
+
 class PdfPacketSegmentUploadRead(BaseModel):
     segment: PdfPacketSegmentRead
     file: FileRead

@@ -60,8 +60,11 @@ from app.schemas.master_data import (
 from app.schemas.operation_log import OperationLogListRead, OperationLogRead
 from app.schemas.pdf_packet import (
     PdfPacketRead,
+    PdfPacketSegmentConfirmRequest,
     PdfPacketSegmentCreate,
+    PdfPacketSegmentMergeRequest,
     PdfPacketSegmentRead,
+    PdfPacketSegmentSplitRequest,
     PdfPacketSegmentUpdate,
     PdfPacketSegmentUpload,
     PdfPacketSegmentUploadRead,
@@ -124,8 +127,11 @@ __all__ = [
     "OperationLogListRead",
     "OperationLogRead",
     "PdfPacketRead",
+    "PdfPacketSegmentConfirmRequest",
     "PdfPacketSegmentCreate",
+    "PdfPacketSegmentMergeRequest",
     "PdfPacketSegmentRead",
+    "PdfPacketSegmentSplitRequest",
     "PdfPacketSegmentUpdate",
     "PdfPacketSegmentUpload",
     "PdfPacketSegmentUploadRead",

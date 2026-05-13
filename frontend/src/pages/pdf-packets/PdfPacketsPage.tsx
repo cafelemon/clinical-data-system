@@ -1,4 +1,17 @@
-import { Eye, FileSearch, Plus, RefreshCw, Save, Trash2, Upload } from "lucide-react";
+import {
+  CheckCircle2,
+  Eye,
+  FileSearch,
+  FileText,
+  GitMerge,
+  LockOpen,
+  Plus,
+  RefreshCw,
+  Save,
+  Scissors,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +25,12 @@ import { pdfPacketsApi } from "@/services/pdf-packets";
 import { useAuthStore } from "@/stores/auth-store";
 import type { Subject, SubjectItem } from "@/types/clinical-data";
 import type { Center, Project } from "@/types/master-data";
-import type { PdfPacket, PdfPacketSegment } from "@/types/pdf-packets";
+import type {
+  PdfPacket,
+  PdfPacketAnalysisReport,
+  PdfPacketSegment,
+  PdfPacketSegmentSplitItem,
+} from "@/types/pdf-packets";
 
 type EditableSegment = {
   page_start: number;
@@ -31,11 +49,16 @@ const emptySegment = {
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
-    uploaded: "已上传",
+    uploaded: "已入库",
     processing: "处理中",
     ready: "已识别",
     failed: "失败",
     pending: "待确认",
+    auto_confirmed_candidate: "高置信候选",
+    pending_review: "需核对",
+    manually_confirmed: "人工已确认",
+    manually_modified: "人工已修改",
+    unknown: "未识别",
   };
   return labels[status] ?? status;
 }
@@ -43,6 +66,8 @@ function statusLabel(status: string) {
 function statusTone(status: string): BadgeTone {
   if (status === "ready" || status === "uploaded") return "success";
   if (status === "failed") return "danger";
+  if (status === "pending_review" || status === "unknown") return "warning";
+  if (status === "manually_confirmed" || status === "auto_confirmed_candidate") return "success";
   return "neutral";
 }
 
@@ -54,6 +79,12 @@ function openBlob(blob: Blob, page?: number) {
   const url = window.URL.createObjectURL(blob);
   window.open(`${url}${page ? `#page=${page}` : ""}`, "_blank", "noopener,noreferrer");
   window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+}
+
+function confidenceTone(confidence: number): BadgeTone {
+  if (confidence >= 0.85) return "success";
+  if (confidence >= 0.6) return "warning";
+  return "danger";
 }
 
 export function PdfPacketsPage() {
@@ -73,6 +104,12 @@ export function PdfPacketsPage() {
   const [selectedPacketId, setSelectedPacketId] = useState(0);
   const [segmentForms, setSegmentForms] = useState<Record<number, EditableSegment>>({});
   const [newSegment, setNewSegment] = useState<EditableSegment>(emptySegment);
+  const [selectedSegmentIds, setSelectedSegmentIds] = useState<number[]>([]);
+  const [splitSegmentId, setSplitSegmentId] = useState(0);
+  const [splitRows, setSplitRows] = useState<PdfPacketSegmentSplitItem[]>([]);
+  const [mergeSubjectItemId, setMergeSubjectItemId] = useState(0);
+  const [analysisReport, setAnalysisReport] = useState<PdfPacketAnalysisReport | null>(null);
+  const [reasonSegmentId, setReasonSegmentId] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
@@ -84,6 +121,19 @@ export function PdfPacketsPage() {
     () => new Map(subjectItems.map((item) => [item.id, item.item_name])),
     [subjectItems],
   );
+  const selectedSegment = segments.find((segment) => segment.id === splitSegmentId);
+  const reasonSegment = segments.find((segment) => segment.id === reasonSegmentId);
+  const reasonReportSegment = reasonSegment
+    ? analysisReport?.segments.find(
+        (segment) =>
+          segment.page_start === reasonSegment.page_start && segment.page_end === reasonSegment.page_end,
+      )
+    : null;
+  const reasonPages = reasonSegment
+    ? (analysisReport?.pages ?? []).filter(
+        (page) => page.page_no >= reasonSegment.page_start && page.page_no <= reasonSegment.page_end,
+      )
+    : [];
 
   async function loadProjects() {
     const data = await masterDataApi.listProjects();
@@ -140,10 +190,18 @@ export function PdfPacketsPage() {
     if (!packetId) {
       setSegments([]);
       setSegmentForms({});
+      setSelectedSegmentIds([]);
+      setReasonSegmentId(0);
+      setSplitSegmentId(0);
       return;
     }
     const data = await pdfPacketsApi.listSegments(packetId);
     setSegments(data);
+    setSelectedSegmentIds((current) =>
+      current.filter((id) => data.some((segment) => segment.id === id)),
+    );
+    setReasonSegmentId((current) => (data.some((segment) => segment.id === current) ? current : 0));
+    setSplitSegmentId((current) => (data.some((segment) => segment.id === current) ? current : 0));
     setSegmentForms(
       Object.fromEntries(
         data.map((segment) => [
@@ -190,6 +248,7 @@ export function PdfPacketsPage() {
 
   useEffect(() => {
     void loadSegments(selectedPacketId);
+    setAnalysisReport(null);
   }, [selectedPacketId]);
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -222,19 +281,37 @@ export function PdfPacketsPage() {
     }
   }
 
-  async function handleAnalyze() {
+  async function handleAnalyze(force = false) {
     if (!selectedPacketId) return;
+    if (
+      force &&
+      !window.confirm("强制重新识别会覆盖人工确认/人工修改片段，确认继续？")
+    ) {
+      return;
+    }
     setBusyKey(`analyze:${selectedPacketId}`);
     try {
-      const packet = await pdfPacketsApi.analyzePacket(selectedPacketId);
-      setMessage("识别已完成");
+      const packet = await pdfPacketsApi.reanalyzePacket(selectedPacketId, force);
+      setMessage(force ? "强制重新识别已完成" : "识别已完成，人工确认片段已保留");
       await loadPackets(selectedProjectId, selectedCenterId, selectedSubjectId);
       setSelectedPacketId(packet.id);
       await loadSegments(packet.id);
+      await loadAnalysisReport(packet.id);
     } catch {
       setMessage("识别失败或已有片段入库");
     } finally {
       setBusyKey(null);
+    }
+  }
+
+  async function loadAnalysisReport(packetId = selectedPacketId) {
+    if (!packetId) return;
+    try {
+      const report = await pdfPacketsApi.getAnalysisReport(packetId);
+      setAnalysisReport(report);
+    } catch {
+      setAnalysisReport(null);
+      setMessage("暂无识别原因报告");
     }
   }
 
@@ -270,7 +347,7 @@ export function PdfPacketsPage() {
 
   async function handleUploadSegment(segment: PdfPacketSegment) {
     const form = segmentForms[segment.id];
-    const subjectItemId = form?.subject_item_id || segment.suggested_subject_item_id;
+    const subjectItemId = form?.subject_item_id || segment.subject_item_id || segment.suggested_subject_item_id;
     if (!subjectItemId) {
       setMessage("请选择资料项");
       return;
@@ -297,6 +374,119 @@ export function PdfPacketsPage() {
       await loadSegments();
     } catch {
       setMessage("片段删除失败");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  function toggleSelectedSegment(segmentId: number) {
+    setSelectedSegmentIds((current) =>
+      current.includes(segmentId)
+        ? current.filter((id) => id !== segmentId)
+        : [...current, segmentId],
+    );
+  }
+
+  function startSplit(segment: PdfPacketSegment) {
+    if (segment.page_start === segment.page_end) {
+      setMessage("单页片段不能继续拆分");
+      return;
+    }
+    const midpoint = Math.floor((segment.page_start + segment.page_end) / 2);
+    const subjectItemId = segment.subject_item_id ?? segment.suggested_subject_item_id ?? null;
+    setSplitSegmentId(segment.id);
+    setSplitRows([
+      {
+        page_start: segment.page_start,
+        page_end: midpoint,
+        subject_item_id: subjectItemId,
+        detected_name: segment.detected_name,
+      },
+      {
+        page_start: midpoint + 1,
+        page_end: segment.page_end,
+        subject_item_id: subjectItemId,
+        detected_name: segment.detected_name,
+      },
+    ]);
+  }
+
+  async function handleSplitSegment() {
+    if (!selectedPacketId || !splitSegmentId) return;
+    setBusyKey(`split:${splitSegmentId}`);
+    try {
+      await pdfPacketsApi.splitSegment(selectedPacketId, splitSegmentId, {
+        splits: splitRows.map((row) => ({
+          page_start: Number(row.page_start),
+          page_end: Number(row.page_end),
+          subject_item_id: row.subject_item_id || null,
+          detected_name: row.detected_name?.trim() || null,
+        })),
+      });
+      setMessage("片段已拆分");
+      setSplitSegmentId(0);
+      setSplitRows([]);
+      await loadSegments();
+      await loadAnalysisReport();
+    } catch {
+      setMessage("片段拆分失败，请检查页码是否连续且未越界");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function handleMergeSegments() {
+    if (!selectedPacketId || selectedSegmentIds.length < 2) return;
+    setBusyKey("merge-segments");
+    try {
+      await pdfPacketsApi.mergeSegments(selectedPacketId, {
+        segment_ids: selectedSegmentIds,
+        subject_item_id: mergeSubjectItemId || null,
+      });
+      setMessage("片段已合并");
+      setSelectedSegmentIds([]);
+      setMergeSubjectItemId(0);
+      await loadSegments();
+      await loadAnalysisReport();
+    } catch {
+      setMessage("片段合并失败，只能合并连续且未入库的片段");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function handleConfirmSegment(segment: PdfPacketSegment) {
+    if (!selectedPacketId) return;
+    const form = segmentForms[segment.id];
+    const subjectItemId = form?.subject_item_id || segment.subject_item_id || segment.suggested_subject_item_id;
+    if (!subjectItemId) {
+      setMessage("请选择资料项后再确认");
+      return;
+    }
+    setBusyKey(`confirm:${segment.id}`);
+    try {
+      await pdfPacketsApi.confirmSegment(selectedPacketId, segment.id, {
+        subject_item_id: subjectItemId,
+        detected_name: form?.detected_name?.trim() || segment.detected_name,
+      });
+      setMessage("片段已人工确认");
+      await loadSegments();
+    } catch {
+      setMessage("片段确认失败");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function handleUnlockSegment(segment: PdfPacketSegment) {
+    if (!selectedPacketId) return;
+    setBusyKey(`unlock:${segment.id}`);
+    try {
+      await pdfPacketsApi.unlockSegment(selectedPacketId, segment.id);
+      setMessage("片段已解除确认");
+      await loadSegments();
+    } catch {
+      setMessage("解除确认失败");
     } finally {
       setBusyKey(null);
     }
@@ -487,13 +677,31 @@ export function PdfPacketsPage() {
                   {canWrite && (
                     <Button
                       variant="secondary"
-                      onClick={() => void handleAnalyze()}
+                      onClick={() => void handleAnalyze(false)}
                       disabled={!selectedPacketId || busyKey === `analyze:${selectedPacketId}`}
                     >
                       <RefreshCw className="size-4" aria-hidden="true" />
                       重新识别
                     </Button>
                   )}
+                  {canWrite && (
+                    <Button
+                      variant="secondary"
+                      onClick={() => void handleAnalyze(true)}
+                      disabled={!selectedPacketId || busyKey === `analyze:${selectedPacketId}`}
+                    >
+                      <RefreshCw className="size-4" aria-hidden="true" />
+                      强制重新识别
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    onClick={() => void loadAnalysisReport()}
+                    disabled={!selectedPacketId}
+                  >
+                    <FileText className="size-4" aria-hidden="true" />
+                    识别原因
+                  </Button>
                   {canDelete && selectedPacket && (
                     <Button
                       variant="secondary"
@@ -530,6 +738,174 @@ export function PdfPacketsPage() {
                 </div>
               )}
 
+              {canWrite && selectedPacket && segments.length > 0 && (
+                <div className="mb-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                    <Field label="合并后资料项">
+                      <SelectField
+                        value={mergeSubjectItemId || ""}
+                        onChange={(event) => setMergeSubjectItemId(Number(event.target.value))}
+                      >
+                        <option value="">沿用首个片段</option>
+                        {subjectItems.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.item_name}
+                          </option>
+                        ))}
+                      </SelectField>
+                    </Field>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => void handleMergeSegments()}
+                      disabled={selectedSegmentIds.length < 2 || busyKey === "merge-segments"}
+                    >
+                      <GitMerge className="size-4" aria-hidden="true" />
+                      合并已选{selectedSegmentIds.length > 0 ? ` ${selectedSegmentIds.length} 段` : ""}
+                    </Button>
+                  </div>
+
+                  {selectedSegment && (
+                    <div className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
+                      <div className="flex flex-col gap-1 text-sm text-slate-600 md:flex-row md:items-center md:justify-between">
+                        <span>
+                          拆分 p{selectedSegment.page_start}-{selectedSegment.page_end}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            setSplitRows((current) => [
+                              ...current,
+                              {
+                                page_start: current[current.length - 1]?.page_end + 1 || selectedSegment.page_end,
+                                page_end: selectedSegment.page_end,
+                                subject_item_id:
+                                  selectedSegment.subject_item_id ??
+                                  selectedSegment.suggested_subject_item_id ??
+                                  null,
+                                detected_name: selectedSegment.detected_name,
+                              },
+                            ])
+                          }
+                        >
+                          <Plus className="size-4" aria-hidden="true" />
+                          增加行
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        {splitRows.map((row, index) => (
+                          <div
+                            key={`${index}-${row.page_start}-${row.page_end}`}
+                            className="grid gap-2 md:grid-cols-[90px_90px_1fr_1fr_auto]"
+                          >
+                            <input
+                              className={inputClassName("h-9")}
+                              type="number"
+                              min={selectedSegment.page_start}
+                              max={selectedSegment.page_end}
+                              value={row.page_start}
+                              onChange={(event) =>
+                                setSplitRows((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, page_start: Number(event.target.value) }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                            <input
+                              className={inputClassName("h-9")}
+                              type="number"
+                              min={selectedSegment.page_start}
+                              max={selectedSegment.page_end}
+                              value={row.page_end}
+                              onChange={(event) =>
+                                setSplitRows((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, page_end: Number(event.target.value) }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                            <input
+                              className={inputClassName("h-9")}
+                              value={row.detected_name ?? ""}
+                              onChange={(event) =>
+                                setSplitRows((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, detected_name: event.target.value }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                            <SelectField
+                              value={row.subject_item_id || ""}
+                              onChange={(event) =>
+                                setSplitRows((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, subject_item_id: Number(event.target.value) || null }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            >
+                              <option value="">选择资料项</option>
+                              {subjectItems.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                  {item.item_name}
+                                </option>
+                              ))}
+                            </SelectField>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                setSplitRows((current) =>
+                                  current.filter((_, itemIndex) => itemIndex !== index),
+                                )
+                              }
+                              disabled={splitRows.length <= 2}
+                              title="删除拆分行"
+                            >
+                              <Trash2 className="size-4" aria-hidden="true" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          onClick={() => void handleSplitSegment()}
+                          disabled={splitRows.length < 2 || busyKey === `split:${splitSegmentId}`}
+                        >
+                          <Scissors className="size-4" aria-hidden="true" />
+                          提交拆分
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => {
+                            setSplitSegmentId(0);
+                            setSplitRows([]);
+                          }}
+                        >
+                          取消
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {segments.length === 0 ? (
                 <div className="rounded-md border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
                   暂无识别片段
@@ -539,9 +915,11 @@ export function PdfPacketsPage() {
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead>
                       <tr className="text-left text-xs font-medium uppercase text-slate-500">
+                        <th className="px-2 py-2">选择</th>
                         <th className="px-2 py-2">页码</th>
                         <th className="px-2 py-2">识别名称</th>
                         <th className="px-2 py-2">资料项</th>
+                        <th className="px-2 py-2">置信度</th>
                         <th className="px-2 py-2">状态</th>
                         <th className="px-2 py-2">操作</th>
                       </tr>
@@ -557,6 +935,14 @@ export function PdfPacketsPage() {
                         };
                         return (
                           <tr key={segment.id} className="align-top">
+                            <td className="px-2 py-3">
+                              <input
+                                type="checkbox"
+                                checked={selectedSegmentIds.includes(segment.id)}
+                                disabled={Boolean(segment.file_asset_id)}
+                                onChange={() => toggleSelectedSegment(segment.id)}
+                              />
+                            </td>
                             <td className="px-2 py-3">
                               <div className="flex items-center gap-1">
                                 <input
@@ -617,7 +1003,7 @@ export function PdfPacketsPage() {
                                 }
                               />
                               <p className="mt-2 text-xs text-slate-500">
-                                置信度 {(segment.confidence * 100).toFixed(0)}%
+                                编码：{segment.detected_code || "-"}
                               </p>
                             </td>
                             <td className="px-2 py-3">
@@ -648,6 +1034,23 @@ export function PdfPacketsPage() {
                               )}
                             </td>
                             <td className="px-2 py-3">
+                              <Badge tone={confidenceTone(segment.confidence)}>
+                                {(segment.confidence * 100).toFixed(0)}%
+                              </Badge>
+                              <button
+                                type="button"
+                                className="mt-2 block text-xs text-slate-500 hover:text-slate-900"
+                                onClick={() => {
+                                  setReasonSegmentId(
+                                    reasonSegmentId === segment.id ? 0 : segment.id,
+                                  );
+                                  if (!analysisReport) void loadAnalysisReport();
+                                }}
+                              >
+                                识别原因
+                              </button>
+                            </td>
+                            <td className="px-2 py-3">
                               <Badge tone={statusTone(segment.status)}>
                                 {statusLabel(segment.status)}
                               </Badge>
@@ -666,9 +1069,43 @@ export function PdfPacketsPage() {
                                       variant="ghost"
                                       onClick={() => void handleSaveSegment(segment)}
                                       disabled={busyKey === `save:${segment.id}`}
+                                      title="保存修改"
                                     >
                                       <Save className="size-4" aria-hidden="true" />
                                     </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => startSplit(segment)}
+                                      disabled={
+                                        segment.page_start === segment.page_end ||
+                                        busyKey === `split:${segment.id}`
+                                      }
+                                      title="拆分"
+                                    >
+                                      <Scissors className="size-4" aria-hidden="true" />
+                                    </Button>
+                                    {segment.status === "manually_confirmed" ? (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => void handleUnlockSegment(segment)}
+                                        disabled={busyKey === `unlock:${segment.id}`}
+                                        title="解除确认"
+                                      >
+                                        <LockOpen className="size-4" aria-hidden="true" />
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => void handleConfirmSegment(segment)}
+                                        disabled={busyKey === `confirm:${segment.id}`}
+                                        title="人工确认"
+                                      >
+                                        <CheckCircle2 className="size-4" aria-hidden="true" />
+                                      </Button>
+                                    )}
                                     <Button
                                       size="sm"
                                       variant="ghost"
@@ -694,6 +1131,109 @@ export function PdfPacketsPage() {
                       })}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {reasonSegment && (
+                <div className="mt-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="font-medium text-slate-900">
+                        识别原因 p{reasonSegment.page_start}-{reasonSegment.page_end}
+                      </p>
+                      <p className="mt-1 text-slate-500">
+                        {reasonSegment.detected_name || "-"} · 置信度{" "}
+                        {(reasonSegment.confidence * 100).toFixed(0)}%
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void loadAnalysisReport()}
+                      disabled={!selectedPacketId}
+                    >
+                      <RefreshCw className="size-4" aria-hidden="true" />
+                      刷新报告
+                    </Button>
+                  </div>
+
+                  {!analysisReport ? (
+                    <div className="rounded-md border border-dashed border-slate-200 bg-white px-3 py-3 text-slate-500">
+                      暂无调试报告
+                    </div>
+                  ) : (
+                    <>
+                      <div className="rounded-md border border-slate-200 bg-white p-3">
+                        <p className="font-medium text-slate-900">片段结论</p>
+                        <p className="mt-2 text-slate-600">
+                          {reasonReportSegment?.reason || "未记录片段级原因"}
+                        </p>
+                        {reasonReportSegment?.page_reasons?.length ? (
+                          <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-600">
+                            {reasonReportSegment.page_reasons.map((reason, index) => (
+                              <li key={`${index}-${reason}`}>{reason}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+
+                      <div className="space-y-2">
+                        {reasonPages.map((page) => (
+                          <details
+                            key={page.page_no}
+                            className="rounded-md border border-slate-200 bg-white p-3"
+                            open={reasonPages.length === 1}
+                          >
+                            <summary className="cursor-pointer font-medium text-slate-900">
+                              第 {page.page_no} 页 · {page.display_name || page.doc_type || "未识别"} ·{" "}
+                              {(page.confidence * 100).toFixed(0)}%
+                            </summary>
+                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                              <div>
+                                <p className="text-xs font-medium text-slate-500">标题命中</p>
+                                <p className="mt-1 text-slate-700">
+                                  {page.matched_title?.join("、") || "-"}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-xs font-medium text-slate-500">特征命中</p>
+                                <p className="mt-1 text-slate-700">
+                                  {page.matched_features?.join("、") || "-"}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-xs font-medium text-slate-500">负向命中</p>
+                                <p className="mt-1 text-slate-700">
+                                  {page.negative_hits?.join("、") || "-"}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-xs font-medium text-slate-500">原因</p>
+                                <p className="mt-1 text-slate-700">{page.reason || "-"}</p>
+                              </div>
+                            </div>
+                            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                              <div>
+                                <p className="text-xs font-medium text-slate-500">页首/页尾</p>
+                                <pre className="mt-1 max-h-40 overflow-auto rounded bg-slate-100 p-2 text-xs text-slate-700">
+                                  {[...(page.head_lines ?? []), "...", ...(page.tail_lines ?? [])].join(
+                                    "\n",
+                                  )}
+                                </pre>
+                              </div>
+                              <div>
+                                <p className="text-xs font-medium text-slate-500">归一化文本</p>
+                                <pre className="mt-1 max-h-40 overflow-auto rounded bg-slate-100 p-2 text-xs text-slate-700">
+                                  {page.normalized_text || page.raw_text || "-"}
+                                </pre>
+                              </div>
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </CardContent>

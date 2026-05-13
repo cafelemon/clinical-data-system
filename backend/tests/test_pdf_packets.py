@@ -1,9 +1,42 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
+from app.services.page_text_normalizer import normalize_page_text
+from app.services.pdf_packet_classifier import classify_page
 from app.services.pdf_packets import pdf_page_count
+
+SAMPLE_010005_OCR_TEXTS = [
+    "知情同意书 受试者知情同意 同意参加临床试验 签署知情",
+    "知情同意书交接记录表 交接 接收 知情同意书份数 研究者交接",
+    "医学影像检查报告单 CT 检查所见 放射科 报告医师",
+    "门诊病历 第1页 门诊号 主诉 现病史 诊断 处方",
+    "门诊病历 第2页 主诉 现病史 既往史 诊断",
+    "门诊病历 第3页 就诊时间 现病史 处方",
+    "门诊病历 第4页 主诉 诊断 处方",
+    "门诊病历 第5页 既往史 诊断",
+    "门诊病历 第6页 就诊时间 主诉 现病史",
+    "门诊病历 第7页 门诊号 诊断 处方",
+    "门诊病历 第8页 主诉 既往史 诊断",
+    "门诊病历 第9页 就诊时间 现病史 处方",
+    "入组审核记录表 入组审核 是否符合 研究者签名",
+    "入选标准 入组 是否符合 研究者签名",
+    "排除标准 入组 是否符合 研究者签名",
+    "生命体征记录表 体温 脉搏 呼吸 血压 收缩压 舒张压",
+    "舒适度评价表 舒适 疼痛 VAS 不适 评价",
+    "图像质量评价表 图像质量 清晰度 完整性 评价结果",
+    "图像质量评价表 图片质量 清晰度 完整性",
+    "图像质量评价表 图像质量 清晰度 完整性",
+    "图像质量评价表 图片质量 清晰度 完整性",
+    "设备常用功能评价表 设备常用功能 胶囊定位 下载 传输",
+    "设备稳定性评价表 设备稳定性 电池 下载 传输",
+    "其他次要标准评价表 胶囊内镜报告信息 胃通过时间 小肠通过时间",
+    "独立评估人检查图像质量评估表 独立评估人 阅片 图像质量评估",
+    "独立评估人检查图像质量评估表 独立评估人 阅片 评估人签名",
+    "胶囊内镜报告 检查所见 诊断意见 胃通过时间 小肠通过时间",
+]
 
 
 def login_headers(client: TestClient, username: str, password: str) -> dict[str, str]:
@@ -155,6 +188,56 @@ def create_subject(
     return response.json()
 
 
+def test_page_text_normalizer_cleans_ocr_noise_and_keeps_structured_lines() -> None:
+    page = normalize_page_text(
+        "  医学影像检査　报告：  \n\n"
+        "二维码 请扫描查看原件\n"
+        "检查日期：2026年5月13日\n"
+        "第 1 页 / 2\n"
+        "图象质景  良好\n"
+    )
+
+    assert page.raw_text.startswith("  医学影像")
+    assert "医学影像检查 报告:" in page.normalized_text
+    assert "检查日期:2026-5-13" in page.normalized_text
+    assert "图像质量 良好" in page.normalized_text
+    assert "二维码" not in page.normalized_text
+    assert "第 1 页" not in page.normalized_text
+    assert page.head_lines == page.lines[:20]
+    assert page.tail_lines == page.lines[-10:]
+
+
+def test_title_strong_recognition_prefers_long_handover_title() -> None:
+    classification = classify_page(
+        1,
+        "知情同意书交接记录表\n知情同意书\n交接 接收 知情同意书份数",
+        [],
+    )
+
+    assert classification.doc_type == "consent_transfer"
+    assert classification.target_code == "知情同意书交接表"
+    assert classification.strong_title is True
+    assert classification.title_locations == ("head",)
+    assert "知情同意书交接记录表" in classification.matched_title
+
+
+def test_title_position_in_head_has_higher_confidence_than_body() -> None:
+    head_classification = classify_page(1, "知情同意书\n受试者知情同意", [])
+    before_title = "\n".join([f"普通正文行 {index}" for index in range(1, 22)])
+    after_title = "\n".join([f"后续正文行 {index}" for index in range(1, 12)])
+    body_classification = classify_page(
+        2,
+        f"{before_title}\n知情同意书\n受试者知情同意\n{after_title}",
+        [],
+    )
+
+    assert head_classification.doc_type == "consent"
+    assert body_classification.doc_type == "consent"
+    assert head_classification.title_locations == ("head",)
+    assert body_classification.title_locations == ("body",)
+    assert head_classification.confidence > body_classification.confidence
+
+
 def test_pdf_packet_recognizes_segments_and_uploads_selected_pages(
     client: TestClient,
     admin_headers: dict[str, str],
@@ -226,6 +309,11 @@ def test_pdf_packet_recognizes_segments_and_uploads_selected_pages(
     )
     assert updated_segment.status_code == 200
     assert updated_segment.json()["detected_name"] == "基线资料确认"
+    removed_baseline_segment = client.delete(
+        f"/api/pdf-packet-segments/{baseline_segment['id']}",
+        headers=admin_headers,
+    )
+    assert removed_baseline_segment.status_code == 204
 
     manual_segment = client.post(
         f"/api/pdf-packets/{packet['id']}/segments",
@@ -305,6 +393,267 @@ def test_pdf_packet_uses_ocr_text_when_pdf_has_no_text_layer(
     assert segments.status_code == 200
     suggested_ids = {segment["suggested_subject_item_id"] for segment in segments.json()}
     assert {consent_item["id"], ct_item["id"]}.issubset(suggested_ids)
+
+
+def test_pdf_packet_splits_010005_full_27_pages_by_v3_p0_baseline(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
+    monkeypatch.setattr("app.services.pdf_packets.extract_text_with_pypdf", lambda *_: [""] * 27)
+    monkeypatch.setattr(
+        "app.services.pdf_packets.extract_text_with_pdftotext",
+        lambda *_: [""] * 27,
+    )
+    monkeypatch.setattr(
+        "app.services.pdf_packets.extract_text_with_ocr_api",
+        lambda *_: SAMPLE_010005_OCR_TEXTS,
+    )
+    project_id = create_project(client, admin_headers)
+    center_id = create_center(client, admin_headers, project_id)
+    subject = create_subject(client, admin_headers, project_id, center_id)
+    sample_path = Path(__file__).resolve().parents[2] / "010005.pdf"
+
+    upload = client.post(
+        "/api/pdf-packets/upload",
+        headers=admin_headers,
+        data={
+            "project_id": str(project_id),
+            "center_id": str(center_id),
+            "subject_id": str(subject["id"]),
+        },
+        files={"file": ("010005.pdf", sample_path.read_bytes(), "application/pdf")},
+    )
+
+    assert upload.status_code == 201
+    packet = upload.json()
+    assert packet["page_count"] == 27
+    assert packet["status"] == "ready"
+    assert packet["analysis_summary"] == "12 segments, 27 text/OCR pages"
+
+    response = client.get(f"/api/pdf-packets/{packet['id']}/segments", headers=admin_headers)
+    assert response.status_code == 200
+    segments = response.json()
+    actual_ranges = [
+        (segment["page_start"], segment["page_end"], segment["detected_code"])
+        for segment in segments
+    ]
+    assert actual_ranges == [
+        (1, 1, "知情同意书"),
+        (2, 2, "知情同意书交接表"),
+        (3, 3, "CT报告"),
+        (4, 12, "HIS记录"),
+        (13, 15, "入组审核记录表"),
+        (16, 16, "生命体征记录表"),
+        (17, 17, "舒适度评价表"),
+        (18, 21, "图像质量评价表"),
+        (22, 23, "其他次要指标评价表"),
+        (24, 24, "其他次要指标评价表"),
+        (25, 26, "中心阅片评价结果表"),
+        (27, 27, "胶囊内镜报告"),
+    ]
+
+    by_page = {
+        page: segment["detected_code"]
+        for segment in segments
+        for page in range(segment["page_start"], segment["page_end"] + 1)
+    }
+    for boundary_page in (1, 2, 3, 4, 13, 16, 17, 18, 22, 24, 25, 27):
+        assert boundary_page in by_page
+    assert {by_page[page] for page in range(1, 13)} == {
+        "知情同意书",
+        "知情同意书交接表",
+        "CT报告",
+        "HIS记录",
+    }
+    assert {by_page[page] for page in range(13, 16)} == {"入组审核记录表"}
+    assert all(by_page[page] != "知情同意书" for page in range(13, 16))
+    assert all(by_page[page] != "肠道准备情况" for page in range(20, 24))
+    assert all(by_page[page] != "肠道准备情况" for page in range(25, 27))
+
+    debug_report = tmp_path / "file-storage" / "_debug" / "pdf-packet-analysis" / "latest.json"
+    assert debug_report.exists()
+    debug_payload = json.loads(debug_report.read_text(encoding="utf-8"))
+    first_page = debug_payload["pages"][0]
+    assert first_page["raw_text"] == SAMPLE_010005_OCR_TEXTS[0]
+    assert "normalized_text" in first_page
+    assert first_page["head_lines"]
+    assert first_page["tail_lines"]
+    assert first_page["title_locations"] == ["head"]
+    assert debug_payload["segments"][0]["reason"] == "first page"
+
+
+def test_pdf_packet_manual_split_merge_confirm_and_reanalyze_locking(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
+    monkeypatch.setattr("app.services.pdf_packets.extract_text_with_pypdf", lambda *_: [""] * 4)
+    monkeypatch.setattr("app.services.pdf_packets.extract_text_with_pdftotext", lambda *_: [""] * 4)
+    monkeypatch.setattr(
+        "app.services.pdf_packets.extract_text_with_ocr_api",
+        lambda *_: [
+            "知情同意书 受试者知情同意 同意参加",
+            "医学影像检查报告单 CT 检查所见 报告医师",
+            "门诊病历 主诉 诊断",
+            "门诊病历 现病史 处方",
+        ],
+    )
+    project_id = create_project(client, admin_headers)
+    center_id = create_center(client, admin_headers, project_id)
+    subject = create_subject(client, admin_headers, project_id, center_id)
+    items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers).json()
+    consent_item = next(item for item in items if item["item_code"] == "知情同意书")
+    his_item = next(item for item in items if item["item_code"] == "HIS记录")
+
+    upload = client.post(
+        "/api/pdf-packets/upload",
+        headers=admin_headers,
+        data={
+            "project_id": str(project_id),
+            "center_id": str(center_id),
+            "subject_id": str(subject["id"]),
+        },
+        files={"file": ("010005.pdf", create_pdf(["", "", "", ""]), "application/pdf")},
+    )
+    assert upload.status_code == 201
+    packet_id = upload.json()["id"]
+    segments = client.get(f"/api/pdf-packets/{packet_id}/segments", headers=admin_headers).json()
+    assert [(segment["page_start"], segment["page_end"]) for segment in segments] == [
+        (1, 1),
+        (2, 2),
+        (3, 4),
+    ]
+
+    overlap = client.put(
+        f"/api/pdf-packet-segments/{segments[1]['id']}",
+        headers=admin_headers,
+        json={"page_start": 1, "page_end": 2},
+    )
+    assert overlap.status_code == 400
+
+    broken_split = client.post(
+        f"/api/pdf-packets/{packet_id}/segments/{segments[2]['id']}/split",
+        headers=admin_headers,
+        json={
+            "splits": [
+                {"page_start": 3, "page_end": 3, "subject_item_id": his_item["id"]},
+                {"page_start": 3, "page_end": 4, "subject_item_id": his_item["id"]},
+            ]
+        },
+    )
+    assert broken_split.status_code == 400
+
+    split = client.post(
+        f"/api/pdf-packets/{packet_id}/segments/{segments[2]['id']}/split",
+        headers=admin_headers,
+        json={
+            "splits": [
+                {"page_start": 3, "page_end": 3, "subject_item_id": his_item["id"]},
+                {"page_start": 4, "page_end": 4, "subject_item_id": his_item["id"]},
+            ]
+        },
+    )
+    assert split.status_code == 200
+    split_segments = split.json()
+    assert [(segment["page_start"], segment["page_end"]) for segment in split_segments] == [
+        (3, 3),
+        (4, 4),
+    ]
+    assert {segment["status"] for segment in split_segments} == {"manually_modified"}
+
+    non_contiguous_merge = client.post(
+        f"/api/pdf-packets/{packet_id}/segments/merge",
+        headers=admin_headers,
+        json={
+            "segment_ids": [segments[0]["id"], split_segments[1]["id"]],
+            "subject_item_id": his_item["id"],
+        },
+    )
+    assert non_contiguous_merge.status_code == 400
+
+    merge = client.post(
+        f"/api/pdf-packets/{packet_id}/segments/merge",
+        headers=admin_headers,
+        json={
+            "segment_ids": [segment["id"] for segment in split_segments],
+            "subject_item_id": his_item["id"],
+        },
+    )
+    assert merge.status_code == 200
+    assert (merge.json()["page_start"], merge.json()["page_end"]) == (3, 4)
+    assert merge.json()["status"] == "manually_modified"
+
+    confirm = client.post(
+        f"/api/pdf-packets/{packet_id}/segments/{segments[0]['id']}/confirm",
+        headers=admin_headers,
+        json={"subject_item_id": consent_item["id"]},
+    )
+    assert confirm.status_code == 200
+    assert confirm.json()["status"] == "manually_confirmed"
+
+    reanalyze = client.post(
+        f"/api/pdf-packets/{packet_id}/reanalyze",
+        headers=admin_headers,
+    )
+    assert reanalyze.status_code == 200
+    after_reanalyze = client.get(
+        f"/api/pdf-packets/{packet_id}/segments",
+        headers=admin_headers,
+    ).json()
+    confirmed = next(segment for segment in after_reanalyze if segment["page_start"] == 1)
+    assert confirmed["status"] == "manually_confirmed"
+
+    report = client.get(f"/api/pdf-packets/{packet_id}/analysis-report", headers=admin_headers)
+    assert report.status_code == 200
+    assert report.json()["pages"][0]["normalized_text"]
+    assert report.json()["segments"][0]["reason"]
+
+    unlock_target = confirmed["id"]
+    unlock = client.post(
+        f"/api/pdf-packets/{packet_id}/segments/{unlock_target}/unlock",
+        headers=admin_headers,
+    )
+    assert unlock.status_code == 200
+    assert unlock.json()["status"] == "pending_review"
+
+    confirm_again = client.post(
+        f"/api/pdf-packets/{packet_id}/segments/{unlock_target}/confirm",
+        headers=admin_headers,
+        json={"subject_item_id": consent_item["id"]},
+    )
+    assert confirm_again.status_code == 200
+    force_reanalyze = client.post(
+        f"/api/pdf-packets/{packet_id}/reanalyze?force=true",
+        headers=admin_headers,
+    )
+    assert force_reanalyze.status_code == 200
+    after_force = client.get(f"/api/pdf-packets/{packet_id}/segments", headers=admin_headers).json()
+    assert next(segment for segment in after_force if segment["page_start"] == 1)["status"] != (
+        "manually_confirmed"
+    )
+
+    uploaded = client.post(
+        f"/api/pdf-packet-segments/{after_force[0]['id']}/upload",
+        headers=admin_headers,
+        json={"subject_item_id": consent_item["id"]},
+    )
+    assert uploaded.status_code == 200
+    assert uploaded.json()["segment"]["status"] == "uploaded"
+
+    uploaded_merge = client.post(
+        f"/api/pdf-packets/{packet_id}/segments/merge",
+        headers=admin_headers,
+        json={
+            "segment_ids": [after_force[0]["id"], after_force[1]["id"]],
+            "subject_item_id": consent_item["id"],
+        },
+    )
+    assert uploaded_merge.status_code == 400
 
 
 def test_generate_stage_template_keywords_from_subject_files(
