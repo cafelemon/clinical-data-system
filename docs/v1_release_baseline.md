@@ -28,12 +28,13 @@ Mac 环境作为后续主要开发和测试环境，职责包括：
 - 资料包处理逻辑优化
 - 权限、主数据、业务流程的持续开发
 
-Mac 本地 OCR 继续采用 **CPU 模式**，作为开发测试用途，不追求生产性能。
+Mac 本地 OCR 已切换为 **macOS 原生 Apple Vision OCR 服务**，作为开发测试用途，不再依赖 Docker 内的 PaddleOCR CPU 容器。
 
 当前原则：
 
 - Mac 不作为正式交付环境
-- Mac 侧 OCR 只要求功能正确、便于开发调试
+- Mac 侧 OCR 通过 Apple Vision/CoreML 系统能力服务本机样本调试，不暴露 `gpu:0` 这类 Paddle 设备名
+- Mac 侧 OCR 只要求功能正确、便于开发调试，并保持后端默认 OCR 地址不变
 - 本地允许继续优化接口、前端、数据结构和流程
 
 ### 2.2 Linux 生产环境
@@ -92,13 +93,26 @@ V1 对应的已验证离线 GPU 包产物为：
 
 ### 5.1 Mac 开发基线
 
-Mac 本地继续保留 CPU OCR 路径，用于开发验证。
+Mac 本地开发环境使用 macOS 原生 Apple Vision OCR 服务，用于开发验证。
 
 换句话说：
 
-- 本地可以慢
-- 本地可以不启用 GPU
+- 本地不再启动 Docker 内的 PaddleOCR CPU 容器
+- 本地 OCR 服务继续占用 `8048`，后端 `PDF_PACKET_OCR_API_URL=http://127.0.0.1:8048` 不需要修改
+- `/health` 返回的 `service` 应为 `mac-vision-ocr-api`
+- Apple Vision OCR 没有 PaddleOCR 的 `gpu:0` 显式设备名，但会由 macOS 的 Vision/CoreML 系统框架调度
 - 本地以“正确性”和“便于开发”为优先
+
+当前本机验证结果：
+
+- `010005.pdf` 全 27 页 OCR 已跑通，耗时约 12.6 秒
+- 失败资料包重新分析后状态为 `ready`
+- 已生成 `9 segments` 和 `27 text/OCR pages`
+
+补充说明：
+
+- PaddleOCR 的 Python Paddle 路线在 macOS 上没有可直接启用的 Apple GPU 开关
+- 生产环境仍以 Linux GPU PaddleOCR 为准，本机 Apple Vision OCR 不替代生产基线
 
 ### 5.2 Linux 生产基线
 
@@ -137,7 +151,7 @@ V1 基线中已经包含：
 
 后续推荐采用以下工作方式：
 
-1. Mac 作为主开发与测试环境，继续跑 CPU OCR。
+1. Mac 作为主开发与测试环境，继续跑 Apple Vision OCR。
 2. Linux 保持当前已验证通过的 GPU 生产版本，供临床部门使用。
 3. 所有结构性变更先在 Mac 完成开发与验证。
 4. 需要交付生产时，再基于 Linux 生产方案做一次定向打包与迁移。

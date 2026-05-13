@@ -15,16 +15,16 @@ class PaddleOcrClient:
     def ocr_pdf(self, path: Path, page_count: int, dpi: int) -> list[str]:
         try:
             with path.open("rb") as input_file:
-                response = httpx.post(
-                    f"{self.base_url}/ocr/pdf",
-                    params={
-                        "max_pages": page_count,
-                        "dpi": dpi,
-                        "include_blocks": "false",
-                    },
-                    files={"file": (path.name, input_file, "application/pdf")},
-                    timeout=self.timeout_seconds,
-                )
+                with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
+                    response = client.post(
+                        f"{self.base_url}/ocr/pdf",
+                        params={
+                            "max_pages": page_count,
+                            "dpi": dpi,
+                            "include_blocks": "false",
+                        },
+                        files={"file": (path.name, input_file, "application/pdf")},
+                    )
             response.raise_for_status()
         except (OSError, httpx.HTTPError) as exc:
             raise OcrClientError(str(exc)) from exc
