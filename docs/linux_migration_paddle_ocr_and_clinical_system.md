@@ -109,7 +109,7 @@ POSTGRES_PASSWORD=替换为强密码
 DATABASE_URL=postgresql+psycopg://clinical_user:同一个强密码@postgres:5432/clinical_data
 JWT_SECRET_KEY=替换为足够长的随机密钥
 INITIAL_ADMIN_PASSWORD=临时初始密码
-BACKEND_CORS_ORIGINS=["http://服务器IP:8080"]
+BACKEND_CORS_ORIGINS=["http://服务器IP:18080"]
 ```
 
 OCR 服务在 Compose 网络中使用：
@@ -223,7 +223,7 @@ du -sh /data/clinical-data-stack/runtime/paddle-ocr/model_cache
 浏览器访问：
 
 ```text
-http://服务器IP:8080
+http://服务器IP:18080
 ```
 
 ## 6. PaddleOCR 模型预热
@@ -284,7 +284,7 @@ RuntimeError: Unsupported GPU architecture
 
 默认端口：
 
-- 前端：`8080`
+- 前端：`18080`
 - 后端：仅本机 `127.0.0.1:8000`
 - PaddleOCR：仅本机 `127.0.0.1:8048`
 - PostgreSQL：仅本机 `127.0.0.1:5432`
@@ -292,7 +292,7 @@ RuntimeError: Unsupported GPU architecture
 如果要使用正式域名，建议公司网关或 Nginx 只暴露前端，并反代到：
 
 ```text
-http://127.0.0.1:8080
+http://127.0.0.1:18080
 ```
 
 后端、OCR、数据库不要直接暴露到公网或普通办公网段。

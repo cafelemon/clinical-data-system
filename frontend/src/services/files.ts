@@ -61,6 +61,7 @@ export const filesApi = {
     const response = await http.get<Blob>(`/files/${id}/preview`, {
       params: { version },
       responseType: "blob",
+      timeout: 600000,
     });
     return response.data;
   },

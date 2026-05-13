@@ -33,7 +33,8 @@ from app.core.files import (
     FILE_CATEGORIES,
     StoredUpload,
     ensure_relative_path,
-    is_preview_supported,
+    normalize_mime_type,
+    preview_media_type,
     safe_path_part,
 )
 from app.models import (
@@ -221,10 +222,9 @@ def write_upload(upload_file: UploadFile, target_dir: Path) -> StoredUpload:
     finally:
         upload_file.file.close()
 
-    mime_type = (
-        upload_file.content_type
-        or mimetypes.guess_type(original_name)[0]
-        or "application/octet-stream"
+    mime_type = normalize_mime_type(
+        upload_file.content_type or mimetypes.guess_type(original_name)[0],
+        original_name,
     )
     return StoredUpload(
         original_name=original_name,
@@ -494,7 +494,8 @@ def preview_file(
     file_asset = get_or_404(db, FileAsset, file_id, "file")
     ensure_file_scope(access, file_asset)
     file_version = resolve_version_path(db, file_asset, version)
-    if not is_preview_supported(file_version.mime_type):
+    media_type = preview_media_type(file_version.mime_type, file_version.original_name)
+    if media_type is None:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="preview unsupported",
@@ -507,7 +508,7 @@ def preview_file(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found")
     return FileResponse(
         path,
-        media_type=file_version.mime_type,
+        media_type=media_type,
         filename=file_version.original_name,
         content_disposition_type="inline",
     )

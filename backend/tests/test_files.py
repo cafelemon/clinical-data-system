@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
+from app.core.files import preview_media_type
 
 
 def login_headers(client: TestClient, username: str, password: str) -> dict[str, str]:
@@ -166,6 +167,22 @@ def test_stage_file_upload_download_preview_replace_versions_and_delete(
     assert preview.status_code == 200
     assert preview.headers["content-type"].startswith("application/pdf")
 
+    generic_pdf = b"%PDF-1.4\ngeneric"
+    generic_upload = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={"file_category": "raw_pdf", "stage_file_id": str(stage_file["id"])},
+        files={"file": ("scanner-output.pdf", generic_pdf, "application/octet-stream")},
+    )
+    assert generic_upload.status_code == 201
+    assert generic_upload.json()["mime_type"] == "application/pdf"
+    generic_preview = client.get(
+        f"/api/files/{generic_upload.json()['id']}/preview",
+        headers=admin_headers,
+    )
+    assert generic_preview.status_code == 200
+    assert generic_preview.headers["content-type"].startswith("application/pdf")
+
     replacement = b"%PDF-1.4\nreplacement"
     replace = client.post(
         f"/api/files/{file_record['id']}/replace",
@@ -212,6 +229,12 @@ def test_stage_file_upload_download_preview_replace_versions_and_delete(
     assert not storage_path(storage_root, file_record["storage_path"]).exists()
     assert not storage_path(storage_root, replaced_record["storage_path"]).exists()
 
+    delete_generic_pdf = client.delete(
+        f"/api/files/{generic_upload.json()['id']}",
+        headers=admin_headers,
+    )
+    assert delete_generic_pdf.status_code == 204
+
     delete_excel = client.delete(f"/api/files/{excel_upload.json()['id']}", headers=admin_headers)
     assert delete_excel.status_code == 204
     reset_stage_files = client.get(
@@ -219,6 +242,12 @@ def test_stage_file_upload_download_preview_replace_versions_and_delete(
         headers=admin_headers,
     )
     assert reset_stage_files.json()[0]["upload_status"] == "not_uploaded"
+
+
+def test_preview_media_type_falls_back_to_pdf_filename() -> None:
+    assert preview_media_type("application/octet-stream", "legacy-upload.pdf") == "application/pdf"
+    assert preview_media_type(None, "legacy-upload.pdf") == "application/pdf"
+    assert preview_media_type("application/octet-stream", "sheet.xlsx") is None
 
 
 def test_subject_item_file_status_sync_and_size_limit(

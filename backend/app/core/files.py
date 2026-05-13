@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import mimetypes
 from pathlib import Path
 
 FILE_CATEGORIES = {
@@ -27,6 +28,7 @@ CATEGORY_FOLDERS = {
 
 PREVIEW_MIME_PREFIXES = ("image/",)
 PREVIEW_MIME_TYPES = {"application/pdf"}
+GENERIC_MIME_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
 
 
 @dataclass(frozen=True)
@@ -46,8 +48,26 @@ def safe_path_part(value: str) -> str:
     return cleaned or "unknown"
 
 
+def normalize_mime_type(mime_type: str | None, filename: str) -> str:
+    cleaned = (mime_type or "").split(";", 1)[0].strip().lower()
+    guessed = mimetypes.guess_type(filename)[0]
+    if cleaned in GENERIC_MIME_TYPES and guessed:
+        return guessed
+    return cleaned or guessed or "application/octet-stream"
+
+
 def is_preview_supported(mime_type: str) -> bool:
     return mime_type in PREVIEW_MIME_TYPES or mime_type.startswith(PREVIEW_MIME_PREFIXES)
+
+
+def preview_media_type(mime_type: str | None, filename: str) -> str | None:
+    normalized = normalize_mime_type(mime_type, filename)
+    if is_preview_supported(normalized):
+        return normalized
+    guessed = mimetypes.guess_type(filename)[0] or ""
+    if is_preview_supported(guessed):
+        return guessed
+    return None
 
 
 def ensure_relative_path(root: Path, storage_path: str) -> Path:

@@ -125,6 +125,12 @@ V2.1 目标：将受试者资料项页面从“系统字段堆叠表”调整为
 - `cd frontend && npm run build`
   - 结果：通过
   - 备注：Vite 提示 PDF worker 和主包 chunk 较大，属于 PDF.js 引入后的体积提示，不影响构建产物生成
+- `2026-05-13` V2 PDF 审阅生产构建浏览器复测
+  - 结果：Safari、Chrome、夸克均可在 `http://127.0.0.1:18081/pdf-review/files/2?version=1` 渲染 `010001-知情同意书.pdf`，显示 `1/1`、批注列表和批注框
+  - 备注：Chrome Console 只剩 PDF 内部字典 warning，无 MIME / worker 加载错误
+- `2026-05-13` 离线替换包生成与解包校验
+  - 结果：`backups/migration/v2-replace/clinical-data-pdfjs-mjs-fix-20260513.tar.gz` 生成完成，包内 `SHA256SUMS` 校验通过
+  - 内容：后端镜像 `clinical-backend:20260513-pdf-preview-fix`、前端镜像 `clinical-frontend:20260513-pdfjs-mjs-fix`、compose 覆盖文件和替换命令文档
 
 待手工验收：
 - 手工验收：

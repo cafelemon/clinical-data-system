@@ -31,6 +31,8 @@ import type { PdfAnnotation, PdfReviewFile } from "@/types/pdf-review";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
+type PdfJsModule = typeof pdfjsLib;
+
 type DraftRect = {
   page_no: number;
   x: number;
@@ -112,6 +114,55 @@ function pointFromEvent(event: PointerEvent<SVGSVGElement>): Point {
   };
 }
 
+async function loadPdfWithModule(
+  module: PdfJsModule,
+  workerSrc: string,
+  bytes: Uint8Array,
+) {
+  module.GlobalWorkerOptions.workerSrc = workerSrc;
+  return module.getDocument({
+    data: bytes.slice(),
+    isImageDecoderSupported: false,
+    isOffscreenCanvasSupported: false,
+  }).promise;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
+
+async function loadPdfDocument(data: ArrayBuffer) {
+  const bytes = new Uint8Array(data);
+  try {
+    return await withTimeout(
+      loadPdfWithModule(pdfjsLib, pdfWorkerUrl, bytes),
+      5000,
+      "PDF.js primary loader",
+    );
+  } catch (error) {
+    console.warn("PDF.js primary loader failed, retrying with legacy build.", error);
+    const legacyPdfjs = (await import("pdfjs-dist/legacy/build/pdf.mjs")) as PdfJsModule;
+    const legacyWorkerUrl = (
+      await import("pdfjs-dist/legacy/build/pdf.worker.mjs?url")
+    ).default;
+    return withTimeout(
+      loadPdfWithModule(legacyPdfjs, legacyWorkerUrl, bytes),
+      8000,
+      "PDF.js legacy loader",
+    );
+  }
+}
+
 export function PdfReviewPage() {
   const params = useParams();
   const location = useLocation();
@@ -179,7 +230,7 @@ export function PdfReviewPage() {
       try {
         const blob = await filesApi.previewFile(reviewFile.file_id, reviewFile.version);
         const data = await blob.arrayBuffer();
-        const document = await pdfjsLib.getDocument({ data }).promise;
+        const document = await loadPdfDocument(data);
         if (!cancelled) {
           setPdfDoc(document);
           setPageNo(1);
