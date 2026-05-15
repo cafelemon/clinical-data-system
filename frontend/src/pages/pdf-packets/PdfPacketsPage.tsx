@@ -1,18 +1,15 @@
 import {
   CheckCircle2,
   Eye,
-  FileSearch,
-  FileText,
   GitMerge,
-  LockOpen,
   Plus,
   RefreshCw,
-  Save,
+  RotateCcw,
   Scissors,
   Trash2,
   Upload,
 } from "lucide-react";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,6 +43,25 @@ const emptySegment = {
   detected_name: "",
   subject_item_id: 0,
 };
+
+function editableFromSegment(segment: PdfPacketSegment): EditableSegment {
+  return {
+    page_start: segment.page_start,
+    page_end: segment.page_end,
+    detected_name: segment.detected_name ?? "",
+    subject_item_id: segment.subject_item_id ?? segment.suggested_subject_item_id ?? 0,
+  };
+}
+
+function segmentFormChanged(segment: PdfPacketSegment, form: EditableSegment) {
+  const current = editableFromSegment(segment);
+  return (
+    Number(form.page_start) !== current.page_start ||
+    Number(form.page_end) !== current.page_end ||
+    form.detected_name.trim() !== current.detected_name ||
+    Number(form.subject_item_id || 0) !== current.subject_item_id
+  );
+}
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
@@ -102,6 +118,7 @@ export function PdfPacketsPage() {
   const [selectedCenterId, setSelectedCenterId] = useState(0);
   const [selectedSubjectId, setSelectedSubjectId] = useState(0);
   const [selectedPacketId, setSelectedPacketId] = useState(0);
+  const selectedPacketIdRef = useRef(0);
   const [segmentForms, setSegmentForms] = useState<Record<number, EditableSegment>>({});
   const [newSegment, setNewSegment] = useState<EditableSegment>(emptySegment);
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<number[]>([]);
@@ -110,6 +127,7 @@ export function PdfPacketsPage() {
   const [mergeSubjectItemId, setMergeSubjectItemId] = useState(0);
   const [analysisReport, setAnalysisReport] = useState<PdfPacketAnalysisReport | null>(null);
   const [reasonSegmentId, setReasonSegmentId] = useState(0);
+  const [undoSnapshots, setUndoSnapshots] = useState<Record<number, EditableSegment>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
@@ -134,6 +152,11 @@ export function PdfPacketsPage() {
         (page) => page.page_no >= reasonSegment.page_start && page.page_no <= reasonSegment.page_end,
       )
     : [];
+
+  function selectPacketId(packetId: number) {
+    selectedPacketIdRef.current = packetId;
+    setSelectedPacketId(packetId);
+  }
 
   async function loadProjects() {
     const data = await masterDataApi.listProjects();
@@ -172,7 +195,7 @@ export function PdfPacketsPage() {
   ) {
     if (!canRead || !projectId || !centerId) {
       setPackets([]);
-      setSelectedPacketId(0);
+      selectPacketId(0);
       return;
     }
     const data = await pdfPacketsApi.listPackets({
@@ -181,9 +204,11 @@ export function PdfPacketsPage() {
       subject_id: subjectId || undefined,
     });
     setPackets(data);
-    setSelectedPacketId((current) =>
-      current && data.some((packet) => packet.id === current) ? current : data[0]?.id ?? 0,
-    );
+    const nextPacketId =
+      selectedPacketIdRef.current && data.some((packet) => packet.id === selectedPacketIdRef.current)
+        ? selectedPacketIdRef.current
+        : data[0]?.id ?? 0;
+    selectPacketId(nextPacketId);
   }
 
   async function loadSegments(packetId = selectedPacketId) {
@@ -196,23 +221,23 @@ export function PdfPacketsPage() {
       return;
     }
     const data = await pdfPacketsApi.listSegments(packetId);
+    if (selectedPacketIdRef.current !== packetId) return;
     setSegments(data);
     setSelectedSegmentIds((current) =>
       current.filter((id) => data.some((segment) => segment.id === id)),
+    );
+    setUndoSnapshots((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([id]) =>
+          data.some((segment) => segment.id === Number(id) && segment.file_asset_id == null),
+        ),
+      ),
     );
     setReasonSegmentId((current) => (data.some((segment) => segment.id === current) ? current : 0));
     setSplitSegmentId((current) => (data.some((segment) => segment.id === current) ? current : 0));
     setSegmentForms(
       Object.fromEntries(
-        data.map((segment) => [
-          segment.id,
-          {
-            page_start: segment.page_start,
-            page_end: segment.page_end,
-            detected_name: segment.detected_name ?? "",
-            subject_item_id: segment.subject_item_id ?? segment.suggested_subject_item_id ?? 0,
-          },
-        ]),
+        data.map((segment) => [segment.id, editableFromSegment(segment)]),
       ),
     );
   }
@@ -247,8 +272,13 @@ export function PdfPacketsPage() {
   }, [selectedSubjectId]);
 
   useEffect(() => {
+    selectedPacketIdRef.current = selectedPacketId;
+  }, [selectedPacketId]);
+
+  useEffect(() => {
     void loadSegments(selectedPacketId);
     setAnalysisReport(null);
+    setUndoSnapshots({});
   }, [selectedPacketId]);
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -272,7 +302,7 @@ export function PdfPacketsPage() {
       });
       setMessage("资料包已上传并完成识别");
       await loadPackets(selectedProjectId, selectedCenterId, selectedSubjectId);
-      setSelectedPacketId(packet.id);
+      selectPacketId(packet.id);
       await loadSegments(packet.id);
     } catch {
       setMessage("资料包上传失败");
@@ -294,7 +324,7 @@ export function PdfPacketsPage() {
       const packet = await pdfPacketsApi.reanalyzePacket(selectedPacketId, force);
       setMessage(force ? "强制重新识别已完成" : "识别已完成，人工确认片段已保留");
       await loadPackets(selectedProjectId, selectedCenterId, selectedSubjectId);
-      setSelectedPacketId(packet.id);
+      selectPacketId(packet.id);
       await loadSegments(packet.id);
       await loadAnalysisReport(packet.id);
     } catch {
@@ -325,10 +355,14 @@ export function PdfPacketsPage() {
     }
   }
 
-  async function handleSaveSegment(segment: PdfPacketSegment) {
-    const form = segmentForms[segment.id];
-    if (!form) return;
-    setBusyKey(`save:${segment.id}`);
+  async function saveSegmentForm(
+    segment: PdfPacketSegment,
+    form: EditableSegment,
+    options: { undoSnapshot?: EditableSegment; message?: string; clearUndo?: boolean } = {},
+  ) {
+    if (segment.file_asset_id) return false;
+    if (!segmentFormChanged(segment, form)) return true;
+    setBusyKey(`auto-save:${segment.id}`);
     try {
       await pdfPacketsApi.updateSegment(segment.id, {
         page_start: Number(form.page_start),
@@ -336,30 +370,72 @@ export function PdfPacketsPage() {
         detected_name: form.detected_name.trim() || null,
         subject_item_id: form.subject_item_id || null,
       });
-      setMessage("片段已保存");
+      if (options.clearUndo) {
+        setUndoSnapshots((current) => {
+          const next = { ...current };
+          delete next[segment.id];
+          return next;
+        });
+      } else {
+        setUndoSnapshots((current) => ({
+          ...current,
+          [segment.id]: options.undoSnapshot ?? editableFromSegment(segment),
+        }));
+      }
+      setMessage(options.message ?? "片段已自动保存，可撤回");
       await loadSegments();
+      return true;
     } catch {
-      setMessage("片段保存失败");
+      setMessage("自动保存失败，请检查页码是否冲突");
+      return false;
     } finally {
       setBusyKey(null);
     }
   }
 
-  async function handleUploadSegment(segment: PdfPacketSegment) {
+  async function handleAutoSaveSegment(segment: PdfPacketSegment, form = segmentForms[segment.id]) {
+    if (!form || segment.file_asset_id) return;
+    await saveSegmentForm(segment, form);
+  }
+
+  async function handleUndoSegment(segment: PdfPacketSegment) {
+    const snapshot = undoSnapshots[segment.id];
+    if (!snapshot || segment.file_asset_id) return;
+    await saveSegmentForm(segment, snapshot, {
+      undoSnapshot: editableFromSegment(segment),
+      message: "片段已撤回到上次保存前",
+      clearUndo: true,
+    });
+  }
+
+  async function handleConfirmAndUploadSegment(segment: PdfPacketSegment) {
     const form = segmentForms[segment.id];
     const subjectItemId = form?.subject_item_id || segment.subject_item_id || segment.suggested_subject_item_id;
     if (!subjectItemId) {
       setMessage("请选择资料项");
       return;
     }
-    setBusyKey(`segment:${segment.id}`);
+    if (form && segmentFormChanged(segment, form)) {
+      const saved = await saveSegmentForm(segment, form, { message: "片段已自动保存" });
+      if (!saved) return;
+    }
+    setBusyKey(`confirm-upload:${segment.id}`);
     try {
+      await pdfPacketsApi.confirmSegment(selectedPacketId, segment.id, {
+        subject_item_id: subjectItemId,
+        detected_name: form?.detected_name?.trim() || segment.detected_name,
+      });
       await pdfPacketsApi.uploadSegment(segment.id, subjectItemId);
-      setMessage("片段已上传到资料项");
+      setMessage("片段已确认并上传");
+      setUndoSnapshots((current) => {
+        const next = { ...current };
+        delete next[segment.id];
+        return next;
+      });
       await loadSegments();
       await loadSubjectItems();
     } catch {
-      setMessage("片段上传失败");
+      setMessage("确认上传失败");
     } finally {
       setBusyKey(null);
     }
@@ -455,43 +531,6 @@ export function PdfPacketsPage() {
     }
   }
 
-  async function handleConfirmSegment(segment: PdfPacketSegment) {
-    if (!selectedPacketId) return;
-    const form = segmentForms[segment.id];
-    const subjectItemId = form?.subject_item_id || segment.subject_item_id || segment.suggested_subject_item_id;
-    if (!subjectItemId) {
-      setMessage("请选择资料项后再确认");
-      return;
-    }
-    setBusyKey(`confirm:${segment.id}`);
-    try {
-      await pdfPacketsApi.confirmSegment(selectedPacketId, segment.id, {
-        subject_item_id: subjectItemId,
-        detected_name: form?.detected_name?.trim() || segment.detected_name,
-      });
-      setMessage("片段已人工确认");
-      await loadSegments();
-    } catch {
-      setMessage("片段确认失败");
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
-  async function handleUnlockSegment(segment: PdfPacketSegment) {
-    if (!selectedPacketId) return;
-    setBusyKey(`unlock:${segment.id}`);
-    try {
-      await pdfPacketsApi.unlockSegment(selectedPacketId, segment.id);
-      setMessage("片段已解除确认");
-      await loadSegments();
-    } catch {
-      setMessage("解除确认失败");
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
   async function handleCreateSegment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedPacketId) return;
@@ -551,36 +590,38 @@ export function PdfPacketsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-normal text-slate-950">PDF资料包</h1>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => void loadPackets()}>
-            <RefreshCw className="size-4" aria-hidden="true" />
-            刷新
-          </Button>
-          {canWrite && (
-            <Button asChild disabled={!selectedSubjectId || busyKey === "upload"}>
-              <label>
-                <Upload className="size-4" aria-hidden="true" />
-                上传资料包
-                <input
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  className="hidden"
-                  onChange={handleUpload}
-                />
-              </label>
-            </Button>
-          )}
-        </div>
       </div>
 
       {message && <Badge tone={message.includes("失败") ? "danger" : "success"}>{message}</Badge>}
 
-      <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
-        <Card>
-          <CardHeader>
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <CardTitle>资料包筛选</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => void loadPackets()}>
+                <RefreshCw className="size-4" aria-hidden="true" />
+                刷新
+              </Button>
+              {canWrite && (
+                <Button asChild disabled={!selectedSubjectId || busyKey === "upload"}>
+                  <label>
+                    <Upload className="size-4" aria-hidden="true" />
+                    上传资料包
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      className="hidden"
+                      onChange={handleUpload}
+                    />
+                  </label>
+                </Button>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 lg:grid-cols-4">
             <Field label="项目">
               <SelectField
                 value={selectedProjectId || ""}
@@ -626,40 +667,25 @@ export function PdfPacketsPage() {
                 ))}
               </SelectField>
             </Field>
-            <div className="space-y-2">
-              {packets.length === 0 ? (
-                <div className="rounded-md border border-dashed border-slate-200 px-3 py-3 text-sm text-slate-500">
-                  暂无资料包
-                </div>
-              ) : (
-                packets.map((packet) => (
-                  <button
-                    key={packet.id}
-                    type="button"
-                    onClick={() => setSelectedPacketId(packet.id)}
-                    className={`w-full rounded-md border px-3 py-3 text-left text-sm transition ${
-                      selectedPacketId === packet.id
-                        ? "border-slate-900 bg-slate-50"
-                        : "border-slate-200 bg-white hover:bg-slate-50"
-                    }`}
-                  >
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="truncate font-medium text-slate-900">
-                        <FileSearch className="mr-1 inline size-4" aria-hidden="true" />
-                        {packet.original_name}
-                      </span>
-                      <Badge tone={statusTone(packet.status)}>{statusLabel(packet.status)}</Badge>
-                    </span>
-                    <span className="mt-2 block text-xs text-slate-500">
-                      {packet.page_count}页 · {formatDateTime(packet.uploaded_at)}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          </CardContent>
-        </Card>
+            <Field label="当前资料包">
+              <SelectField
+                value={selectedPacketId || ""}
+                onChange={(event) => selectPacketId(Number(event.target.value))}
+                disabled={packets.length === 0}
+              >
+                <option value="">{packets.length === 0 ? "暂无资料包" : "选择资料包"}</option>
+                {packets.map((packet) => (
+                  <option key={packet.id} value={packet.id}>
+                    {packet.original_name} · {packet.page_count}页 · {statusLabel(packet.status)}
+                  </option>
+                ))}
+              </SelectField>
+            </Field>
+          </div>
+        </CardContent>
+      </Card>
 
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="space-y-4">
           <Card>
             <CardHeader>
@@ -694,14 +720,6 @@ export function PdfPacketsPage() {
                       强制重新识别
                     </Button>
                   )}
-                  <Button
-                    variant="secondary"
-                    onClick={() => void loadAnalysisReport()}
-                    disabled={!selectedPacketId}
-                  >
-                    <FileText className="size-4" aria-hidden="true" />
-                    识别原因
-                  </Button>
                   {canDelete && selectedPacket && (
                     <Button
                       variant="secondary"
@@ -738,34 +756,109 @@ export function PdfPacketsPage() {
                 </div>
               )}
 
-              {canWrite && selectedPacket && segments.length > 0 && (
-                <div className="mb-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-                    <Field label="合并后资料项">
-                      <SelectField
-                        value={mergeSubjectItemId || ""}
-                        onChange={(event) => setMergeSubjectItemId(Number(event.target.value))}
-                      >
-                        <option value="">沿用首个片段</option>
-                        {subjectItems.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.item_name}
-                          </option>
-                        ))}
-                      </SelectField>
-                    </Field>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => void handleMergeSegments()}
-                      disabled={selectedSegmentIds.length < 2 || busyKey === "merge-segments"}
-                    >
-                      <GitMerge className="size-4" aria-hidden="true" />
-                      合并已选{selectedSegmentIds.length > 0 ? ` ${selectedSegmentIds.length} 段` : ""}
-                    </Button>
-                  </div>
+	              {canWrite && selectedPacket && (
+	                <div className="mb-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+	                  {segments.length > 0 && (
+	                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+	                      <Field label="合并后资料项">
+	                        <SelectField
+	                          value={mergeSubjectItemId || ""}
+	                          onChange={(event) => setMergeSubjectItemId(Number(event.target.value))}
+	                        >
+	                          <option value="">沿用首个片段</option>
+	                          {subjectItems.map((item) => (
+	                            <option key={item.id} value={item.id}>
+	                              {item.item_name}
+	                            </option>
+	                          ))}
+	                        </SelectField>
+	                      </Field>
+	                      <Button
+	                        type="button"
+	                        variant="secondary"
+	                        onClick={() => void handleMergeSegments()}
+	                        disabled={selectedSegmentIds.length < 2 || busyKey === "merge-segments"}
+	                      >
+	                        <GitMerge className="size-4" aria-hidden="true" />
+	                        合并已选{selectedSegmentIds.length > 0 ? ` ${selectedSegmentIds.length} 段` : ""}
+	                      </Button>
+	                    </div>
+	                  )}
 
-                  {selectedSegment && (
+	                  <div className="rounded-md border border-slate-200 bg-white p-3">
+	                    <p className="mb-3 text-sm font-medium text-slate-900">新增片段</p>
+	                    <form
+	                      className="grid gap-3 md:grid-cols-[100px_100px_1fr_1fr_auto]"
+	                      onSubmit={handleCreateSegment}
+	                    >
+	                      <Field label="起始页">
+	                        <input
+	                          className={inputClassName()}
+	                          type="number"
+	                          min={1}
+	                          value={newSegment.page_start}
+	                          onChange={(event) =>
+	                            setNewSegment((current) => ({
+	                              ...current,
+	                              page_start: Number(event.target.value),
+	                            }))
+	                          }
+	                        />
+	                      </Field>
+	                      <Field label="结束页">
+	                        <input
+	                          className={inputClassName()}
+	                          type="number"
+	                          min={1}
+	                          value={newSegment.page_end}
+	                          onChange={(event) =>
+	                            setNewSegment((current) => ({
+	                              ...current,
+	                              page_end: Number(event.target.value),
+	                            }))
+	                          }
+	                        />
+	                      </Field>
+	                      <Field label="识别名称">
+	                        <input
+	                          className={inputClassName()}
+	                          value={newSegment.detected_name}
+	                          onChange={(event) =>
+	                            setNewSegment((current) => ({
+	                              ...current,
+	                              detected_name: event.target.value,
+	                            }))
+	                          }
+	                        />
+	                      </Field>
+	                      <Field label="资料项">
+	                        <SelectField
+	                          value={newSegment.subject_item_id || ""}
+	                          onChange={(event) =>
+	                            setNewSegment((current) => ({
+	                              ...current,
+	                              subject_item_id: Number(event.target.value),
+	                            }))
+	                          }
+	                        >
+	                          <option value="">选择资料项</option>
+	                          {subjectItems.map((item) => (
+	                            <option key={item.id} value={item.id}>
+	                              {item.item_name}
+	                            </option>
+	                          ))}
+	                        </SelectField>
+	                      </Field>
+	                      <div className="flex items-end">
+	                        <Button type="submit" disabled={busyKey === "new-segment"}>
+	                          <Plus className="size-4" aria-hidden="true" />
+	                          新增
+	                        </Button>
+	                      </div>
+	                    </form>
+	                  </div>
+
+	                  {selectedSegment && (
                     <div className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
                       <div className="flex flex-col gap-1 text-sm text-slate-600 md:flex-row md:items-center md:justify-between">
                         <span>
@@ -912,30 +1005,30 @@ export function PdfPacketsPage() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <table className="min-w-[840px] divide-y divide-slate-200 text-sm">
                     <thead>
                       <tr className="text-left text-xs font-medium uppercase text-slate-500">
                         <th className="px-2 py-2">选择</th>
                         <th className="px-2 py-2">页码</th>
                         <th className="px-2 py-2">识别名称</th>
                         <th className="px-2 py-2">资料项</th>
-                        <th className="px-2 py-2">置信度</th>
-                        <th className="px-2 py-2">状态</th>
-                        <th className="px-2 py-2">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {segments.map((segment) => {
-                        const form = segmentForms[segment.id] ?? {
-                          page_start: segment.page_start,
-                          page_end: segment.page_end,
-                          detected_name: segment.detected_name ?? "",
-                          subject_item_id:
-                            segment.subject_item_id ?? segment.suggested_subject_item_id ?? 0,
-                        };
-                        return (
+	                        <th className="px-2 py-2">置信度</th>
+	                        <th className="px-2 py-2 whitespace-nowrap">状态</th>
+	                        <th className="sticky right-20 z-10 w-32 bg-white px-2 py-2 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.35)]">
+	                          确认上传
+	                        </th>
+	                        <th className="sticky right-0 z-10 w-20 bg-white px-2 py-2">操作</th>
+	                      </tr>
+	                    </thead>
+	                    <tbody className="divide-y divide-slate-100">
+	                      {segments.map((segment) => {
+	                        const form = segmentForms[segment.id] ?? editableFromSegment(segment);
+	                        const hasSubjectItem = Boolean(
+	                          form.subject_item_id || segment.subject_item_id || segment.suggested_subject_item_id,
+	                        );
+	                        return (
                           <tr key={segment.id} className="align-top">
-                            <td className="px-2 py-3">
+	                            <td className="px-2 py-3 whitespace-nowrap">
                               <input
                                 type="checkbox"
                                 checked={selectedSegmentIds.includes(segment.id)}
@@ -943,7 +1036,7 @@ export function PdfPacketsPage() {
                                 onChange={() => toggleSelectedSegment(segment.id)}
                               />
                             </td>
-                            <td className="px-2 py-3">
+	                            <td className="px-2 py-3 whitespace-nowrap">
                               <div className="flex items-center gap-1">
                                 <input
                                   className={inputClassName("h-9 w-16")}
@@ -951,16 +1044,17 @@ export function PdfPacketsPage() {
                                   min={1}
                                   value={form.page_start}
                                   disabled={Boolean(segment.file_asset_id)}
-                                  onChange={(event) =>
-                                    setSegmentForms((current) => ({
-                                      ...current,
-                                      [segment.id]: {
-                                        ...form,
-                                        page_start: Number(event.target.value),
-                                      },
-                                    }))
-                                  }
-                                />
+	                                  onChange={(event) =>
+	                                    setSegmentForms((current) => ({
+	                                      ...current,
+	                                      [segment.id]: {
+	                                        ...form,
+	                                        page_start: Number(event.target.value),
+	                                      },
+	                                    }))
+	                                  }
+	                                  onBlur={() => void handleAutoSaveSegment(segment)}
+	                                />
                                 <span className="text-slate-400">-</span>
                                 <input
                                   className={inputClassName("h-9 w-16")}
@@ -968,16 +1062,17 @@ export function PdfPacketsPage() {
                                   min={1}
                                   value={form.page_end}
                                   disabled={Boolean(segment.file_asset_id)}
-                                  onChange={(event) =>
-                                    setSegmentForms((current) => ({
-                                      ...current,
-                                      [segment.id]: {
-                                        ...form,
-                                        page_end: Number(event.target.value),
-                                      },
-                                    }))
-                                  }
-                                />
+	                                  onChange={(event) =>
+	                                    setSegmentForms((current) => ({
+	                                      ...current,
+	                                      [segment.id]: {
+	                                        ...form,
+	                                        page_end: Number(event.target.value),
+	                                      },
+	                                    }))
+	                                  }
+	                                  onBlur={() => void handleAutoSaveSegment(segment)}
+	                                />
                               </div>
                               <button
                                 type="button"
@@ -992,34 +1087,37 @@ export function PdfPacketsPage() {
                                 className={inputClassName("h-9 min-w-40")}
                                 value={form.detected_name}
                                 disabled={Boolean(segment.file_asset_id)}
-                                onChange={(event) =>
-                                  setSegmentForms((current) => ({
-                                    ...current,
-                                    [segment.id]: {
-                                      ...form,
-                                      detected_name: event.target.value,
-                                    },
-                                  }))
-                                }
-                              />
+	                                onChange={(event) =>
+	                                  setSegmentForms((current) => ({
+	                                    ...current,
+	                                    [segment.id]: {
+	                                      ...form,
+	                                      detected_name: event.target.value,
+	                                    },
+	                                  }))
+	                                }
+	                                onBlur={() => void handleAutoSaveSegment(segment)}
+	                              />
                               <p className="mt-2 text-xs text-slate-500">
                                 编码：{segment.detected_code || "-"}
                               </p>
                             </td>
                             <td className="px-2 py-3">
                               <SelectField
-                                value={form.subject_item_id || ""}
-                                disabled={Boolean(segment.file_asset_id)}
-                                onChange={(event) =>
-                                  setSegmentForms((current) => ({
-                                    ...current,
-                                    [segment.id]: {
-                                      ...form,
-                                      subject_item_id: Number(event.target.value),
-                                    },
-                                  }))
-                                }
-                              >
+	                                value={form.subject_item_id || ""}
+	                                disabled={Boolean(segment.file_asset_id)}
+	                                onChange={(event) => {
+	                                  const nextForm = {
+	                                    ...form,
+	                                    subject_item_id: Number(event.target.value),
+	                                  };
+	                                  setSegmentForms((current) => ({
+	                                    ...current,
+	                                    [segment.id]: nextForm,
+	                                  }));
+	                                  void handleAutoSaveSegment(segment, nextForm);
+	                                }}
+	                              >
                                 <option value="">选择资料项</option>
                                 {subjectItems.map((item) => (
                                   <option key={item.id} value={item.id}>
@@ -1050,72 +1148,66 @@ export function PdfPacketsPage() {
                                 识别原因
                               </button>
                             </td>
-                            <td className="px-2 py-3">
-                              <Badge tone={statusTone(segment.status)}>
+	                            <td className="px-2 py-3 whitespace-nowrap">
+	                              <Badge tone={statusTone(segment.status)}>
                                 {statusLabel(segment.status)}
                               </Badge>
                               {segment.file_asset_id && (
                                 <p className="mt-2 text-xs text-slate-500">
                                   文件 #{segment.file_asset_id}
                                 </p>
-                              )}
-                            </td>
-                            <td className="px-2 py-3">
-                              <div className="flex flex-wrap gap-1">
-                                {canWrite && !segment.file_asset_id && (
-                                  <>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={() => void handleSaveSegment(segment)}
-                                      disabled={busyKey === `save:${segment.id}`}
-                                      title="保存修改"
-                                    >
-                                      <Save className="size-4" aria-hidden="true" />
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
+	                              )}
+	                            </td>
+		                            <td className="sticky right-20 bg-white px-2 py-3 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.35)]">
+		                              {segment.file_asset_id ? (
+		                                <Badge tone="success">已入库</Badge>
+		                              ) : (
+		                                <Button
+		                                  size="sm"
+		                                  className="min-w-28 whitespace-nowrap"
+		                                  onClick={() => void handleConfirmAndUploadSegment(segment)}
+	                                  disabled={
+	                                    !canWrite ||
+	                                    !hasSubjectItem ||
+	                                    busyKey === `confirm-upload:${segment.id}` ||
+	                                    busyKey === `auto-save:${segment.id}`
+	                                  }
+	                                  title={hasSubjectItem ? "确认并上传" : "请选择资料项"}
+	                                >
+	                                  <CheckCircle2 className="size-4" aria-hidden="true" />
+	                                  确认并上传
+	                                </Button>
+	                              )}
+	                            </td>
+		                            <td className="sticky right-0 bg-white px-2 py-3">
+	                              <div className="flex flex-wrap gap-1">
+	                                {canWrite && !segment.file_asset_id && (
+	                                  <>
+	                                    <Button
+	                                      size="sm"
+	                                      variant="ghost"
                                       onClick={() => startSplit(segment)}
                                       disabled={
                                         segment.page_start === segment.page_end ||
                                         busyKey === `split:${segment.id}`
                                       }
                                       title="拆分"
-                                    >
-                                      <Scissors className="size-4" aria-hidden="true" />
-                                    </Button>
-                                    {segment.status === "manually_confirmed" ? (
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => void handleUnlockSegment(segment)}
-                                        disabled={busyKey === `unlock:${segment.id}`}
-                                        title="解除确认"
-                                      >
-                                        <LockOpen className="size-4" aria-hidden="true" />
-                                      </Button>
-                                    ) : (
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => void handleConfirmSegment(segment)}
-                                        disabled={busyKey === `confirm:${segment.id}`}
-                                        title="人工确认"
-                                      >
-                                        <CheckCircle2 className="size-4" aria-hidden="true" />
-                                      </Button>
-                                    )}
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={() => void handleUploadSegment(segment)}
-                                      disabled={busyKey === `segment:${segment.id}`}
-                                    >
-                                      <Upload className="size-4" aria-hidden="true" />
-                                    </Button>
-                                    <Button
-                                      size="sm"
+	                                    >
+	                                      <Scissors className="size-4" aria-hidden="true" />
+	                                    </Button>
+	                                    {undoSnapshots[segment.id] && (
+	                                      <Button
+	                                        size="sm"
+	                                        variant="ghost"
+	                                        onClick={() => void handleUndoSegment(segment)}
+	                                        disabled={busyKey === `auto-save:${segment.id}`}
+	                                        title="撤回到上次保存前"
+	                                      >
+	                                        <RotateCcw className="size-4" aria-hidden="true" />
+	                                      </Button>
+	                                    )}
+	                                    <Button
+	                                      size="sm"
                                       variant="ghost"
                                       onClick={() => void handleDeleteSegment(segment)}
                                       disabled={busyKey === `delete:${segment.id}`}
@@ -1134,191 +1226,10 @@ export function PdfPacketsPage() {
                 </div>
               )}
 
-              {reasonSegment && (
-                <div className="mt-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <p className="font-medium text-slate-900">
-                        识别原因 p{reasonSegment.page_start}-{reasonSegment.page_end}
-                      </p>
-                      <p className="mt-1 text-slate-500">
-                        {reasonSegment.detected_name || "-"} · 置信度{" "}
-                        {(reasonSegment.confidence * 100).toFixed(0)}%
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => void loadAnalysisReport()}
-                      disabled={!selectedPacketId}
-                    >
-                      <RefreshCw className="size-4" aria-hidden="true" />
-                      刷新报告
-                    </Button>
-                  </div>
+	            </CardContent>
+	          </Card>
 
-                  {!analysisReport ? (
-                    <div className="rounded-md border border-dashed border-slate-200 bg-white px-3 py-3 text-slate-500">
-                      暂无调试报告
-                    </div>
-                  ) : (
-                    <>
-                      <div className="rounded-md border border-slate-200 bg-white p-3">
-                        <p className="font-medium text-slate-900">片段结论</p>
-                        <p className="mt-2 text-slate-600">
-                          {reasonReportSegment?.reason || "未记录片段级原因"}
-                        </p>
-                        {reasonReportSegment?.page_reasons?.length ? (
-                          <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-600">
-                            {reasonReportSegment.page_reasons.map((reason, index) => (
-                              <li key={`${index}-${reason}`}>{reason}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </div>
-
-                      <div className="space-y-2">
-                        {reasonPages.map((page) => (
-                          <details
-                            key={page.page_no}
-                            className="rounded-md border border-slate-200 bg-white p-3"
-                            open={reasonPages.length === 1}
-                          >
-                            <summary className="cursor-pointer font-medium text-slate-900">
-                              第 {page.page_no} 页 · {page.display_name || page.doc_type || "未识别"} ·{" "}
-                              {(page.confidence * 100).toFixed(0)}%
-                            </summary>
-                            <div className="mt-3 grid gap-3 md:grid-cols-2">
-                              <div>
-                                <p className="text-xs font-medium text-slate-500">标题命中</p>
-                                <p className="mt-1 text-slate-700">
-                                  {page.matched_title?.join("、") || "-"}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-xs font-medium text-slate-500">特征命中</p>
-                                <p className="mt-1 text-slate-700">
-                                  {page.matched_features?.join("、") || "-"}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-xs font-medium text-slate-500">负向命中</p>
-                                <p className="mt-1 text-slate-700">
-                                  {page.negative_hits?.join("、") || "-"}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-xs font-medium text-slate-500">原因</p>
-                                <p className="mt-1 text-slate-700">{page.reason || "-"}</p>
-                              </div>
-                            </div>
-                            <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                              <div>
-                                <p className="text-xs font-medium text-slate-500">页首/页尾</p>
-                                <pre className="mt-1 max-h-40 overflow-auto rounded bg-slate-100 p-2 text-xs text-slate-700">
-                                  {[...(page.head_lines ?? []), "...", ...(page.tail_lines ?? [])].join(
-                                    "\n",
-                                  )}
-                                </pre>
-                              </div>
-                              <div>
-                                <p className="text-xs font-medium text-slate-500">归一化文本</p>
-                                <pre className="mt-1 max-h-40 overflow-auto rounded bg-slate-100 p-2 text-xs text-slate-700">
-                                  {page.normalized_text || page.raw_text || "-"}
-                                </pre>
-                              </div>
-                            </div>
-                          </details>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {canWrite && selectedPacket && (
-            <Card>
-              <CardHeader>
-                <CardTitle>新增片段</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <form
-                  className="grid gap-3 md:grid-cols-[120px_120px_1fr_1fr_auto]"
-                  onSubmit={handleCreateSegment}
-                >
-                  <Field label="起始页">
-                    <input
-                      className={inputClassName()}
-                      type="number"
-                      min={1}
-                      value={newSegment.page_start}
-                      onChange={(event) =>
-                        setNewSegment((current) => ({
-                          ...current,
-                          page_start: Number(event.target.value),
-                        }))
-                      }
-                    />
-                  </Field>
-                  <Field label="结束页">
-                    <input
-                      className={inputClassName()}
-                      type="number"
-                      min={1}
-                      value={newSegment.page_end}
-                      onChange={(event) =>
-                        setNewSegment((current) => ({
-                          ...current,
-                          page_end: Number(event.target.value),
-                        }))
-                      }
-                    />
-                  </Field>
-                  <Field label="识别名称">
-                    <input
-                      className={inputClassName()}
-                      value={newSegment.detected_name}
-                      onChange={(event) =>
-                        setNewSegment((current) => ({
-                          ...current,
-                          detected_name: event.target.value,
-                        }))
-                      }
-                    />
-                  </Field>
-                  <Field label="资料项">
-                    <SelectField
-                      value={newSegment.subject_item_id || ""}
-                      onChange={(event) =>
-                        setNewSegment((current) => ({
-                          ...current,
-                          subject_item_id: Number(event.target.value),
-                        }))
-                      }
-                    >
-                      <option value="">选择资料项</option>
-                      {subjectItems.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.item_name}
-                        </option>
-                      ))}
-                    </SelectField>
-                  </Field>
-                  <div className="flex items-end">
-                    <Button type="submit" disabled={busyKey === "new-segment"}>
-                      <Plus className="size-4" aria-hidden="true" />
-                      新增
-                    </Button>
-                  </div>
-                </form>
-              </CardContent>
-            </Card>
-          )}
-
-          {selectedPacket?.error_message && (
+	          {selectedPacket?.error_message && (
             <Card>
               <CardHeader>
                 <CardTitle>失败原因</CardTitle>
@@ -1327,9 +1238,121 @@ export function PdfPacketsPage() {
                 <TextAreaField value={selectedPacket.error_message} readOnly />
               </CardContent>
             </Card>
-          )}
-        </div>
-      </section>
+	          )}
+	        </div>
+	        <Card className="xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-auto">
+	          <CardHeader>
+	            <div className="flex items-center justify-between gap-2">
+	              <CardTitle>识别原因</CardTitle>
+	              <Button
+	                type="button"
+	                size="sm"
+	                variant="secondary"
+	                onClick={() => void loadAnalysisReport()}
+	                disabled={!selectedPacketId}
+	              >
+	                <RefreshCw className="size-4" aria-hidden="true" />
+	                刷新
+	              </Button>
+	            </div>
+	          </CardHeader>
+	          <CardContent>
+	            {!reasonSegment ? (
+	              <div className="rounded-md border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-slate-500">
+	                点击片段表中的“识别原因”查看匹配依据
+	              </div>
+	            ) : (
+	              <div className="space-y-3 text-sm">
+	                <div>
+	                  <p className="font-medium text-slate-900">
+	                    p{reasonSegment.page_start}-{reasonSegment.page_end} ·{" "}
+	                    {reasonSegment.detected_name || "-"}
+	                  </p>
+	                  <p className="mt-1 text-slate-500">
+	                    置信度 {(reasonSegment.confidence * 100).toFixed(0)}% ·{" "}
+	                    {statusLabel(reasonSegment.status)}
+	                  </p>
+	                </div>
+
+	                {!analysisReport ? (
+	                  <div className="rounded-md border border-dashed border-slate-200 bg-white px-3 py-3 text-slate-500">
+	                    暂无调试报告
+	                  </div>
+	                ) : (
+	                  <>
+	                    <div className="rounded-md border border-slate-200 bg-white p-3">
+	                      <p className="font-medium text-slate-900">片段结论</p>
+	                      <p className="mt-2 text-slate-600">
+	                        {reasonReportSegment?.reason || "未记录片段级原因"}
+	                      </p>
+	                      {reasonReportSegment?.page_reasons?.length ? (
+	                        <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-600">
+	                          {reasonReportSegment.page_reasons.map((reason, index) => (
+	                            <li key={`${index}-${reason}`}>{reason}</li>
+	                          ))}
+	                        </ul>
+	                      ) : null}
+	                    </div>
+
+	                    <div className="space-y-2">
+	                      {reasonPages.map((page) => (
+	                        <details
+	                          key={page.page_no}
+	                          className="rounded-md border border-slate-200 bg-white p-3"
+	                          open={reasonPages.length === 1}
+	                        >
+	                          <summary className="cursor-pointer font-medium text-slate-900">
+	                            第 {page.page_no} 页 · {page.display_name || page.doc_type || "未识别"} ·{" "}
+	                            {(page.confidence * 100).toFixed(0)}%
+	                          </summary>
+	                          <div className="mt-3 space-y-3">
+	                            <div>
+	                              <p className="text-xs font-medium text-slate-500">标题命中</p>
+	                              <p className="mt-1 text-slate-700">
+	                                {page.matched_title?.join("、") || "-"}
+	                              </p>
+	                            </div>
+	                            <div>
+	                              <p className="text-xs font-medium text-slate-500">特征命中</p>
+	                              <p className="mt-1 text-slate-700">
+	                                {page.matched_features?.join("、") || "-"}
+	                              </p>
+	                            </div>
+	                            <div>
+	                              <p className="text-xs font-medium text-slate-500">负向命中</p>
+	                              <p className="mt-1 text-slate-700">
+	                                {page.negative_hits?.join("、") || "-"}
+	                              </p>
+	                            </div>
+	                            <div>
+	                              <p className="text-xs font-medium text-slate-500">原因</p>
+	                              <p className="mt-1 text-slate-700">{page.reason || "-"}</p>
+	                            </div>
+	                            <div>
+	                              <p className="text-xs font-medium text-slate-500">页首/页尾</p>
+	                              <pre className="mt-1 max-h-40 overflow-auto rounded bg-slate-100 p-2 text-xs text-slate-700">
+	                                {[...(page.head_lines ?? []), "...", ...(page.tail_lines ?? [])].join(
+	                                  "\n",
+	                                )}
+	                              </pre>
+	                            </div>
+	                            <div>
+	                              <p className="text-xs font-medium text-slate-500">归一化文本</p>
+	                              <pre className="mt-1 max-h-40 overflow-auto rounded bg-slate-100 p-2 text-xs text-slate-700">
+	                                {page.normalized_text || page.raw_text || "-"}
+	                              </pre>
+	                            </div>
+	                          </div>
+	                        </details>
+	                      ))}
+	                    </div>
+	                  </>
+	                )}
+	              </div>
+	            )}
+	          </CardContent>
+	        </Card>
+	      </section>
     </div>
   );
 }
