@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from statistics import median
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,14 +21,55 @@ from app.schemas import (
     DashboardTrendPointRead,
     StageCompletenessRead,
 )
+from app.schemas.dashboard import (
+    DashboardClinicalEventCreate,
+    DashboardClinicalEventRead,
+    DashboardClinicalEventUpdate,
+    DashboardDeviceHandoverCreate,
+    DashboardDeviceHandoverRead,
+    DashboardDeviceHandoverUpdate,
+    DashboardDeviceIssueCreate,
+    DashboardDeviceIssueRead,
+    DashboardDeviceIssueUpdate,
+    DashboardEnrollmentPlanCreate,
+    DashboardEnrollmentPlanRead,
+    DashboardEnrollmentPlanUpdate,
+    DashboardImportantTaskCreate,
+    DashboardImportantTaskRead,
+    DashboardImportantTaskUpdate,
+    DashboardMilestoneCreate,
+    DashboardMilestoneRead,
+    DashboardMilestoneUpdate,
+    DashboardSubjectOverviewCreate,
+    DashboardSubjectOverviewRead,
+    DashboardSubjectOverviewUpdate,
+    DashboardSubjectResultCreate,
+    DashboardSubjectResultRead,
+    DashboardSubjectResultUpdate,
+    DashboardV31ImportResultRead,
+    DashboardV31OverviewRead,
+)
 from app.services.clinical_status import (
     build_completeness_summary,
     build_stage_file_statuses,
+)
+from app.services.dashboard_v31 import (
+    XLSX_MEDIA_TYPE,
+    build_overview,
+    build_template_workbook,
+    create_record,
+    delete_record,
+    export_records_workbook,
+    import_records_workbook,
+    list_records,
+    update_record,
 )
 
 router = APIRouter()
 DBSession = Annotated[Session, Depends(get_db)]
 DashboardReadAccess = Annotated[AccessContext, Depends(require_permission("dashboard:read"))]
+DashboardWriteAccess = Annotated[AccessContext, Depends(require_permission("dashboard:write"))]
+DashboardUploadFile = Annotated[UploadFile, File(...)]
 
 
 def get_project_or_404(db: Session, project_id: int) -> Project:
@@ -188,9 +229,7 @@ def dashboard_project_summary(
     ensure_project_access(access, project_id)
     center_ids = visible_center_ids(db, access, project_id)
     subjects = scoped_subjects(db, project_id, center_ids)
-    completed_subjects = [
-        subject for subject in subjects if subject.data_status == DATA_COMPLETE
-    ]
+    completed_subjects = [subject for subject in subjects if subject.data_status == DATA_COMPLETE]
     durations = [
         duration
         for subject in completed_subjects
@@ -202,9 +241,7 @@ def dashboard_project_summary(
         completed_subject_count=len(completed_subjects),
         visible_center_count=len(center_ids),
         project_days=project_days(project),
-        average_days_per_subject=round(sum(durations) / len(durations), 1)
-        if durations
-        else 0.0,
+        average_days_per_subject=round(sum(durations) / len(durations), 1) if durations else 0.0,
         median_days_per_subject=round(float(median(durations)), 1) if durations else 0.0,
         subject_count=len(subjects),
     )
@@ -227,10 +264,7 @@ def dashboard_project_centers(
         center_ids=scoped_center_ids(access),
         project_id=project_id,
     )
-    center_status_by_id = {
-        row["center_id"]: row["status"]
-        for row in summary.centers
-    }
+    center_status_by_id = {row["center_id"]: row["status"] for row in summary.centers}
     _, pending_rejected = review_status_counts(db, project_id, center_ids)
     rows = []
     for center in centers:
@@ -244,9 +278,11 @@ def dashboard_project_centers(
                 center_name=center.name,
                 subject_count=len(center_subjects),
                 completed_subject_count=completed_count,
-                completion_rate=round(completed_count / len(center_subjects) * 100, 1)
-                if center_subjects
-                else 0.0,
+                completion_rate=(
+                    round(completed_count / len(center_subjects) * 100, 1)
+                    if center_subjects
+                    else 0.0
+                ),
                 completeness_status=center_status_by_id.get(center.id, "incomplete"),
                 pending_review_count=pending_rejected[(center.id, "pending")],
                 rejected_review_count=pending_rejected[(center.id, "rejected")],
@@ -353,4 +389,376 @@ def dashboard_project_completeness(
             )
             for row in summary.stages
         ],
+    )
+
+
+@router.get("/dashboard/v31/project/{project_id}/overview", response_model=DashboardV31OverviewRead)
+def dashboard_v31_overview(
+    project_id: int,
+    db: DBSession,
+    access: DashboardReadAccess,
+) -> dict:
+    return build_overview(db, access, project_id)
+
+
+@router.get("/dashboard/v31/milestones", response_model=list[DashboardMilestoneRead])
+def list_dashboard_milestones(
+    project_id: int,
+    db: DBSession,
+    access: DashboardReadAccess,
+    center_id: int | None = None,
+) -> list:
+    return list_records(db, access, "milestones", project_id, center_id)
+
+
+@router.post(
+    "/dashboard/v31/milestones",
+    response_model=DashboardMilestoneRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dashboard_milestone(
+    payload: DashboardMilestoneCreate,
+    db: DBSession,
+    access: DashboardWriteAccess,
+):
+    return create_record(db, access, "milestones", payload.model_dump())
+
+
+@router.patch("/dashboard/v31/milestones/{record_id}", response_model=DashboardMilestoneRead)
+def update_dashboard_milestone(
+    record_id: int,
+    payload: DashboardMilestoneUpdate,
+    db: DBSession,
+    access: DashboardWriteAccess,
+):
+    return update_record(
+        db, access, "milestones", record_id, payload.model_dump(exclude_unset=True)
+    )
+
+
+@router.delete("/dashboard/v31/milestones/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dashboard_milestone(
+    record_id: int, db: DBSession, access: DashboardWriteAccess
+) -> Response:
+    delete_record(db, access, "milestones", record_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/dashboard/v31/enrollment-plans", response_model=list[DashboardEnrollmentPlanRead])
+def list_dashboard_enrollment_plans(
+    project_id: int, db: DBSession, access: DashboardReadAccess, center_id: int | None = None
+) -> list:
+    return list_records(db, access, "enrollment-plans", project_id, center_id)
+
+
+@router.post(
+    "/dashboard/v31/enrollment-plans",
+    response_model=DashboardEnrollmentPlanRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dashboard_enrollment_plan(
+    payload: DashboardEnrollmentPlanCreate, db: DBSession, access: DashboardWriteAccess
+):
+    return create_record(db, access, "enrollment-plans", payload.model_dump())
+
+
+@router.patch(
+    "/dashboard/v31/enrollment-plans/{record_id}", response_model=DashboardEnrollmentPlanRead
+)
+def update_dashboard_enrollment_plan(
+    record_id: int,
+    payload: DashboardEnrollmentPlanUpdate,
+    db: DBSession,
+    access: DashboardWriteAccess,
+):
+    return update_record(
+        db, access, "enrollment-plans", record_id, payload.model_dump(exclude_unset=True)
+    )
+
+
+@router.delete(
+    "/dashboard/v31/enrollment-plans/{record_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_dashboard_enrollment_plan(
+    record_id: int, db: DBSession, access: DashboardWriteAccess
+) -> Response:
+    delete_record(db, access, "enrollment-plans", record_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/dashboard/v31/subject-overviews", response_model=list[DashboardSubjectOverviewRead])
+def list_dashboard_subject_overviews(
+    project_id: int, db: DBSession, access: DashboardReadAccess, center_id: int | None = None
+) -> list:
+    return list_records(db, access, "subject-overviews", project_id, center_id)
+
+
+@router.post(
+    "/dashboard/v31/subject-overviews",
+    response_model=DashboardSubjectOverviewRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dashboard_subject_overview(
+    payload: DashboardSubjectOverviewCreate, db: DBSession, access: DashboardWriteAccess
+):
+    return create_record(db, access, "subject-overviews", payload.model_dump())
+
+
+@router.patch(
+    "/dashboard/v31/subject-overviews/{record_id}", response_model=DashboardSubjectOverviewRead
+)
+def update_dashboard_subject_overview(
+    record_id: int,
+    payload: DashboardSubjectOverviewUpdate,
+    db: DBSession,
+    access: DashboardWriteAccess,
+):
+    return update_record(
+        db, access, "subject-overviews", record_id, payload.model_dump(exclude_unset=True)
+    )
+
+
+@router.delete(
+    "/dashboard/v31/subject-overviews/{record_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_dashboard_subject_overview(
+    record_id: int, db: DBSession, access: DashboardWriteAccess
+) -> Response:
+    delete_record(db, access, "subject-overviews", record_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/dashboard/v31/device-handovers", response_model=list[DashboardDeviceHandoverRead])
+def list_dashboard_device_handovers(
+    project_id: int, db: DBSession, access: DashboardReadAccess, center_id: int | None = None
+) -> list:
+    return list_records(db, access, "device-handovers", project_id, center_id)
+
+
+@router.post(
+    "/dashboard/v31/device-handovers",
+    response_model=DashboardDeviceHandoverRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dashboard_device_handover(
+    payload: DashboardDeviceHandoverCreate, db: DBSession, access: DashboardWriteAccess
+):
+    return create_record(db, access, "device-handovers", payload.model_dump())
+
+
+@router.patch(
+    "/dashboard/v31/device-handovers/{record_id}", response_model=DashboardDeviceHandoverRead
+)
+def update_dashboard_device_handover(
+    record_id: int,
+    payload: DashboardDeviceHandoverUpdate,
+    db: DBSession,
+    access: DashboardWriteAccess,
+):
+    return update_record(
+        db, access, "device-handovers", record_id, payload.model_dump(exclude_unset=True)
+    )
+
+
+@router.delete(
+    "/dashboard/v31/device-handovers/{record_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_dashboard_device_handover(
+    record_id: int, db: DBSession, access: DashboardWriteAccess
+) -> Response:
+    delete_record(db, access, "device-handovers", record_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/dashboard/v31/subject-results", response_model=list[DashboardSubjectResultRead])
+def list_dashboard_subject_results(
+    project_id: int, db: DBSession, access: DashboardReadAccess, center_id: int | None = None
+) -> list:
+    return list_records(db, access, "subject-results", project_id, center_id)
+
+
+@router.post(
+    "/dashboard/v31/subject-results",
+    response_model=DashboardSubjectResultRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dashboard_subject_result(
+    payload: DashboardSubjectResultCreate, db: DBSession, access: DashboardWriteAccess
+):
+    return create_record(db, access, "subject-results", payload.model_dump())
+
+
+@router.patch(
+    "/dashboard/v31/subject-results/{record_id}", response_model=DashboardSubjectResultRead
+)
+def update_dashboard_subject_result(
+    record_id: int,
+    payload: DashboardSubjectResultUpdate,
+    db: DBSession,
+    access: DashboardWriteAccess,
+):
+    return update_record(
+        db, access, "subject-results", record_id, payload.model_dump(exclude_unset=True)
+    )
+
+
+@router.delete("/dashboard/v31/subject-results/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dashboard_subject_result(
+    record_id: int, db: DBSession, access: DashboardWriteAccess
+) -> Response:
+    delete_record(db, access, "subject-results", record_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/dashboard/v31/clinical-events", response_model=list[DashboardClinicalEventRead])
+def list_dashboard_clinical_events(
+    project_id: int, db: DBSession, access: DashboardReadAccess, center_id: int | None = None
+) -> list:
+    return list_records(db, access, "clinical-events", project_id, center_id)
+
+
+@router.post(
+    "/dashboard/v31/clinical-events",
+    response_model=DashboardClinicalEventRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dashboard_clinical_event(
+    payload: DashboardClinicalEventCreate, db: DBSession, access: DashboardWriteAccess
+):
+    return create_record(db, access, "clinical-events", payload.model_dump())
+
+
+@router.patch(
+    "/dashboard/v31/clinical-events/{record_id}", response_model=DashboardClinicalEventRead
+)
+def update_dashboard_clinical_event(
+    record_id: int,
+    payload: DashboardClinicalEventUpdate,
+    db: DBSession,
+    access: DashboardWriteAccess,
+):
+    return update_record(
+        db, access, "clinical-events", record_id, payload.model_dump(exclude_unset=True)
+    )
+
+
+@router.delete("/dashboard/v31/clinical-events/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dashboard_clinical_event(
+    record_id: int, db: DBSession, access: DashboardWriteAccess
+) -> Response:
+    delete_record(db, access, "clinical-events", record_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/dashboard/v31/device-issues", response_model=list[DashboardDeviceIssueRead])
+def list_dashboard_device_issues(
+    project_id: int, db: DBSession, access: DashboardReadAccess, center_id: int | None = None
+) -> list:
+    return list_records(db, access, "device-issues", project_id, center_id)
+
+
+@router.post(
+    "/dashboard/v31/device-issues",
+    response_model=DashboardDeviceIssueRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dashboard_device_issue(
+    payload: DashboardDeviceIssueCreate, db: DBSession, access: DashboardWriteAccess
+):
+    return create_record(db, access, "device-issues", payload.model_dump())
+
+
+@router.patch("/dashboard/v31/device-issues/{record_id}", response_model=DashboardDeviceIssueRead)
+def update_dashboard_device_issue(
+    record_id: int, payload: DashboardDeviceIssueUpdate, db: DBSession, access: DashboardWriteAccess
+):
+    return update_record(
+        db, access, "device-issues", record_id, payload.model_dump(exclude_unset=True)
+    )
+
+
+@router.delete("/dashboard/v31/device-issues/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dashboard_device_issue(
+    record_id: int, db: DBSession, access: DashboardWriteAccess
+) -> Response:
+    delete_record(db, access, "device-issues", record_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/dashboard/v31/important-tasks", response_model=list[DashboardImportantTaskRead])
+def list_dashboard_important_tasks(
+    project_id: int, db: DBSession, access: DashboardReadAccess, center_id: int | None = None
+) -> list:
+    return list_records(db, access, "important-tasks", project_id, center_id)
+
+
+@router.post(
+    "/dashboard/v31/important-tasks",
+    response_model=DashboardImportantTaskRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dashboard_important_task(
+    payload: DashboardImportantTaskCreate, db: DBSession, access: DashboardWriteAccess
+):
+    return create_record(db, access, "important-tasks", payload.model_dump())
+
+
+@router.patch(
+    "/dashboard/v31/important-tasks/{record_id}", response_model=DashboardImportantTaskRead
+)
+def update_dashboard_important_task(
+    record_id: int,
+    payload: DashboardImportantTaskUpdate,
+    db: DBSession,
+    access: DashboardWriteAccess,
+):
+    return update_record(
+        db, access, "important-tasks", record_id, payload.model_dump(exclude_unset=True)
+    )
+
+
+@router.delete("/dashboard/v31/important-tasks/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dashboard_important_task(
+    record_id: int, db: DBSession, access: DashboardWriteAccess
+) -> Response:
+    delete_record(db, access, "important-tasks", record_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/dashboard/v31/import-template/{kind}")
+def dashboard_v31_import_template(kind: str, access: DashboardReadAccess) -> Response:
+    content = build_template_workbook(kind)
+    return Response(
+        content=content,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": f'attachment; filename="dashboard-v31-{kind}-template.xlsx"'
+        },
+    )
+
+
+@router.post("/dashboard/v31/import/{kind}", response_model=DashboardV31ImportResultRead)
+async def dashboard_v31_import(
+    kind: str,
+    project_id: int,
+    db: DBSession,
+    access: DashboardWriteAccess,
+    file: DashboardUploadFile,
+) -> DashboardV31ImportResultRead:
+    return import_records_workbook(db, access, kind, project_id, await file.read())
+
+
+@router.get("/dashboard/v31/export/{kind}")
+def dashboard_v31_export(
+    kind: str,
+    project_id: int,
+    db: DBSession,
+    access: DashboardReadAccess,
+    center_id: int | None = None,
+) -> Response:
+    content = export_records_workbook(db, access, kind, project_id, center_id)
+    return Response(
+        content=content,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="dashboard-v31-{kind}.xlsx"'},
     )

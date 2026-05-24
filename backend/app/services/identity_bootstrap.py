@@ -43,7 +43,7 @@ def bootstrap_identity(db: Session) -> None:
             role.label = spec["label"]
             role.description = spec["description"]
             role.system = True
-        if not role.permissions:
+        if role.system:
             role.permissions = [permissions_by_code[code] for code in spec["permissions"]]
         roles_by_name[name] = role
 

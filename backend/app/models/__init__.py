@@ -1,5 +1,15 @@
 from app.models.center import Center
 from app.models.clinical_data import StageFile, Subject, SubjectItem, SubjectSection
+from app.models.dashboard_v31 import (
+    DashboardClinicalEvent,
+    DashboardDeviceHandover,
+    DashboardDeviceIssue,
+    DashboardEnrollmentPlan,
+    DashboardImportantTask,
+    DashboardMilestone,
+    DashboardSubjectOverview,
+    DashboardSubjectResult,
+)
 from app.models.dictionary import Dictionary
 from app.models.file_asset import FileAsset, FileVersion
 from app.models.identity import (
@@ -23,6 +33,14 @@ __all__ = [
     "Center",
     "CorrectionTask",
     "CorrectionTaskAnnotation",
+    "DashboardClinicalEvent",
+    "DashboardDeviceHandover",
+    "DashboardDeviceIssue",
+    "DashboardEnrollmentPlan",
+    "DashboardImportantTask",
+    "DashboardMilestone",
+    "DashboardSubjectOverview",
+    "DashboardSubjectResult",
     "Dictionary",
     "FileAsset",
     "FileVersion",

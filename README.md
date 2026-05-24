@@ -1,22 +1,76 @@
 # 临床数据收集系统
 
-本项目是公司内部临床研究资料、受试者过程数据、原始文件、研发图像视频数据和数据治理要求的统一管理系统。
+`clinical-data-system` 是面向临床研究资料收集、PDF 资料审阅、整改闭环和资料包智能识别的内部业务系统。
 
-## 技术栈
+系统当前进入 `V3.1.0 数据看板工作台` 迭代：`V3-P0` 的 PDF 资料包切分、人工校正和确认闭环已经通过验证；本阶段先把首页数据看板升级为临床项目工作台，支撑项目进度、入组计划、受试者结果、临床事件、器械问题和重要事项维护。
 
-- Frontend: React + TypeScript + Vite + Tailwind CSS + shadcn/ui 风格组件 + Recharts
-- Backend: FastAPI + SQLAlchemy 2.x ORM + Pydantic + Alembic
+## 1. 系统定位
+
+系统围绕临床资料从上传到审核的完整链路建设：
+
+- 项目、中心、阶段、资料模板和字典等基础主数据。
+- 受试者资料项管理、资料上传、文件版本和操作日志。
+- PDF 在线预览、画框批注、整改任务单和复审闭环。
+- PDF 资料包上传、OCR、智能切分、人工拆分/合并/修正、确认并上传入库。
+- V3.1.0 数据看板工作台：实验项目 7 张业务表、整体进度预期偏离预警、重要紧急事项完成情况。
+- V3.1 后续继续重塑资料分类、板块体系和资料包审核布局。
+- 后续字段结构化抽取将在 V3.1 分类体系稳定后再启动。
+
+## 2. 核心文档
+
+当前文档只保留四份长期维护文档：
+
+| 文档 | 用途 |
+| --- | --- |
+| `README.md` | 项目总说明、运行方式和当前版本口径 |
+| `docs/process.md` | 版本命名、阶段进度、验收记录和下一步计划 |
+| `docs/tech_plan.md` | 技术架构、业务链路、V3 落地方案和开发规则 |
+| `docs/deploy_migration.md` | 开发环境到生产环境的打包、镜像和替换命令 |
+
+新增阶段信息、验收结论、技术决策和迁移命令优先写入上述四份文档，不再新增零散计划书。
+
+## 3. 当前版本口径
+
+| 版本 | 状态 | 说明 |
+| --- | --- | --- |
+| `V1` | 已完成 | 基本框架、主数据、上传、OCR、Linux GPU OCR 生产基线 |
+| `V2` | 已完成 | PDF 在线审阅、批注、整改任务单、复审闭环 |
+| `V2.1` | 已完成 | 临床资料审核工作台 UI 优化 |
+| `V3-P0` | 已完成 | PDF 资料包智能识别、切分、人工校正、确认入库 |
+| `V3.1.0` | 进行中 | 数据看板工作台：实验项目、整体进度预警、重要紧急事项 |
+| `V3.1.x` | 后续 | 重塑资料分类、板块体系和资料包审核布局 |
+| 字段结构化抽取 | 后置 | 在 V3.1 分类体系稳定后启动 |
+
+当前对内研发口径：
+
+```text
+clinical-data-system V3-P0 已结束；当前进入 V3.1.0 数据看板工作台。010001 暴露的问题归因为资料分类和板块体系不准确，不归因为系统切分闭环失败，分类与布局重塑继续作为 V3.1 后续重点。
+```
+
+正式生产口径：
+
+```text
+生产可交付基线仍按 V1/V2 已完成范围说明；V3 当前属于内部迭代基线，尚未作为正式生产大版本锁定。
+```
+
+## 4. 技术栈
+
+- Frontend: React + TypeScript + Vite + Tailwind CSS + lucide-react + PDF.js
+- Backend: FastAPI + SQLAlchemy 2.x + Pydantic + Alembic
 - Database: PostgreSQL
+- OCR:
+  - Mac 本地开发：Apple Vision OCR 服务，默认端口 `8048`
+  - Linux 生产：PaddleOCR GPU 服务
 - Deploy: Docker Compose + Nginx
 
-## 本地开发方式
+## 5. 本地开发启动
 
 后端：
 
 ```bash
 cd backend
 source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 前端：
@@ -26,58 +80,74 @@ cd frontend
 npm run dev
 ```
 
-默认访问地址：
-
-- 前端: http://localhost:5173
-- 后端健康检查: http://localhost:8000/api/health
-- 后端 OpenAPI: http://localhost:8000/docs
-
-本地开发 OCR：
-
-- 当前 Mac 本机研发环境不再使用 Docker 内的 PaddleOCR CPU 容器。
-- 本地 OCR 服务改为 macOS 原生 Apple Vision OCR API，继续占用原来的 `8048` 端口，因此后端默认配置 `PDF_PACKET_OCR_API_URL=http://127.0.0.1:8048` 不需要修改。
-- 启动方式：在项目根目录运行 `MAC_VISION_OCR_PORT=8048 backend/.venv/bin/python scripts/mac_vision_ocr_api.py`。
-- 健康检查：`http://127.0.0.1:8048/health` 返回的 `service` 应为 `mac-vision-ocr-api`。
-- 后端调用本地 OCR 时已在 `backend/app/services/ocr_client.py` 中关闭代理环境继承，避免 `127.0.0.1:8048` 被系统代理转发后出现 `502 Bad Gateway`。
-
-本地验证记录：
-
-- `010005.pdf` 全 27 页 OCR 已跑通，耗时约 12.6 秒。
-- 资料包重新分析成功后状态为 `ready`，生成 `9 segments` 和 `27 text/OCR pages`。
-
-生产 OCR：
-
-- Linux 生产环境仍沿用既有 GPU OCR 方案，即 PaddleOCR GPU 服务和 `paddle-ocr-api-gpu` 镜像。
-- macOS Apple Vision OCR 只用于本机开发和样本调试，不替代生产环境的 Linux GPU PaddleOCR 基线。
-
-环境端口说明：
-
-- 本地开发环境：前端 `5173`，后端 `8000`
-- 本地生产验证环境：前端 `18081`
-- 服务器测试/生产环境：前端 `18080`
-
-说明：
-
-- `5173` 是日常开发调试默认前端端口
-- `18081` 仅用于本机贴近生产构建的验证，不作为默认开发端口
-- `18080` 是服务器侧测试/生产访问口径，避免与 `18081` 混用
-
-局域网访问：
+本地 OCR：
 
 ```bash
-cd backend
-source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-cd frontend
-npm run dev
+MAC_VISION_OCR_PORT=8048 backend/.venv/bin/python scripts/mac_vision_ocr_api.py
 ```
 
-同一局域网设备访问 `http://<本机局域网IP>:5173`。
+默认访问：
+
+- 前端: http://127.0.0.1:5173
+- 后端健康检查: http://127.0.0.1:8000/api/health
+- 后端 OpenAPI: http://127.0.0.1:8000/docs
+- OCR 健康检查: http://127.0.0.1:8048/health
 
 开发默认管理员：
 
 - 用户名：`admin`
 - 密码：`Admin@123456`
 
-开发期推荐前后端在 Mac 本地运行，PostgreSQL 使用 Docker 容器，文件存储使用 `data-dev/file-storage` 模拟。正式部署前再补齐 frontend、backend、postgres、nginx 的完整 Docker Compose 编排。
+## 6. 当前测试重点
+
+V3-P0 已完成实际测试，`010005.pdf` 当前基准为：
+
+```text
+12 segments, 27 text/OCR pages
+```
+
+`010001.pdf` 已用于观察复用性，当前结论是：偏差不属于系统切分闭环失败，而是现有资料分类/板块定义不准确。
+
+V3.1.0 的测试重点：
+
+- 数据看板首页分为“实验项目”和“整体进度计划达成情况”。
+- 实验项目支持进度甘特图、入组计划表、整体情况表、器械交接记录表、受试者结果统计表、临床事件记录、器械问题记录表。
+- 整体进度支持预期偏离预警和重要紧急事项完成维护。
+- 数据看板 V3.1 表格支持列表、筛选、新增、编辑、删除、Excel 模板、导入和导出。
+- 生产 OCR GPU 模式不在本版本调整范围内。
+
+V3.1 后续资料分类测试重点：
+
+- 重新定义资料分类和板块体系。
+- 明确板块、资料项、片段、字段之间的关系。
+- 调整资料包审核页面布局，让人工审核围绕板块展开。
+- 在分类体系稳定后，再继续考虑字段结构化抽取。
+
+## 7. 常用验证命令
+
+后端：
+
+```bash
+cd backend
+.venv/bin/python -m pytest
+.venv/bin/python -m ruff check .
+.venv/bin/alembic current
+.venv/bin/alembic check
+```
+
+前端：
+
+```bash
+cd frontend
+npm run lint
+npm run build
+```
+
+生产或准生产变更前必须确认：
+
+- 已备份数据库。
+- 已备份文件存储。
+- migration 已在测试环境验证。
+- 后端变更后已重启 backend。
+- 前端变更后已重新构建并刷新静态资源或重启前端/Nginx。
+- OCR 生产基线没有被 Mac 本地 OCR 配置误替换。
