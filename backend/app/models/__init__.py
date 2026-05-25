@@ -1,5 +1,6 @@
 from app.models.center import Center
 from app.models.clinical_data import StageFile, Subject, SubjectItem, SubjectSection
+from app.models.clinical_ssu import ClinicalSsuProgress
 from app.models.dashboard_v31 import (
     DashboardClinicalEvent,
     DashboardDeviceHandover,
@@ -31,6 +32,7 @@ from app.models.stage_template import StageTemplate
 
 __all__ = [
     "Center",
+    "ClinicalSsuProgress",
     "CorrectionTask",
     "CorrectionTaskAnnotation",
     "DashboardClinicalEvent",

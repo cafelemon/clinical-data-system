@@ -305,7 +305,7 @@ def test_dashboard_project_metrics_distributions_and_trend(
     )
     assert review_status.status_code == 200
     assert review_status.json()["approved"] == 39
-    assert review_status.json()["unreviewed"] == 20
+    assert review_status.json()["unreviewed"] == 92
 
     completeness = client.get(
         f"/api/dashboard/project/{project_id}/completeness",
@@ -315,7 +315,7 @@ def test_dashboard_project_metrics_distributions_and_trend(
     assert completeness.json()["stage_files"] == {
         "complete": 1,
         "checking": 0,
-        "incomplete": 1,
+        "incomplete": 73,
     }
     assert completeness.json()["subjects"] == {
         "complete": 2,

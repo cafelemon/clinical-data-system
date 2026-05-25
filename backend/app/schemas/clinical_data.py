@@ -147,6 +147,7 @@ class StageFileRead(BaseModel):
     stage_template_id: int | None = None
     file_name: str
     file_type: str | None = None
+    required: bool = True
     upload_status: str
     review_status: str
     added_by: int | None = None
@@ -157,11 +158,21 @@ class StageFileRead(BaseModel):
     reviewer_id: int | None = None
     reviewer_name: str | None = None
     reviewed_at: datetime | None = None
+    not_applicable: bool = False
+    not_applicable_reason: str | None = None
+    not_applicable_by: int | None = None
+    not_applicable_by_name: str | None = None
+    not_applicable_at: datetime | None = None
     completeness_status: str | None = None
     remark: str | None = None
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class StageFileApplicabilityUpdate(BaseModel):
+    not_applicable: bool
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 class StageFileGroupRead(BaseModel):
@@ -177,6 +188,45 @@ class ClinicalPhaseRead(BaseModel):
     subjects: list[SubjectRead] = Field(default_factory=list)
 
 
+class ClinicalSsuProgressBase(BaseModel):
+    project_id: int
+    center_id: int
+    stage_code: str = Field(min_length=1, max_length=80)
+    status: str = Field(default="not_started", max_length=30)
+    submitted_at: date | None = None
+    approved_at: date | None = None
+    completed_at: date | None = None
+    version_info: str | None = Field(default=None, max_length=120)
+    file_checklist: str | None = None
+    summary: str | None = None
+    fee_detail: str | None = None
+    notes: str | None = None
+
+
+class ClinicalSsuProgressCreate(ClinicalSsuProgressBase):
+    pass
+
+
+class ClinicalSsuProgressUpdate(BaseModel):
+    status: str | None = Field(default=None, max_length=30)
+    submitted_at: date | None = None
+    approved_at: date | None = None
+    completed_at: date | None = None
+    version_info: str | None = Field(default=None, max_length=120)
+    file_checklist: str | None = None
+    summary: str | None = None
+    fee_detail: str | None = None
+    notes: str | None = None
+
+
+class ClinicalSsuProgressRead(ClinicalSsuProgressBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ClinicalDatasetRead(BaseModel):
     project_id: int | None = None
     center_id: int | None = None
@@ -185,6 +235,7 @@ class ClinicalDatasetRead(BaseModel):
     phases: list[ClinicalPhaseRead] = Field(default_factory=list)
     startup_file_groups: list[StageFileGroupRead] = Field(default_factory=list)
     startup_files: list[StageFileRead] = Field(default_factory=list)
+    ssu_progress: list[ClinicalSsuProgressRead] = Field(default_factory=list)
     trial_stages: list[StageRead] = Field(default_factory=list)
     trial_files: list[StageFileRead] = Field(default_factory=list)
     subjects: list[SubjectRead] = Field(default_factory=list)

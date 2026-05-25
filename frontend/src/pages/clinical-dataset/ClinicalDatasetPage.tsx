@@ -1,4 +1,15 @@
-import { Database, Eye, FileText, Pencil, Plus, RotateCcw, Save, Trash2, Users } from "lucide-react";
+import {
+  ClipboardList,
+  Database,
+  Eye,
+  FileText,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Save,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
@@ -16,6 +27,8 @@ import { masterDataApi } from "@/services/master-data";
 import { useAuthStore } from "@/stores/auth-store";
 import type {
   ClinicalDataset,
+  ClinicalSsuProgress,
+  ClinicalSsuProgressPayload,
   CompletenessSummary,
   StageFile,
   StageFileGroup,
@@ -44,10 +57,78 @@ const dataStatusLabels: Record<string, string> = {
   complete: "资料齐全",
 };
 
+const ssuStatusLabels: Record<string, string> = {
+  not_started: "未开始",
+  in_progress: "进行中",
+  submitted: "已提交",
+  approved: "已批准",
+  completed: "已完成",
+  blocked: "受阻",
+};
+
 const subjectArmLabels: Record<SubjectArm, string> = {
   experimental: "实验组",
   control: "对照组",
 };
+
+const ssuStageMeta = [
+  {
+    code: "SSU_PROJECT_APPROVAL",
+    label: "立项",
+    fileTypes: [
+      "STARTUP_001_APPLICATION",
+      "STARTUP_002_PROTOCOL",
+      "STARTUP_003_INVESTIGATOR_BROCHURE",
+      "STARTUP_008_PRECLINICAL_MATERIALS",
+      "STARTUP_010_QMS_DECLARATION",
+    ],
+  },
+  {
+    code: "SSU_ETHICS",
+    label: "伦理",
+    fileTypes: [
+      "STARTUP_004_ICF_TEXT",
+      "STARTUP_005_RECRUITMENT_DOCUMENTS",
+      "STARTUP_006_CRF_TEXT",
+      "STARTUP_011_SUBJECT_INSURANCE",
+      "STARTUP_012_ETHICS_OPINION",
+      "STARTUP_013_ETHICS_MEMBER_LIST",
+    ],
+  },
+  {
+    code: "SSU_AGREEMENT_SIGNING",
+    label: "协议签署",
+    fileTypes: [
+      "STARTUP_009_INVESTIGATOR_QUALIFICATION",
+      "STARTUP_014_CONTRACT",
+      "STARTUP_018_SIGNATURE_AUTHORIZATION",
+    ],
+  },
+  {
+    code: "SSU_PROVINCIAL_FILING",
+    label: "省局备案",
+    fileTypes: [
+      "STARTUP_007_PRODUCT_TEST_REPORT",
+      "STARTUP_015_TRIAL_APPROVAL",
+      "STARTUP_016_REGULATORY_FILING",
+    ],
+  },
+  {
+    code: "SSU_STARTUP_MEETING",
+    label: "启动会",
+    fileTypes: [
+      "STARTUP_017_STARTUP_TRAINING",
+      "STARTUP_019_LAB_NORMAL_RANGE",
+      "STARTUP_020_LAB_QC_CERTIFICATE",
+      "STARTUP_021_DEVICE_LABEL_TEXT",
+      "STARTUP_022_DEVICE_HANDOVER",
+      "STARTUP_023_UNBLINDING_PROCEDURE",
+      "STARTUP_024_RANDOMIZATION_LIST",
+      "STARTUP_025_MONITORING_PLAN",
+      "STARTUP_026_STARTUP_MONITORING_REPORT",
+    ],
+  },
+] as const;
 
 type SubjectForm = {
   screening_no: string;
@@ -68,9 +149,9 @@ const defaultSubjectForm: SubjectForm = {
 const stageConfigs = [
   {
     code: "STARTUP",
-    label: "启动阶段",
-    title: "启动阶段 - 合作文件",
-    description: "管理与中心的合作文件，包括申请表、试验方案、研究手册等",
+    label: "试验准备阶段",
+    title: "试验准备阶段",
+    description: "中心级资料准备和 SSU 进展维护",
   },
   {
     code: "TRIAL",
@@ -80,30 +161,58 @@ const stageConfigs = [
   },
   {
     code: "CLOSEOUT",
-    label: "总结阶段",
-    title: "总结阶段 - 归档文件",
-    description: "管理总结报告、关闭资料和项目归档文件",
+    label: "试验结束阶段",
+    title: "试验结束阶段",
+    description: "中心级结束资料准备和归档",
   },
 ] as const;
 
 type StageCode = (typeof stageConfigs)[number]["code"];
+type StartupView = "ssu" | "materials";
 
 function normalizeStageCode(value: string | null): StageCode {
   return stageConfigs.some((stage) => stage.code === value) ? (value as StageCode) : "STARTUP";
 }
 
-function buildDatasetSearchParams(projectId?: number, centerId?: number, stage: StageCode = "STARTUP") {
+function normalizeStartupView(value: string | null): StartupView {
+  return value === "materials" ? "materials" : "ssu";
+}
+
+function buildDatasetSearchParams(
+  projectId?: number,
+  centerId?: number,
+  stage: StageCode = "STARTUP",
+  startupView: StartupView = "ssu",
+) {
   const params = new URLSearchParams();
   if (projectId) params.set("project_id", String(projectId));
   if (centerId) params.set("center_id", String(centerId));
   params.set("stage", stage);
+  if (stage === "STARTUP") params.set("view", startupView);
+  if (stage === "CLOSEOUT") params.set("view", "materials");
   return params;
 }
 
 function statusTone(status: string) {
-  if (status === "approved" || status === "complete" || status === "uploaded") return "success";
-  if (status === "rejected" || status === "incomplete" || status === "supplement_required") return "danger";
-  if (status === "checking" || status === "pending" || status === "unreviewed" || status === "replaced") {
+  if (status === "approved" || status === "complete" || status === "uploaded" || status === "completed") {
+    return "success";
+  }
+  if (
+    status === "rejected" ||
+    status === "incomplete" ||
+    status === "supplement_required" ||
+    status === "blocked"
+  ) {
+    return "danger";
+  }
+  if (
+    status === "checking" ||
+    status === "pending" ||
+    status === "unreviewed" ||
+    status === "replaced" ||
+    status === "in_progress" ||
+    status === "submitted"
+  ) {
     return "warning";
   }
   return "neutral";
@@ -135,6 +244,7 @@ function toDateTimeLocalValue(value: string | null) {
 }
 
 function fileCompletenessStatus(file: StageFile) {
+  if (!file.required && file.not_applicable) return "complete";
   if (file.upload_status === "supplement_required" || file.review_status === "rejected") {
     return "incomplete";
   }
@@ -152,6 +262,7 @@ function StageFileTable({
   canReadFiles,
   canWriteFiles,
   canDeleteFiles,
+  canUpdateApplicability,
   canSubmitReview,
   canReview,
   canReadReviews,
@@ -161,11 +272,31 @@ function StageFileTable({
   canReadFiles: boolean;
   canWriteFiles: boolean;
   canDeleteFiles: boolean;
+  canUpdateApplicability: boolean;
   canSubmitReview: boolean;
   canReview: boolean;
   canReadReviews: boolean;
   onChanged: () => void;
 }) {
+  const [applicabilityDrafts, setApplicabilityDrafts] = useState<
+    Record<number, { not_applicable: boolean; reason: string }>
+  >({});
+  const [savingApplicabilityId, setSavingApplicabilityId] = useState<number | null>(null);
+
+  useEffect(() => {
+    setApplicabilityDrafts(
+      Object.fromEntries(
+        files.map((file) => [
+          file.id,
+          {
+            not_applicable: file.not_applicable,
+            reason: file.not_applicable_reason ?? "",
+          },
+        ]),
+      ),
+    );
+  }, [files]);
+
   if (files.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
@@ -188,77 +319,168 @@ function StageFileTable({
         />
       )}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1120px] text-left text-sm">
+        <table className="w-full min-w-[980px] text-left text-sm">
           <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
             <tr>
-              <th className="px-3 py-2 font-medium">资料名称</th>
-              <th className="px-3 py-2 font-medium">资料类型</th>
-              <th className="px-3 py-2 font-medium">上传人</th>
-              <th className="px-3 py-2 font-medium">上传时间</th>
-              <th className="px-3 py-2 font-medium">审核人</th>
-              <th className="px-3 py-2 font-medium">审核时间</th>
+              <th className="w-[34%] px-3 py-2 font-medium">资料名称</th>
+              <th className="px-3 py-2 font-medium">上传/审核</th>
               <th className="px-3 py-2 font-medium">上传状态</th>
               <th className="px-3 py-2 font-medium">审核状态</th>
               <th className="px-3 py-2 font-medium">完整性</th>
+              <th className="px-3 py-2 font-medium">材料情况</th>
               <th className="px-3 py-2 font-medium">文件</th>
               <th className="px-3 py-2 font-medium">审核</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {files.map((file) => (
-              <tr key={file.id}>
-                <td className="px-3 py-3 font-medium text-slate-900">{file.file_name}</td>
-                <td className="px-3 py-3 text-slate-600">{file.file_type || "-"}</td>
-                <td className="px-3 py-3 text-slate-600">{file.uploaded_by_name || "-"}</td>
-                <td className="px-3 py-3 text-slate-500">
-                  {file.uploaded_at ? new Date(file.uploaded_at).toLocaleDateString() : "-"}
-                </td>
-                <td className="px-3 py-3 text-slate-600">{file.reviewer_name || "-"}</td>
-                <td className="px-3 py-3 text-slate-500">
-                  {file.reviewed_at ? new Date(file.reviewed_at).toLocaleDateString() : "-"}
-                </td>
-                <td className="px-3 py-3">
-                  <Badge tone={statusTone(file.upload_status)}>
-                    {statusLabel(uploadStatusLabels, file.upload_status)}
-                  </Badge>
-                </td>
-                <td className="px-3 py-3">
-                  <Badge tone={statusTone(file.review_status)}>
-                    {statusLabel(reviewStatusLabels, file.review_status)}
-                  </Badge>
-                </td>
-                <td className="px-3 py-3">
-                  <Badge tone={statusTone(fileCompletenessStatus(file))}>
-                    {statusLabel(
-                      dataStatusLabels,
-                      file.completeness_status ?? fileCompletenessStatus(file),
+            {files.map((file) => {
+              const completenessStatus = file.completeness_status ?? fileCompletenessStatus(file);
+              const draft = applicabilityDrafts[file.id] ?? {
+                not_applicable: file.not_applicable,
+                reason: file.not_applicable_reason ?? "",
+              };
+              const applicabilityChanged =
+                draft.not_applicable !== file.not_applicable ||
+                draft.reason !== (file.not_applicable_reason ?? "");
+              const hasUploadedFile =
+                file.upload_status === "uploaded" || file.upload_status === "replaced";
+
+              async function saveApplicability() {
+                setSavingApplicabilityId(file.id);
+                try {
+                  await clinicalDataApi.updateStageFileApplicability(file.id, {
+                    not_applicable: draft.not_applicable,
+                    reason: draft.reason.trim() || null,
+                  });
+                  onChanged();
+                } finally {
+                  setSavingApplicabilityId(null);
+                }
+              }
+
+              return (
+                <tr key={file.id} className="align-top">
+                  <td className="px-3 py-3 font-medium text-slate-900">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="whitespace-normal break-words leading-6">{file.file_name}</span>
+                      {!file.required && <Badge tone="neutral">若有</Badge>}
+                    </div>
+                    {file.not_applicable && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        已声明无此材料
+                        {file.not_applicable_by_name ? ` · ${file.not_applicable_by_name}` : ""}
+                      </p>
                     )}
-                  </Badge>
-                </td>
-                <td className="px-3 py-3">
-                  <FileActions
-                    stageFileId={file.id}
-                    defaultCategory="clinical_document"
-                    canRead={canReadFiles}
-                    canWrite={canWriteFiles}
-                    canDelete={canDeleteFiles}
-                    onChanged={onChanged}
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <ReviewActions
-                    targetType="stage_file"
-                    targetId={file.id}
-                    uploadStatus={file.upload_status}
-                    reviewStatus={file.review_status}
-                    canSubmit={canSubmitReview}
-                    canReview={canReview}
-                    canReadRecords={canReadReviews}
-                    onChanged={onChanged}
-                  />
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="px-3 py-3 text-xs text-slate-600">
+                    <div className="space-y-1">
+                      <p>上传：{file.uploaded_by_name || "-"}</p>
+                      <p className="text-slate-500">
+                        {file.uploaded_at ? new Date(file.uploaded_at).toLocaleDateString() : "-"}
+                      </p>
+                      <p>审核：{file.reviewer_name || "-"}</p>
+                      <p className="text-slate-500">
+                        {file.reviewed_at ? new Date(file.reviewed_at).toLocaleDateString() : "-"}
+                      </p>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <Badge tone={statusTone(file.upload_status)}>
+                      {statusLabel(uploadStatusLabels, file.upload_status)}
+                    </Badge>
+                  </td>
+                  <td className="px-3 py-3">
+                    <Badge tone={statusTone(file.review_status)}>
+                      {statusLabel(reviewStatusLabels, file.review_status)}
+                    </Badge>
+                  </td>
+                  <td className="px-3 py-3">
+                    <Badge tone={statusTone(completenessStatus)}>
+                      {statusLabel(dataStatusLabels, completenessStatus)}
+                    </Badge>
+                  </td>
+                  <td className="min-w-[220px] px-3 py-3">
+                    {!file.required ? (
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-xs text-slate-700">
+                          <input
+                            type="checkbox"
+                            className="size-4 rounded border-slate-300"
+                            checked={draft.not_applicable}
+                            disabled={!canUpdateApplicability || hasUploadedFile}
+                            onChange={(event) =>
+                              setApplicabilityDrafts((current) => ({
+                                ...current,
+                                [file.id]: {
+                                  ...draft,
+                                  not_applicable: event.target.checked,
+                                },
+                              }))
+                            }
+                          />
+                          无此材料
+                        </label>
+                        {draft.not_applicable && (
+                          <textarea
+                            className={inputClassName("min-h-16 resize-y text-xs")}
+                            placeholder="备注（可选）"
+                            value={draft.reason}
+                            disabled={!canUpdateApplicability || hasUploadedFile}
+                            onChange={(event) =>
+                              setApplicabilityDrafts((current) => ({
+                                ...current,
+                                [file.id]: {
+                                  ...draft,
+                                  reason: event.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        )}
+                        {hasUploadedFile && (
+                          <p className="text-xs text-slate-400">已有上传文件，不能声明无此材料</p>
+                        )}
+                        {canUpdateApplicability && applicabilityChanged && !hasUploadedFile && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={savingApplicabilityId === file.id}
+                            onClick={() => void saveApplicability()}
+                          >
+                            <Save className="size-4" aria-hidden="true" />
+                            保存
+                          </Button>
+                        )}
+                      </div>
+                    ) : (
+                      <Badge tone="neutral">必备</Badge>
+                    )}
+                  </td>
+                  <td className="px-3 py-3">
+                    <FileActions
+                      stageFileId={file.id}
+                      defaultCategory="clinical_document"
+                      canRead={canReadFiles}
+                      canWrite={canWriteFiles}
+                      canDelete={canDeleteFiles}
+                      onChanged={onChanged}
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <ReviewActions
+                      targetType="stage_file"
+                      targetId={file.id}
+                      uploadStatus={file.upload_status}
+                      reviewStatus={file.review_status}
+                      canSubmit={canSubmitReview}
+                      canReview={canReview}
+                      canReadRecords={canReadReviews}
+                      onChanged={onChanged}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -457,6 +679,7 @@ function SecondaryStageFiles({
   canReadFiles,
   canWriteFiles,
   canDeleteFiles,
+  canUpdateApplicability,
   canSubmitReview,
   canReview,
   canReadReviews,
@@ -468,6 +691,7 @@ function SecondaryStageFiles({
   canReadFiles: boolean;
   canWriteFiles: boolean;
   canDeleteFiles: boolean;
+  canUpdateApplicability: boolean;
   canSubmitReview: boolean;
   canReview: boolean;
   canReadReviews: boolean;
@@ -508,6 +732,7 @@ function SecondaryStageFiles({
         canReadFiles={canReadFiles}
         canWriteFiles={canWriteFiles}
         canDeleteFiles={canDeleteFiles}
+        canUpdateApplicability={canUpdateApplicability}
         canSubmitReview={canSubmitReview}
         canReview={canReview}
         canReadReviews={canReadReviews}
@@ -517,16 +742,245 @@ function SecondaryStageFiles({
   );
 }
 
+function ssuMeta(stageCode: string) {
+  return ssuStageMeta.find((item) => item.code === stageCode);
+}
+
+function ssuDraft(record: ClinicalSsuProgress): Required<ClinicalSsuProgressPayload> {
+  return {
+    status: record.status,
+    submitted_at: record.submitted_at ?? "",
+    approved_at: record.approved_at ?? "",
+    completed_at: record.completed_at ?? "",
+    version_info: record.version_info ?? "",
+    file_checklist: record.file_checklist ?? "",
+    summary: record.summary ?? "",
+    fee_detail: record.fee_detail ?? "",
+    notes: record.notes ?? "",
+  };
+}
+
+function cleanSsuDraft(draft: Required<ClinicalSsuProgressPayload>): ClinicalSsuProgressPayload {
+  return {
+    status: draft.status,
+    submitted_at: draft.submitted_at || null,
+    approved_at: draft.approved_at || null,
+    completed_at: draft.completed_at || null,
+    version_info: draft.version_info?.trim() || null,
+    file_checklist: draft.file_checklist?.trim() || null,
+    summary: draft.summary?.trim() || null,
+    fee_detail: draft.fee_detail?.trim() || null,
+    notes: draft.notes?.trim() || null,
+  };
+}
+
+function SsuProgressPanel({
+  records,
+  startupFiles,
+  canWrite,
+  onChanged,
+}: {
+  records: ClinicalSsuProgress[];
+  startupFiles: StageFile[];
+  canWrite: boolean;
+  onChanged: () => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<number, Required<ClinicalSsuProgressPayload>>>({});
+  const [savingId, setSavingId] = useState<number | null>(null);
+
+  useEffect(() => {
+    setDrafts(
+      Object.fromEntries(records.map((record) => [record.id, ssuDraft(record)])),
+    );
+  }, [records]);
+
+  const fileByType = useMemo(
+    () => new Map(startupFiles.map((file) => [file.file_type ?? "", file])),
+    [startupFiles],
+  );
+
+  function updateDraft(
+    recordId: number,
+    key: keyof Required<ClinicalSsuProgressPayload>,
+    value: string,
+  ) {
+    setDrafts((current) => ({
+      ...current,
+      [recordId]: {
+        ...(current[recordId] ?? ssuDraft(records.find((record) => record.id === recordId)!)),
+        [key]: value,
+      },
+    }));
+  }
+
+  async function saveRecord(record: ClinicalSsuProgress) {
+    const draft = drafts[record.id] ?? ssuDraft(record);
+    setSavingId(record.id);
+    try {
+      await clinicalDataApi.updateSsuProgress(record.id, cleanSsuDraft(draft));
+      await onChanged();
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  if (records.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+        暂无 SSU 进展
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {records.map((record) => {
+        const meta = ssuMeta(record.stage_code);
+        const draft = drafts[record.id] ?? ssuDraft(record);
+        const relatedFiles =
+          meta?.fileTypes
+            .map((fileType) => fileByType.get(fileType))
+            .filter((file): file is StageFile => Boolean(file)) ?? [];
+        return (
+          <div key={record.id} className="rounded-md border border-slate-200 p-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <ClipboardList className="size-4 text-emerald-700" aria-hidden="true" />
+                  <h3 className="text-sm font-semibold text-slate-950">
+                    {meta?.label ?? record.stage_code}
+                  </h3>
+                  <Badge tone={statusTone(draft.status)}>
+                    {statusLabel(ssuStatusLabels, draft.status)}
+                  </Badge>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+	                  {relatedFiles.map((file) => (
+	                    <Badge key={file.id} tone={statusTone(file.completeness_status ?? fileCompletenessStatus(file))}>
+	                      {file.file_name}
+	                      {file.not_applicable ? " · 无此材料" : ""}
+	                    </Badge>
+	                  ))}
+                  {relatedFiles.length === 0 && <Badge tone="neutral">暂无关联资料</Badge>}
+                </div>
+              </div>
+              {canWrite && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={savingId === record.id}
+                  onClick={() => void saveRecord(record)}
+                >
+                  <Save className="size-4" aria-hidden="true" />
+                  保存
+                </Button>
+              )}
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-4">
+              <Field label="状态">
+                <SelectField
+                  value={draft.status}
+                  disabled={!canWrite}
+                  onChange={(event) => updateDraft(record.id, "status", event.target.value)}
+                >
+                  {Object.entries(ssuStatusLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </SelectField>
+              </Field>
+              <Field label="提交日期">
+                <input
+                  className={inputClassName()}
+                  type="date"
+                  disabled={!canWrite}
+                  value={draft.submitted_at ?? ""}
+                  onChange={(event) => updateDraft(record.id, "submitted_at", event.target.value)}
+                />
+              </Field>
+              <Field label="批准日期">
+                <input
+                  className={inputClassName()}
+                  type="date"
+                  disabled={!canWrite}
+                  value={draft.approved_at ?? ""}
+                  onChange={(event) => updateDraft(record.id, "approved_at", event.target.value)}
+                />
+              </Field>
+              <Field label="完成日期">
+                <input
+                  className={inputClassName()}
+                  type="date"
+                  disabled={!canWrite}
+                  value={draft.completed_at ?? ""}
+                  onChange={(event) => updateDraft(record.id, "completed_at", event.target.value)}
+                />
+              </Field>
+              <Field label="版本信息">
+                <input
+                  className={inputClassName()}
+                  disabled={!canWrite}
+                  value={draft.version_info ?? ""}
+                  onChange={(event) => updateDraft(record.id, "version_info", event.target.value)}
+                />
+              </Field>
+              <Field label="资料清单">
+                <textarea
+                  className={inputClassName("min-h-20 resize-y")}
+                  disabled={!canWrite}
+                  value={draft.file_checklist ?? ""}
+                  onChange={(event) => updateDraft(record.id, "file_checklist", event.target.value)}
+                />
+              </Field>
+              <Field label="摘要">
+                <textarea
+                  className={inputClassName("min-h-20 resize-y")}
+                  disabled={!canWrite}
+                  value={draft.summary ?? ""}
+                  onChange={(event) => updateDraft(record.id, "summary", event.target.value)}
+                />
+              </Field>
+              <Field label="费用明细">
+                <textarea
+                  className={inputClassName("min-h-20 resize-y")}
+                  disabled={!canWrite}
+                  value={draft.fee_detail ?? ""}
+                  onChange={(event) => updateDraft(record.id, "fee_detail", event.target.value)}
+                />
+              </Field>
+              <div className="lg:col-span-4">
+                <Field label="备注">
+                  <textarea
+                    className={inputClassName("min-h-20 resize-y")}
+                    disabled={!canWrite}
+                    value={draft.notes ?? ""}
+                    onChange={(event) => updateDraft(record.id, "notes", event.target.value)}
+                  />
+                </Field>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function StageNavigation({
   activeStage,
+  startupView,
   stages,
   dataset,
   onChange,
+  onStartupViewChange,
 }: {
   activeStage: StageCode;
+  startupView: StartupView;
   stages: Stage[];
   dataset: ClinicalDataset | null;
   onChange: (stage: StageCode) => void;
+  onStartupViewChange: (view: StartupView) => void;
 }) {
   const stageByCode = new Map(stages.map((stage) => [stage.code, stage]));
 
@@ -540,32 +994,73 @@ function StageNavigation({
             ? dataset?.subject_count ?? 0
             : stageFilesForCode(dataset, config.code).length;
         return (
-          <button
-            key={config.code}
-            type="button"
-            className={cn(
-              "flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950",
-              isActive && "bg-emerald-600 text-white hover:bg-emerald-600 hover:text-white",
-            )}
-            onClick={() => onChange(config.code)}
-          >
-            {config.code === "TRIAL" ? (
-              <Users className="size-4 shrink-0" aria-hidden="true" />
-            ) : (
-              <FileText className="size-4 shrink-0" aria-hidden="true" />
-            )}
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">{stage?.name ?? config.label}</span>
-              <span
-                className={cn(
-                  "mt-0.5 block text-xs font-normal",
-                  isActive ? "text-emerald-50" : "text-slate-400",
-                )}
-              >
-                {stage ? `${count} 项` : "未配置"}
+          <div key={config.code} className="space-y-1">
+            <button
+              type="button"
+              className={cn(
+                "flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950",
+                isActive && "bg-emerald-600 text-white hover:bg-emerald-600 hover:text-white",
+              )}
+              onClick={() => onChange(config.code)}
+            >
+              {config.code === "TRIAL" ? (
+                <Users className="size-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <FileText className="size-4 shrink-0" aria-hidden="true" />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{stage?.name ?? config.label}</span>
+                <span
+                  className={cn(
+                    "mt-0.5 block text-xs font-normal",
+                    isActive ? "text-emerald-50" : "text-slate-400",
+                  )}
+                >
+                  {stage
+                    ? config.code === "STARTUP"
+                      ? `SSU ${dataset?.ssu_progress.length ?? 0} · 资料 ${count}`
+                      : `${count} 项`
+                    : "未配置"}
+                </span>
               </span>
-            </span>
-          </button>
+            </button>
+            {config.code === "STARTUP" && isActive && (
+              <div className="ml-7 space-y-1 border-l border-slate-200 pl-3">
+                {[
+                  { value: "ssu" as const, label: "SSU进展", count: dataset?.ssu_progress.length ?? 0 },
+                  { value: "materials" as const, label: "资料准备", count },
+                ].map((item) => {
+                  const isViewActive = startupView === item.value;
+                  return (
+                    <button
+                      key={item.value}
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-900",
+                        isViewActive && "bg-emerald-50 font-medium text-emerald-800",
+                      )}
+                      onClick={() => onStartupViewChange(item.value)}
+                    >
+                      <span>{item.label}</span>
+                      <Badge tone={isViewActive ? "success" : "neutral"}>{item.count}</Badge>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {config.code === "CLOSEOUT" && isActive && (
+              <div className="ml-7 space-y-1 border-l border-slate-200 pl-3">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 rounded-md bg-emerald-50 px-3 py-2 text-left text-xs font-medium text-emerald-800 transition hover:bg-emerald-50"
+                  onClick={() => onChange("CLOSEOUT")}
+                >
+                  <span>资料准备</span>
+                  <Badge tone="success">{count}</Badge>
+                </button>
+              </div>
+            )}
+          </div>
         );
       })}
     </div>
@@ -584,12 +1079,16 @@ export function ClinicalDatasetPage() {
     [searchParams],
   );
   const requestedStage = searchParams.get("stage");
+  const requestedStartupView = searchParams.get("view");
   const [projects, setProjects] = useState<Project[]>([]);
   const [centers, setCenters] = useState<Center[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [projectId, setProjectId] = useState<number | undefined>();
   const [centerId, setCenterId] = useState<number | undefined>();
   const [activeStage, setActiveStage] = useState<StageCode>(normalizeStageCode(requestedStage));
+  const [startupView, setStartupView] = useState<StartupView>(
+    normalizeStartupView(requestedStartupView),
+  );
   const [activeSubStageId, setActiveSubStageId] = useState<number | null>(null);
   const [dataset, setDataset] = useState<ClinicalDataset | null>(null);
   const [completeness, setCompleteness] = useState<CompletenessSummary | null>(null);
@@ -630,6 +1129,18 @@ export function ClinicalDatasetPage() {
   );
   const activeStageModel = stageByCode.get(activeStage);
   const activeStageConfig = stageConfigs.find((stage) => stage.code === activeStage) ?? stageConfigs[0];
+  const activePanelTitle =
+    activeStage === "STARTUP"
+      ? startupView === "ssu"
+        ? "试验准备阶段 - SSU进展"
+        : "试验准备阶段 - 资料准备"
+      : activeStageConfig.title;
+  const activePanelDescription =
+    activeStage === "STARTUP"
+      ? startupView === "ssu"
+        ? "维护立项、伦理、协议签署、省局备案和启动会进展"
+        : "维护试验准备阶段中心级资料清单"
+      : activeStageModel?.description || activeStageConfig.description;
   const activeStageFiles = stageFilesForCode(dataset, activeStage);
   const activeFileGroups = useMemo(
     () => stageFileGroupsForCode(dataset, activeStage),
@@ -677,8 +1188,12 @@ export function ClinicalDatasetPage() {
   }, [canReadClinicalData, centerId, loadCompleteness, projectId]);
 
   useEffect(() => {
-    setActiveStage(normalizeStageCode(requestedStage));
-  }, [requestedStage]);
+    const nextStage = normalizeStageCode(requestedStage);
+    setActiveStage(nextStage);
+    if (nextStage === "STARTUP") {
+      setStartupView(normalizeStartupView(requestedStartupView));
+    }
+  }, [requestedStage, requestedStartupView]);
 
   useEffect(() => {
     if (activeStage === "TRIAL") {
@@ -754,22 +1269,23 @@ export function ClinicalDatasetPage() {
           ? requestedCenterId
           : centerData[0]?.id;
       setCenterId((current) => (current === nextCenterId ? current : nextCenterId));
-      const nextParams = buildDatasetSearchParams(projectId, nextCenterId, activeStage);
+      const nextParams = buildDatasetSearchParams(projectId, nextCenterId, activeStage, startupView);
       if (nextParams.toString() !== currentQuery) {
         setSearchParams(nextParams, { replace: true });
       }
     }
     void loadScope();
   }, [
-    activeStage,
-    canReadClinicalData,
-    currentQuery,
+	    activeStage,
+	    canReadClinicalData,
+	    currentQuery,
     projectId,
     projects,
     requestedCenterId,
-    requestedProjectId,
-    setSearchParams,
-  ]);
+	    requestedProjectId,
+	    setSearchParams,
+	    startupView,
+	  ]);
 
   useEffect(() => {
     void loadDataset();
@@ -781,7 +1297,7 @@ export function ClinicalDatasetPage() {
     setCenterId(undefined);
     setDataset(null);
     resetForm();
-    const nextParams = buildDatasetSearchParams(nextProjectId, undefined, activeStage);
+    const nextParams = buildDatasetSearchParams(nextProjectId, undefined, activeStage, startupView);
     if (nextParams.toString() !== currentQuery) {
       setSearchParams(nextParams, { replace: true });
     }
@@ -791,7 +1307,7 @@ export function ClinicalDatasetPage() {
     const nextCenterId = Number(value) || undefined;
     setCenterId(nextCenterId);
     setDataset(null);
-    const nextParams = buildDatasetSearchParams(projectId, nextCenterId, activeStage);
+    const nextParams = buildDatasetSearchParams(projectId, nextCenterId, activeStage, startupView);
     if (nextParams.toString() !== currentQuery) {
       setSearchParams(nextParams, { replace: true });
     }
@@ -799,7 +1315,20 @@ export function ClinicalDatasetPage() {
 
   function handleStageChange(stage: StageCode) {
     setActiveStage(stage);
-    const nextParams = buildDatasetSearchParams(projectId, centerId, stage);
+    const nextStartupView = stage === "STARTUP" ? "ssu" : startupView;
+    if (stage === "STARTUP") {
+      setStartupView(nextStartupView);
+    }
+    const nextParams = buildDatasetSearchParams(projectId, centerId, stage, nextStartupView);
+    if (nextParams.toString() !== currentQuery) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }
+
+  function handleStartupViewChange(view: StartupView) {
+    setActiveStage("STARTUP");
+    setStartupView(view);
+    const nextParams = buildDatasetSearchParams(projectId, centerId, "STARTUP", view);
     if (nextParams.toString() !== currentQuery) {
       setSearchParams(nextParams, { replace: true });
     }
@@ -959,9 +1488,11 @@ export function ClinicalDatasetPage() {
             <CardContent>
               <StageNavigation
                 activeStage={activeStage}
+                startupView={startupView}
                 stages={displayStages}
                 dataset={dataset}
                 onChange={handleStageChange}
+                onStartupViewChange={handleStartupViewChange}
               />
             </CardContent>
           </Card>
@@ -997,12 +1528,10 @@ export function ClinicalDatasetPage() {
           <Card>
             <CardHeader>
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <CardTitle>{activeStageConfig.title}</CardTitle>
-                  <p className="mt-2 text-sm text-slate-500">
-                    {activeStageModel?.description || activeStageConfig.description}
-                  </p>
-                </div>
+	                <div>
+	                  <CardTitle>{activePanelTitle}</CardTitle>
+	                  <p className="mt-2 text-sm text-slate-500">{activePanelDescription}</p>
+	                </div>
                 {activeStage === "TRIAL" ? (
                   <div className="flex flex-wrap gap-2">
                     <Badge tone="success">审核通过 {subjectReviewCounts.approved}</Badge>
@@ -1012,9 +1541,13 @@ export function ClinicalDatasetPage() {
                       <Badge tone="danger">已驳回 {subjectReviewCounts.rejected}</Badge>
                     )}
                   </div>
-                ) : (
-                  <Badge tone="neutral">资料 {activeStageFiles.length}</Badge>
-                )}
+	                ) : (
+	                  <Badge tone="neutral">
+	                    {activeStage === "STARTUP" && startupView === "ssu"
+	                      ? `节点 ${dataset?.ssu_progress.length ?? 0}`
+	                      : `资料 ${activeStageFiles.length}`}
+	                  </Badge>
+	                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -1129,6 +1662,57 @@ export function ClinicalDatasetPage() {
                     </div>
                   )}
                 </>
+              ) : activeStage === "STARTUP" ? (
+                startupView === "ssu" ? (
+                  <section className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h2 className="text-base font-semibold text-slate-950">SSU进展</h2>
+                      <Badge tone="neutral">节点 {dataset?.ssu_progress.length ?? 0}</Badge>
+                    </div>
+                    <SsuProgressPanel
+                      records={dataset?.ssu_progress ?? []}
+                      startupFiles={dataset?.startup_files ?? []}
+                      canWrite={canWrite}
+                      onChanged={() => void loadDataset()}
+                    />
+                  </section>
+                ) : (
+                  <section className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h2 className="text-base font-semibold text-slate-950">资料准备</h2>
+                      <Badge tone="neutral">资料 {dataset?.startup_files.length ?? 0}</Badge>
+                    </div>
+                    <StageFileTable
+                      files={dataset?.startup_files ?? []}
+                      canReadFiles={canReadFiles}
+                      canWriteFiles={canWriteFiles}
+                      canDeleteFiles={canDeleteFiles}
+                      canUpdateApplicability={canWrite}
+                      canSubmitReview={canSubmitReview}
+                      canReview={canReview}
+                      canReadReviews={canReadReviews}
+                      onChanged={() => void loadDataset()}
+                    />
+                  </section>
+                )
+              ) : activeStage === "CLOSEOUT" ? (
+                <section className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-base font-semibold text-slate-950">试验结束阶段资料准备</h2>
+                    <Badge tone="neutral">资料 {dataset?.closeout_files.length ?? 0}</Badge>
+                  </div>
+                  <StageFileTable
+                    files={dataset?.closeout_files ?? []}
+                    canReadFiles={canReadFiles}
+                    canWriteFiles={canWriteFiles}
+                    canDeleteFiles={canDeleteFiles}
+                    canUpdateApplicability={canWrite}
+                    canSubmitReview={canSubmitReview}
+                    canReview={canReview}
+                    canReadReviews={canReadReviews}
+                    onChanged={() => void loadDataset()}
+                  />
+                </section>
               ) : (
                 <SecondaryStageFiles
                   groups={activeFileGroups}
@@ -1137,6 +1721,7 @@ export function ClinicalDatasetPage() {
                   canReadFiles={canReadFiles}
                   canWriteFiles={canWriteFiles}
                   canDeleteFiles={canDeleteFiles}
+                  canUpdateApplicability={canWrite}
                   canSubmitReview={canSubmitReview}
                   canReview={canReview}
                   canReadReviews={canReadReviews}

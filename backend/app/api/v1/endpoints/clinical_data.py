@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -31,10 +31,15 @@ from app.models import (
     SubjectItem,
     User,
 )
+from app.models import ClinicalSsuProgress
 from app.models.clinical_data import SubjectSection
 from app.schemas import (
     ClinicalDatasetRead,
     ClinicalPhaseRead,
+    ClinicalSsuProgressCreate,
+    ClinicalSsuProgressRead,
+    ClinicalSsuProgressUpdate,
+    StageFileApplicabilityUpdate,
     StageFileGroupRead,
     StageFileRead,
     SubjectCreate,
@@ -48,7 +53,11 @@ from app.schemas import (
     SubjectUpdate,
 )
 from app.services.audit import record_operation
-from app.services.clinical_status import recalculate_subject_status, required_item_status
+from app.services.clinical_status import (
+    recalculate_subject_status,
+    required_item_status,
+    stage_file_item_status,
+)
 from app.services.pdf_packets import remove_packet_physical_file
 from app.services.stage_config import (
     CENTER_FILE_SCOPE,
@@ -63,6 +72,22 @@ DBSession = Annotated[Session, Depends(get_db)]
 ClinicalRead = Annotated[AccessContext, Depends(require_permission("clinical_data:read"))]
 ClinicalWrite = Annotated[AccessContext, Depends(require_permission("clinical_data:write"))]
 ClinicalDelete = Annotated[AccessContext, Depends(require_permission("clinical_data:delete"))]
+SSU_STAGE_CODES = frozenset(
+    {
+        "SSU_PROJECT_APPROVAL",
+        "SSU_ETHICS",
+        "SSU_AGREEMENT_SIGNING",
+        "SSU_PROVINCIAL_FILING",
+        "SSU_STARTUP_MEETING",
+    }
+)
+SSU_STAGE_OPTIONS: tuple[tuple[str, int], ...] = (
+    ("SSU_PROJECT_APPROVAL", 1),
+    ("SSU_ETHICS", 2),
+    ("SSU_AGREEMENT_SIGNING", 3),
+    ("SSU_PROVINCIAL_FILING", 4),
+    ("SSU_STARTUP_MEETING", 5),
+)
 
 
 def get_or_404(db: Session, model: type[ModelT], item_id: int, label: str) -> ModelT:
@@ -108,6 +133,15 @@ def ensure_stage_belongs_to_project(db: Session, project_id: int, stage_id: int)
             detail="stage does not belong to project",
         )
     return stage
+
+
+def ensure_ssu_stage_code(stage_code: str) -> str:
+    if stage_code not in SSU_STAGE_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid SSU stage code",
+        )
+    return stage_code
 
 
 def ensure_dataset_scope(
@@ -207,21 +241,29 @@ def enrich_stage_files(db: Session, stage_files: list[StageFile]) -> None:
         if (user_id := getattr(item, "uploaded_by", None) or getattr(item, "reviewer_id", None))
         is not None
     }
+    user_ids.update(
+        stage_file.not_applicable_by
+        for stage_file in stage_files
+        if stage_file.not_applicable_by is not None
+    )
     names = user_display_names(db, user_ids)
     for stage_file in stage_files:
         upload = latest_uploads.get(stage_file.id)
         review = latest_reviews.get(stage_file.id)
         required = True if stage_file.stage_template is None else stage_file.stage_template.required
+        stage_file.required = required
         stage_file.uploaded_by = upload.uploaded_by if upload else None
         stage_file.uploaded_by_name = names.get(upload.uploaded_by) if upload else None
         stage_file.uploaded_at = upload.uploaded_at if upload else None
         stage_file.reviewer_id = review.reviewer_id if review else None
         stage_file.reviewer_name = names.get(review.reviewer_id) if review else None
         stage_file.reviewed_at = review.created_at if review else None
-        stage_file.completeness_status = required_item_status(
+        stage_file.not_applicable_by_name = names.get(stage_file.not_applicable_by)
+        stage_file.completeness_status = stage_file_item_status(
             stage_file.upload_status,
             stage_file.review_status,
             required,
+            stage_file.not_applicable,
         )
 
 
@@ -345,6 +387,70 @@ def materialize_stage_files(
     return stage_files
 
 
+def list_ssu_progress_records(
+    db: Session,
+    project_id: int,
+    center_id: int,
+) -> list[ClinicalSsuProgress]:
+    existing_stage_codes = set(
+        db.scalars(
+            select(ClinicalSsuProgress.stage_code).where(
+                ClinicalSsuProgress.project_id == project_id,
+                ClinicalSsuProgress.center_id == center_id,
+            )
+        )
+    )
+    created = False
+    for stage_code, _ in SSU_STAGE_OPTIONS:
+        if stage_code in existing_stage_codes:
+            continue
+        db.add(
+            ClinicalSsuProgress(
+                project_id=project_id,
+                center_id=center_id,
+                stage_code=stage_code,
+                status="not_started",
+            )
+        )
+        created = True
+    if created:
+        db.commit()
+    records = list(
+        db.scalars(
+            select(ClinicalSsuProgress)
+            .where(
+                ClinicalSsuProgress.project_id == project_id,
+                ClinicalSsuProgress.center_id == center_id,
+            )
+            .order_by(ClinicalSsuProgress.id)
+        )
+    )
+    return sorted(records, key=lambda record: (ssu_stage_order(record.stage_code), record.id))
+
+
+def ssu_stage_order(stage_code: str) -> int:
+    order = {
+        "SSU_PROJECT_APPROVAL": 1,
+        "SSU_ETHICS": 2,
+        "SSU_AGREEMENT_SIGNING": 3,
+        "SSU_PROVINCIAL_FILING": 4,
+        "SSU_STARTUP_MEETING": 5,
+    }
+    return order.get(stage_code, 99)
+
+
+def get_ssu_progress_or_404(
+    db: Session,
+    access: AccessContext,
+    progress_id: int,
+) -> ClinicalSsuProgress:
+    progress = db.get(ClinicalSsuProgress, progress_id)
+    if progress is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSU progress not found")
+    ensure_dataset_scope(db, access, progress.project_id, progress.center_id)
+    return progress
+
+
 def scoped_subject_statement(access: AccessContext):
     statement = select(Subject).order_by(Subject.project_id, Subject.center_id, Subject.id)
     if access.is_admin:
@@ -437,6 +543,7 @@ def get_clinical_dataset(
     )
     startup_groups = stage_file_groups(children_by_phase.get("STARTUP", []), startup_files)
     closeout_groups = stage_file_groups(children_by_phase.get("CLOSEOUT", []), closeout_files)
+    ssu_progress = list_ssu_progress_records(db, project_id, center_id)
     phase_reads = []
     for phase in phases:
         phase_files: list[StageFile] = []
@@ -464,6 +571,7 @@ def get_clinical_dataset(
         phases=phase_reads,
         startup_file_groups=startup_groups,
         startup_files=startup_files,
+        ssu_progress=ssu_progress,
         trial_stages=children_by_phase.get("TRIAL", []),
         trial_files=[],
         subjects=subjects,
@@ -485,6 +593,76 @@ def stage_file_groups(stages: list[Stage], files: list[StageFile]) -> list[Stage
     ]
 
 
+def stage_file_has_active_file(db: Session, stage_file_id: int) -> bool:
+    return (
+        db.scalar(
+            select(FileAsset.id)
+            .where(FileAsset.stage_file_id == stage_file_id, FileAsset.status == "active")
+            .limit(1)
+        )
+        is not None
+    )
+
+
+@router.get("/clinical-datasets/ssu-progress", response_model=list[ClinicalSsuProgressRead])
+def list_ssu_progress(
+    db: DBSession,
+    access: ClinicalRead,
+    project_id: Annotated[int, Query()],
+    center_id: Annotated[int, Query()],
+) -> list[ClinicalSsuProgress]:
+    ensure_dataset_scope(db, access, project_id, center_id)
+    return list_ssu_progress_records(db, project_id, center_id)
+
+
+@router.post(
+    "/clinical-datasets/ssu-progress",
+    response_model=ClinicalSsuProgressRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_ssu_progress(
+    payload: ClinicalSsuProgressCreate,
+    db: DBSession,
+    access: ClinicalWrite,
+) -> ClinicalSsuProgress:
+    ensure_dataset_scope(db, access, payload.project_id, payload.center_id)
+    ensure_ssu_stage_code(payload.stage_code)
+    progress = ClinicalSsuProgress(**payload.model_dump())
+    db.add(progress)
+    commit_or_conflict(db, "SSU progress already exists")
+    db.refresh(progress)
+    return progress
+
+
+@router.patch(
+    "/clinical-datasets/ssu-progress/{progress_id}",
+    response_model=ClinicalSsuProgressRead,
+)
+def update_ssu_progress(
+    progress_id: int,
+    payload: ClinicalSsuProgressUpdate,
+    db: DBSession,
+    access: ClinicalWrite,
+) -> ClinicalSsuProgress:
+    progress = get_ssu_progress_or_404(db, access, progress_id)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(progress, key, value)
+    commit_or_conflict(db, "SSU progress update failed")
+    db.refresh(progress)
+    return progress
+
+
+@router.delete("/clinical-datasets/ssu-progress/{progress_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_ssu_progress(
+    progress_id: int,
+    db: DBSession,
+    access: ClinicalWrite,
+) -> None:
+    progress = get_ssu_progress_or_404(db, access, progress_id)
+    db.delete(progress)
+    db.commit()
+
+
 @router.get("/stage-files", response_model=list[StageFileRead])
 def list_stage_files(
     db: DBSession,
@@ -497,6 +675,60 @@ def list_stage_files(
     if stage_id is not None:
         ensure_stage_belongs_to_project(db, project_id, stage_id)
     return materialize_stage_files(db, project_id, center_id, stage_id)
+
+
+@router.patch("/stage-files/{stage_file_id}/applicability", response_model=StageFileRead)
+def update_stage_file_applicability(
+    stage_file_id: int,
+    payload: StageFileApplicabilityUpdate,
+    db: DBSession,
+    access: ClinicalWrite,
+    request: Request,
+) -> StageFile:
+    stage_file = get_or_404(db, StageFile, stage_file_id, "stage file")
+    ensure_dataset_scope(db, access, stage_file.project_id, stage_file.center_id)
+    required = True if stage_file.stage_template is None else stage_file.stage_template.required
+    if required and payload.not_applicable:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="required stage file cannot be marked as not applicable",
+        )
+    if payload.not_applicable and stage_file_has_active_file(db, stage_file.id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="uploaded stage file cannot be marked as not applicable",
+        )
+
+    reason = payload.reason.strip() if payload.reason else None
+    if payload.not_applicable:
+        stage_file.not_applicable = True
+        stage_file.not_applicable_reason = reason
+        stage_file.not_applicable_by = access.user.id
+        stage_file.not_applicable_at = datetime.now(UTC)
+    else:
+        stage_file.not_applicable = False
+        stage_file.not_applicable_reason = None
+        stage_file.not_applicable_by = None
+        stage_file.not_applicable_at = None
+
+    record_operation(
+        db,
+        action="stage_file.applicability.update",
+        request=request,
+        access=access,
+        target_type="stage_file",
+        target_id=stage_file.id,
+        project_id=stage_file.project_id,
+        center_id=stage_file.center_id,
+        detail={
+            "not_applicable": payload.not_applicable,
+            "reason": reason,
+        },
+    )
+    commit_or_conflict(db, "stage file applicability update failed")
+    db.refresh(stage_file)
+    enrich_stage_files(db, [stage_file])
+    return stage_file
 
 
 @router.get("/subjects", response_model=list[SubjectRead])

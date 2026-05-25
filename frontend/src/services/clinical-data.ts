@@ -1,12 +1,15 @@
 import { http } from "@/services/http";
 import type {
   ClinicalDataset,
+  ClinicalSsuProgress,
+  ClinicalSsuProgressPayload,
   CompletenessSummary,
   ReviewActionPayload,
   ReviewBatchApprovePayload,
   ReviewBatchApproveResult,
   ReviewRecord,
   ReviewTargetType,
+  StageFileApplicabilityPayload,
   StageFile,
   Subject,
   SubjectItem,
@@ -45,6 +48,22 @@ export const clinicalDataApi = {
       center_id: centerId,
       stage_id: stageId,
     }),
+  updateStageFileApplicability: async (id: number, payload: StageFileApplicabilityPayload) => {
+    const response = await http.patch<StageFile>(`/stage-files/${id}/applicability`, payload);
+    return response.data;
+  },
+  listSsuProgress: (projectId: number, centerId: number) =>
+    read<ClinicalSsuProgress[]>("/clinical-datasets/ssu-progress", {
+      project_id: projectId,
+      center_id: centerId,
+    }),
+  updateSsuProgress: async (id: number, payload: ClinicalSsuProgressPayload) => {
+    const response = await http.patch<ClinicalSsuProgress>(
+      `/clinical-datasets/ssu-progress/${id}`,
+      payload,
+    );
+    return response.data;
+  },
   listSubjects: (projectId?: number, centerId?: number) =>
     read<Subject[]>("/subjects", { project_id: projectId, center_id: centerId }),
   createSubject: (payload: SubjectPayload) => create<Subject, SubjectPayload>("/subjects", payload),

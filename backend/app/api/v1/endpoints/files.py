@@ -246,6 +246,10 @@ def mark_binding_file_changed(
     if isinstance(stage_file, StageFile):
         stage_file.upload_status = upload_status
         stage_file.review_status = DEFAULT_REVIEW_STATUS
+        stage_file.not_applicable = False
+        stage_file.not_applicable_reason = None
+        stage_file.not_applicable_by = None
+        stage_file.not_applicable_at = None
         return
 
     subject_item = binding["subject_item"]

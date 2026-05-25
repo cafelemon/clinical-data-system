@@ -232,7 +232,7 @@ def test_import_templates_and_four_import_upserts(
         headers=admin_headers,
     )
     assert templates.status_code == 200
-    assert templates.json()[0]["item_code"] == "ETHICS"
+    assert "ETHICS" in {template["item_code"] for template in templates.json()}
 
     subject_result = upload_xlsx(
         client,

@@ -147,7 +147,10 @@ def create_subject(
 def test_clinical_dataset_flow_materializes_files_and_subject_items(
     client: TestClient,
     admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path,
 ) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
     assert client.get("/api/subjects").status_code == 401
 
     project_id = create_project(client, admin_headers, "P3 项目", "P3_PROJECT")
@@ -177,13 +180,85 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
         headers=admin_headers,
     )
     assert first_stage_files.status_code == 200
-    assert [item["file_name"] for item in first_stage_files.json()] == ["伦理批件"]
+    assert len(first_stage_files.json()) == 27
+    assert "伦理批件" in [item["file_name"] for item in first_stage_files.json()]
+    optional_startup_file = next(
+        item
+        for item in first_stage_files.json()
+        if item["file_type"] == "STARTUP_005_RECRUITMENT_DOCUMENTS"
+    )
+    assert optional_startup_file["required"] is False
+    assert optional_startup_file["not_applicable"] is False
+    assert optional_startup_file["completeness_status"] == "incomplete"
+
+    required_startup_file = next(
+        item for item in first_stage_files.json() if item["file_name"] == "伦理批件"
+    )
+    required_applicability = client.patch(
+        f"/api/stage-files/{required_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": True, "reason": "不适用"},
+    )
+    assert required_applicability.status_code == 400
+
+    mark_not_applicable = client.patch(
+        f"/api/stage-files/{optional_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": True, "reason": "本中心未招募宣传"},
+    )
+    assert mark_not_applicable.status_code == 200
+    assert mark_not_applicable.json()["not_applicable"] is True
+    assert mark_not_applicable.json()["not_applicable_reason"] == "本中心未招募宣传"
+    assert mark_not_applicable.json()["not_applicable_by_name"]
+    assert mark_not_applicable.json()["completeness_status"] == "complete"
+
+    clear_not_applicable = client.patch(
+        f"/api/stage-files/{optional_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": False},
+    )
+    assert clear_not_applicable.status_code == 200
+    assert clear_not_applicable.json()["not_applicable"] is False
+    assert clear_not_applicable.json()["not_applicable_reason"] is None
+    assert clear_not_applicable.json()["completeness_status"] == "incomplete"
+
+    client.patch(
+        f"/api/stage-files/{optional_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": True, "reason": "上传后应自动清除"},
+    )
+    optional_upload = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={"file_category": "clinical_document", "stage_file_id": str(optional_startup_file["id"])},
+        files={"file": ("optional.pdf", b"%PDF-optional", "application/pdf")},
+    )
+    assert optional_upload.status_code == 201
+    uploaded_optional = client.get(
+        f"/api/stage-files?project_id={project_id}&center_id={center_id}&stage_id={startup_stage_id}",
+        headers=admin_headers,
+    )
+    uploaded_optional_file = next(
+        item
+        for item in uploaded_optional.json()
+        if item["file_type"] == "STARTUP_005_RECRUITMENT_DOCUMENTS"
+    )
+    assert uploaded_optional_file["not_applicable"] is False
+    assert uploaded_optional_file["not_applicable_reason"] is None
+    assert uploaded_optional_file["completeness_status"] == "checking"
+    uploaded_optional_applicability = client.patch(
+        f"/api/stage-files/{optional_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": True, "reason": "已有文件"},
+    )
+    assert uploaded_optional_applicability.status_code == 400
 
     second_stage_files = client.get(
         f"/api/stage-files?project_id={project_id}&center_id={center_id}&stage_id={startup_stage_id}",
         headers=admin_headers,
     )
     assert second_stage_files.status_code == 200
+    assert len(second_stage_files.json()) == 27
     assert [item["id"] for item in second_stage_files.json()] == [
         item["id"] for item in first_stage_files.json()
     ]
@@ -254,7 +329,8 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
         headers=admin_headers,
     )
     assert dataset.status_code == 200
-    assert dataset.json()["stage_file_count"] == 2
+    assert dataset.json()["stage_file_count"] == 38
+    assert len(dataset.json()["ssu_progress"]) == 5
     assert dataset.json()["subject_count"] == 1
     dataset_subject = dataset.json()["subjects"][0]
     assert dataset_subject["subject_arm"] is None
@@ -294,6 +370,25 @@ def test_clinical_data_scope_and_write_permission(
     subjects = client.get("/api/subjects", headers=readonly_headers)
     assert subjects.status_code == 200
     assert [subject["id"] for subject in subjects.json()] == [subject_a["id"]]
+
+    dataset_a = client.get(
+        f"/api/clinical-datasets?project_id={project_a_id}&center_id={center_a_id}",
+        headers=admin_headers,
+    )
+    assert dataset_a.status_code == 200
+    ssu_id = dataset_a.json()["ssu_progress"][0]["id"]
+    readonly_ssu = client.get(
+        f"/api/clinical-datasets/ssu-progress?project_id={project_a_id}&center_id={center_a_id}",
+        headers=readonly_headers,
+    )
+    assert readonly_ssu.status_code == 200
+    assert len(readonly_ssu.json()) == 5
+    denied_ssu_write = client.patch(
+        f"/api/clinical-datasets/ssu-progress/{ssu_id}",
+        headers=readonly_headers,
+        json={"status": "completed"},
+    )
+    assert denied_ssu_write.status_code == 403
 
     denied_detail = client.get(f"/api/subjects/{subject_b['id']}", headers=readonly_headers)
     assert denied_detail.status_code == 403
