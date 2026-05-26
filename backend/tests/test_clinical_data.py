@@ -135,7 +135,6 @@ def create_subject(
             "visit2_date": "2026-05-06",
             "visit3_date": "2026-05-07",
             "visit4_date": "2026-05-08",
-            "visit5_date": "2026-05-09",
             "review_status": "unreviewed",
             "data_status": "incomplete",
         },
@@ -266,7 +265,7 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
     subject = create_subject(client, admin_headers, project_id, center_id, "P3-S001")
     assert subject["subject_arm"] == "experimental"
     assert subject["informed_at"].startswith("2026-05-04T09:30")
-    assert subject["visit5_date"] == "2026-05-09"
+    assert subject["visit4_date"] == "2026-05-08"
     update_subject = client.put(
         f"/api/subjects/{subject['id']}",
         headers=admin_headers,
@@ -303,17 +302,16 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
     sections = client.get(f"/api/subjects/{subject['id']}/sections", headers=admin_headers)
     assert sections.status_code == 200
     assert [section["name"] for section in sections.json()] == [
-        "筛选阶段",
-        "入组与检查准备阶段",
-        "检查执行阶段",
-        "检查后早期随访阶段",
-        "异常或延迟随访阶段",
-        "试验完成阶段",
+        "V1筛选访视阶段",
+        "V2试验组随访访视",
+        "V3对照组随访访视（若有）",
+        "V4非预期访视（若有）",
     ]
 
     items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers)
     assert items.status_code == 200
-    assert len(items.json()) == 19
+    assert len(items.json()) == 22
+    assert "V3_CONTROL_REPORT" in {item["item_code"] for item in items.json()}
 
     item_id = items.json()[0]["id"]
     update_item = client.put(
@@ -329,8 +327,10 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
         headers=admin_headers,
     )
     assert dataset.status_code == 200
-    assert dataset.json()["stage_file_count"] == 38
+    assert dataset.json()["stage_file_count"] == 57
     assert len(dataset.json()["ssu_progress"]) == 5
+    assert len(dataset.json()["trial_file_groups"]) == 1
+    assert len(dataset.json()["trial_files"]) == 19
     assert dataset.json()["subject_count"] == 1
     dataset_subject = dataset.json()["subjects"][0]
     assert dataset_subject["subject_arm"] is None

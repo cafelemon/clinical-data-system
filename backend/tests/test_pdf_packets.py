@@ -137,7 +137,7 @@ def first_trial_stage_id(client: TestClient, headers: dict[str, str], project_id
         headers=headers,
     )
     assert response.status_code == 200
-    return response.json()[0]["id"]
+    return next(stage["id"] for stage in response.json() if stage["code"] == "V1_SCREENING_VISIT")
 
 
 def create_subject_template(
@@ -365,14 +365,13 @@ def test_pdf_packet_uses_ocr_text_when_pdf_has_no_text_layer(
     monkeypatch.setattr("app.services.pdf_packets.extract_text_with_pdftotext", lambda *_: ["", ""])
     monkeypatch.setattr(
         "app.services.pdf_packets.extract_text_with_ocr_api",
-        lambda *_: ["知情同意书", "CT报告"],
+        lambda *_: ["知情同意书", "CT检查报告"],
     )
     project_id = create_project(client, admin_headers)
     center_id = create_center(client, admin_headers, project_id)
     subject = create_subject(client, admin_headers, project_id, center_id)
     items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers).json()
-    consent_item = next(item for item in items if item["item_code"] == "知情同意书")
-    ct_item = next(item for item in items if item["item_code"] == "CT报告")
+    consent_item = next(item for item in items if item["item_code"] == "V1_INFORMED_CONSENT")
 
     upload = client.post(
         "/api/pdf-packets/upload",
@@ -392,7 +391,8 @@ def test_pdf_packet_uses_ocr_text_when_pdf_has_no_text_layer(
     )
     assert segments.status_code == 200
     suggested_ids = {segment["suggested_subject_item_id"] for segment in segments.json()}
-    assert {consent_item["id"], ct_item["id"]}.issubset(suggested_ids)
+    assert consent_item["id"] in suggested_ids
+    assert {segment["detected_name"] for segment in segments.json()} == {"知情同意书", "CT报告"}
 
 
 def test_pdf_packet_splits_010005_full_27_pages_by_v3_p0_baseline(
@@ -441,18 +441,18 @@ def test_pdf_packet_splits_010005_full_27_pages_by_v3_p0_baseline(
         for segment in segments
     ]
     assert actual_ranges == [
-        (1, 1, "知情同意书"),
+        (1, 1, "V1_INFORMED_CONSENT"),
         (2, 2, "知情同意书交接表"),
         (3, 3, "CT报告"),
-        (4, 12, "HIS记录"),
-        (13, 15, "入组审核记录表"),
+        (4, 12, "V4_HIS_RECORD"),
+        (13, 15, "V1_ENROLLMENT_REVIEW"),
         (16, 16, "生命体征记录表"),
         (17, 17, "舒适度评价表"),
         (18, 21, "图像质量评价表"),
         (22, 23, "其他次要指标评价表"),
         (24, 24, "其他次要指标评价表"),
         (25, 26, "中心阅片评价结果表"),
-        (27, 27, "胶囊内镜报告"),
+        (27, 27, "V2_CAPSULE_ENDOSCOPY_REPORT"),
     ]
 
     by_page = {
@@ -463,13 +463,13 @@ def test_pdf_packet_splits_010005_full_27_pages_by_v3_p0_baseline(
     for boundary_page in (1, 2, 3, 4, 13, 16, 17, 18, 22, 24, 25, 27):
         assert boundary_page in by_page
     assert {by_page[page] for page in range(1, 13)} == {
-        "知情同意书",
+        "V1_INFORMED_CONSENT",
         "知情同意书交接表",
         "CT报告",
-        "HIS记录",
+        "V4_HIS_RECORD",
     }
-    assert {by_page[page] for page in range(13, 16)} == {"入组审核记录表"}
-    assert all(by_page[page] != "知情同意书" for page in range(13, 16))
+    assert {by_page[page] for page in range(13, 16)} == {"V1_ENROLLMENT_REVIEW"}
+    assert all(by_page[page] != "V1_INFORMED_CONSENT" for page in range(13, 16))
     assert all(by_page[page] != "肠道准备情况" for page in range(20, 24))
     assert all(by_page[page] != "肠道准备情况" for page in range(25, 27))
 
@@ -507,8 +507,8 @@ def test_pdf_packet_manual_split_merge_confirm_and_reanalyze_locking(
     center_id = create_center(client, admin_headers, project_id)
     subject = create_subject(client, admin_headers, project_id, center_id)
     items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers).json()
-    consent_item = next(item for item in items if item["item_code"] == "知情同意书")
-    his_item = next(item for item in items if item["item_code"] == "HIS记录")
+    consent_item = next(item for item in items if item["item_code"] == "V1_INFORMED_CONSENT")
+    his_item = next(item for item in items if item["item_code"] == "V1_HIS_DESCRIPTION")
 
     upload = client.post(
         "/api/pdf-packets/upload",
@@ -667,7 +667,7 @@ def test_generate_stage_template_keywords_from_subject_files(
     center_id = create_center(client, admin_headers, project_id)
     subject = create_subject(client, admin_headers, project_id, center_id)
     items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers).json()
-    consent_item = next(item for item in items if item["item_code"] == "知情同意书")
+    consent_item = next(item for item in items if item["item_code"] == "V1_INFORMED_CONSENT")
     upload = client.post(
         "/api/files/upload",
         headers=admin_headers,
@@ -700,7 +700,7 @@ def test_generate_stage_template_keywords_from_subject_files(
     )
     assert templates.status_code == 200
     consent_template = next(
-        template for template in templates.json() if template["item_code"] == "知情同意书"
+        template for template in templates.json() if template["item_code"] == "V1_INFORMED_CONSENT"
     )
     assert "知情同意书" in consent_template["recognition_keywords"]
     assert "受试者知情同意声明" in consent_template["recognition_keywords"]

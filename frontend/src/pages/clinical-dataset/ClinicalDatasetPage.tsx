@@ -156,8 +156,8 @@ const stageConfigs = [
   {
     code: "TRIAL",
     label: "试验进行阶段",
-    title: "试验进行阶段 - 受试者列表",
-    description: "跟踪受试者资料完整性",
+    title: "试验实施访视阶段受试者列表",
+    description: "跟踪受试者访视资料完整性",
   },
   {
     code: "CLOSEOUT",
@@ -169,6 +169,7 @@ const stageConfigs = [
 
 type StageCode = (typeof stageConfigs)[number]["code"];
 type StartupView = "ssu" | "materials";
+type TrialView = "visits" | "materials";
 
 function normalizeStageCode(value: string | null): StageCode {
   return stageConfigs.some((stage) => stage.code === value) ? (value as StageCode) : "STARTUP";
@@ -178,17 +179,23 @@ function normalizeStartupView(value: string | null): StartupView {
   return value === "materials" ? "materials" : "ssu";
 }
 
+function normalizeTrialView(value: string | null): TrialView {
+  return value === "materials" ? "materials" : "visits";
+}
+
 function buildDatasetSearchParams(
   projectId?: number,
   centerId?: number,
   stage: StageCode = "STARTUP",
   startupView: StartupView = "ssu",
+  trialView: TrialView = "visits",
 ) {
   const params = new URLSearchParams();
   if (projectId) params.set("project_id", String(projectId));
   if (centerId) params.set("center_id", String(centerId));
   params.set("stage", stage);
   if (stage === "STARTUP") params.set("view", startupView);
+  if (stage === "TRIAL") params.set("view", trialView);
   if (stage === "CLOSEOUT") params.set("view", "materials");
   return params;
 }
@@ -510,7 +517,7 @@ function SubjectTable({
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1380px] text-left text-sm">
+      <table className="w-full min-w-[1280px] text-left text-sm">
         <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
           <tr>
             <th className="px-3 py-2 font-medium">筛选号</th>
@@ -522,7 +529,6 @@ function SubjectTable({
             <th className="px-3 py-2 font-medium">访视2日期</th>
             <th className="px-3 py-2 font-medium">访视3日期</th>
             <th className="px-3 py-2 font-medium">访视4日期</th>
-            <th className="px-3 py-2 font-medium">访视5日期</th>
             <th className="px-3 py-2 font-medium">资料状态</th>
             <th className="px-3 py-2 font-medium">审核状态</th>
             <th className="px-3 py-2 font-medium">操作</th>
@@ -542,7 +548,6 @@ function SubjectTable({
               <td className="px-3 py-3 text-slate-600">{subject.visit2_date || "-"}</td>
               <td className="px-3 py-3 text-slate-600">{subject.visit3_date || "-"}</td>
               <td className="px-3 py-3 text-slate-600">{subject.visit4_date || "-"}</td>
-              <td className="px-3 py-3 text-slate-600">{subject.visit5_date || "-"}</td>
               <td className="px-3 py-3">
                 <Badge tone={statusTone(subject.data_status)}>
                   {statusLabel(dataStatusLabels, subject.data_status)}
@@ -661,13 +666,14 @@ function CompletenessOverview({
 function stageFilesForCode(dataset: ClinicalDataset | null, code: StageCode) {
   if (!dataset) return [];
   if (code === "STARTUP") return dataset.startup_files;
-  if (code === "TRIAL") return [];
+  if (code === "TRIAL") return dataset.trial_files;
   return dataset.closeout_files;
 }
 
 function stageFileGroupsForCode(dataset: ClinicalDataset | null, code: StageCode) {
   if (!dataset) return [];
   if (code === "STARTUP") return dataset.startup_file_groups;
+  if (code === "TRIAL") return dataset.trial_file_groups;
   if (code === "CLOSEOUT") return dataset.closeout_file_groups;
   return [];
 }
@@ -970,17 +976,21 @@ function SsuProgressPanel({
 function StageNavigation({
   activeStage,
   startupView,
+  trialView,
   stages,
   dataset,
   onChange,
   onStartupViewChange,
+  onTrialViewChange,
 }: {
   activeStage: StageCode;
   startupView: StartupView;
+  trialView: TrialView;
   stages: Stage[];
   dataset: ClinicalDataset | null;
   onChange: (stage: StageCode) => void;
   onStartupViewChange: (view: StartupView) => void;
+  onTrialViewChange: (view: TrialView) => void;
 }) {
   const stageByCode = new Map(stages.map((stage) => [stage.code, stage]));
 
@@ -1048,6 +1058,30 @@ function StageNavigation({
                 })}
               </div>
             )}
+            {config.code === "TRIAL" && isActive && (
+              <div className="ml-7 space-y-1 border-l border-slate-200 pl-3">
+                {[
+                  { value: "visits" as const, label: "试验实施访视", count: dataset?.subject_count ?? 0 },
+                  { value: "materials" as const, label: "资料准备", count: dataset?.trial_files.length ?? 0 },
+                ].map((item) => {
+                  const isViewActive = trialView === item.value;
+                  return (
+                    <button
+                      key={item.value}
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-900",
+                        isViewActive && "bg-emerald-50 font-medium text-emerald-800",
+                      )}
+                      onClick={() => onTrialViewChange(item.value)}
+                    >
+                      <span>{item.label}</span>
+                      <Badge tone={isViewActive ? "success" : "neutral"}>{item.count}</Badge>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {config.code === "CLOSEOUT" && isActive && (
               <div className="ml-7 space-y-1 border-l border-slate-200 pl-3">
                 <button
@@ -1079,7 +1113,7 @@ export function ClinicalDatasetPage() {
     [searchParams],
   );
   const requestedStage = searchParams.get("stage");
-  const requestedStartupView = searchParams.get("view");
+  const requestedView = searchParams.get("view");
   const [projects, setProjects] = useState<Project[]>([]);
   const [centers, setCenters] = useState<Center[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
@@ -1087,8 +1121,9 @@ export function ClinicalDatasetPage() {
   const [centerId, setCenterId] = useState<number | undefined>();
   const [activeStage, setActiveStage] = useState<StageCode>(normalizeStageCode(requestedStage));
   const [startupView, setStartupView] = useState<StartupView>(
-    normalizeStartupView(requestedStartupView),
+    normalizeStartupView(requestedView),
   );
+  const [trialView, setTrialView] = useState<TrialView>(normalizeTrialView(requestedView));
   const [activeSubStageId, setActiveSubStageId] = useState<number | null>(null);
   const [dataset, setDataset] = useState<ClinicalDataset | null>(null);
   const [completeness, setCompleteness] = useState<CompletenessSummary | null>(null);
@@ -1134,12 +1169,20 @@ export function ClinicalDatasetPage() {
       ? startupView === "ssu"
         ? "试验准备阶段 - SSU进展"
         : "试验准备阶段 - 资料准备"
+      : activeStage === "TRIAL"
+        ? trialView === "materials"
+          ? "试验进行阶段 - 资料准备"
+          : "试验实施访视阶段受试者列表"
       : activeStageConfig.title;
   const activePanelDescription =
     activeStage === "STARTUP"
       ? startupView === "ssu"
         ? "维护立项、伦理、协议签署、省局备案和启动会进展"
         : "维护试验准备阶段中心级资料清单"
+      : activeStage === "TRIAL"
+        ? trialView === "materials"
+          ? "维护临床试验进行阶段第 27-45 项中心级资料清单"
+          : "按 V1-V4 固定访视跟踪受试者资料完整性"
       : activeStageModel?.description || activeStageConfig.description;
   const activeStageFiles = stageFilesForCode(dataset, activeStage);
   const activeFileGroups = useMemo(
@@ -1191,12 +1234,15 @@ export function ClinicalDatasetPage() {
     const nextStage = normalizeStageCode(requestedStage);
     setActiveStage(nextStage);
     if (nextStage === "STARTUP") {
-      setStartupView(normalizeStartupView(requestedStartupView));
+      setStartupView(normalizeStartupView(requestedView));
     }
-  }, [requestedStage, requestedStartupView]);
+    if (nextStage === "TRIAL") {
+      setTrialView(normalizeTrialView(requestedView));
+    }
+  }, [requestedStage, requestedView]);
 
   useEffect(() => {
-    if (activeStage === "TRIAL") {
+    if (activeStage === "TRIAL" && trialView === "visits") {
       setActiveSubStageId(null);
       return;
     }
@@ -1207,7 +1253,7 @@ export function ClinicalDatasetPage() {
     if (!activeFileGroups.some((group) => group.stage.id === activeSubStageId)) {
       setActiveSubStageId(activeFileGroups[0].stage.id);
     }
-  }, [activeFileGroups, activeStage, activeSubStageId]);
+  }, [activeFileGroups, activeStage, activeSubStageId, trialView]);
 
   useEffect(() => {
     if (!canReadClinicalData) return;
@@ -1269,23 +1315,30 @@ export function ClinicalDatasetPage() {
           ? requestedCenterId
           : centerData[0]?.id;
       setCenterId((current) => (current === nextCenterId ? current : nextCenterId));
-      const nextParams = buildDatasetSearchParams(projectId, nextCenterId, activeStage, startupView);
+      const nextParams = buildDatasetSearchParams(
+        projectId,
+        nextCenterId,
+        activeStage,
+        startupView,
+        trialView,
+      );
       if (nextParams.toString() !== currentQuery) {
         setSearchParams(nextParams, { replace: true });
       }
     }
     void loadScope();
   }, [
-	    activeStage,
-	    canReadClinicalData,
-	    currentQuery,
+    activeStage,
+    canReadClinicalData,
+    currentQuery,
     projectId,
     projects,
     requestedCenterId,
-	    requestedProjectId,
-	    setSearchParams,
-	    startupView,
-	  ]);
+    requestedProjectId,
+    setSearchParams,
+    startupView,
+    trialView,
+  ]);
 
   useEffect(() => {
     void loadDataset();
@@ -1297,7 +1350,13 @@ export function ClinicalDatasetPage() {
     setCenterId(undefined);
     setDataset(null);
     resetForm();
-    const nextParams = buildDatasetSearchParams(nextProjectId, undefined, activeStage, startupView);
+    const nextParams = buildDatasetSearchParams(
+      nextProjectId,
+      undefined,
+      activeStage,
+      startupView,
+      trialView,
+    );
     if (nextParams.toString() !== currentQuery) {
       setSearchParams(nextParams, { replace: true });
     }
@@ -1307,7 +1366,13 @@ export function ClinicalDatasetPage() {
     const nextCenterId = Number(value) || undefined;
     setCenterId(nextCenterId);
     setDataset(null);
-    const nextParams = buildDatasetSearchParams(projectId, nextCenterId, activeStage, startupView);
+    const nextParams = buildDatasetSearchParams(
+      projectId,
+      nextCenterId,
+      activeStage,
+      startupView,
+      trialView,
+    );
     if (nextParams.toString() !== currentQuery) {
       setSearchParams(nextParams, { replace: true });
     }
@@ -1316,10 +1381,20 @@ export function ClinicalDatasetPage() {
   function handleStageChange(stage: StageCode) {
     setActiveStage(stage);
     const nextStartupView = stage === "STARTUP" ? "ssu" : startupView;
+    const nextTrialView = stage === "TRIAL" ? "visits" : trialView;
     if (stage === "STARTUP") {
       setStartupView(nextStartupView);
     }
-    const nextParams = buildDatasetSearchParams(projectId, centerId, stage, nextStartupView);
+    if (stage === "TRIAL") {
+      setTrialView(nextTrialView);
+    }
+    const nextParams = buildDatasetSearchParams(
+      projectId,
+      centerId,
+      stage,
+      nextStartupView,
+      nextTrialView,
+    );
     if (nextParams.toString() !== currentQuery) {
       setSearchParams(nextParams, { replace: true });
     }
@@ -1329,6 +1404,15 @@ export function ClinicalDatasetPage() {
     setActiveStage("STARTUP");
     setStartupView(view);
     const nextParams = buildDatasetSearchParams(projectId, centerId, "STARTUP", view);
+    if (nextParams.toString() !== currentQuery) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }
+
+  function handleTrialViewChange(view: TrialView) {
+    setActiveStage("TRIAL");
+    setTrialView(view);
+    const nextParams = buildDatasetSearchParams(projectId, centerId, "TRIAL", startupView, view);
     if (nextParams.toString() !== currentQuery) {
       setSearchParams(nextParams, { replace: true });
     }
@@ -1489,10 +1573,12 @@ export function ClinicalDatasetPage() {
               <StageNavigation
                 activeStage={activeStage}
                 startupView={startupView}
+                trialView={trialView}
                 stages={displayStages}
                 dataset={dataset}
                 onChange={handleStageChange}
                 onStartupViewChange={handleStartupViewChange}
+                onTrialViewChange={handleTrialViewChange}
               />
             </CardContent>
           </Card>
@@ -1532,7 +1618,7 @@ export function ClinicalDatasetPage() {
 	                  <CardTitle>{activePanelTitle}</CardTitle>
 	                  <p className="mt-2 text-sm text-slate-500">{activePanelDescription}</p>
 	                </div>
-                {activeStage === "TRIAL" ? (
+                {activeStage === "TRIAL" && trialView === "visits" ? (
                   <div className="flex flex-wrap gap-2">
                     <Badge tone="success">审核通过 {subjectReviewCounts.approved}</Badge>
                     <Badge tone="warning">待审核 {subjectReviewCounts.pending}</Badge>
@@ -1559,7 +1645,7 @@ export function ClinicalDatasetPage() {
                 <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                   当前项目未配置{activeStageConfig.label}
                 </div>
-              ) : activeStage === "TRIAL" ? (
+              ) : activeStage === "TRIAL" && trialView === "visits" ? (
                 <>
                   <SubjectTable
                     subjects={dataset?.subjects ?? []}
@@ -1662,6 +1748,26 @@ export function ClinicalDatasetPage() {
                     </div>
                   )}
                 </>
+              ) : activeStage === "TRIAL" && trialView === "materials" ? (
+                <section className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-base font-semibold text-slate-950">试验进行阶段资料准备</h2>
+                    <Badge tone="neutral">资料 {dataset?.trial_files.length ?? 0}</Badge>
+                  </div>
+                  <SecondaryStageFiles
+                    groups={dataset?.trial_file_groups ?? []}
+                    activeGroupId={activeSubStageId}
+                    onGroupChange={setActiveSubStageId}
+                    canReadFiles={canReadFiles}
+                    canWriteFiles={canWriteFiles}
+                    canDeleteFiles={canDeleteFiles}
+                    canUpdateApplicability={canWrite}
+                    canSubmitReview={canSubmitReview}
+                    canReview={canReview}
+                    canReadReviews={canReadReviews}
+                    onChanged={() => void loadDataset()}
+                  />
+                </section>
               ) : activeStage === "STARTUP" ? (
                 startupView === "ssu" ? (
                   <section className="space-y-3">

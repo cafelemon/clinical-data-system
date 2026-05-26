@@ -195,6 +195,7 @@ export type ClinicalDataset = {
   startup_files: StageFile[];
   ssu_progress: ClinicalSsuProgress[];
   trial_stages: Stage[];
+  trial_file_groups: StageFileGroup[];
   trial_files: StageFile[];
   subjects: Subject[];
   closeout_file_groups: StageFileGroup[];

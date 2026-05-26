@@ -43,7 +43,7 @@ class DefaultCenterTemplateSpec:
 
 PARENT_STAGE_SPECS: tuple[ParentStageSpec, ...] = (
     ParentStageSpec("STARTUP", "试验准备阶段", 1, "试验准备资料、SSU进展和启动会相关资料。"),
-    ParentStageSpec("TRIAL", "试验进行阶段", 2, "按受试者组织试验执行过程资料。"),
+    ParentStageSpec("TRIAL", "试验进行阶段", 2, "试验进行资料准备和受试者试验实施访视资料。"),
     ParentStageSpec("CLOSEOUT", "试验结束阶段", 3, "试验完成、终止后资料准备和归档资料。"),
 )
 
@@ -54,47 +54,34 @@ STAGE_OPTION_SPECS: tuple[StageOptionSpec, ...] = (
     StageOptionSpec("STARTUP", "SSU_AGREEMENT_SIGNING", "协议签署", 4),
     StageOptionSpec("STARTUP", "SSU_PROVINCIAL_FILING", "省局备案", 5),
     StageOptionSpec("STARTUP", "SSU_STARTUP_MEETING", "启动会", 6),
+    StageOptionSpec("TRIAL", "TRIAL_MATERIALS", "资料准备", 1),
     StageOptionSpec(
         "TRIAL",
-        "SCREENING",
-        "筛选阶段",
-        1,
-        "完成知情同意、筛选评估和纳排标准确认。",
-    ),
-    StageOptionSpec(
-        "TRIAL",
-        "ENROLLMENT_PREP",
-        "入组与检查准备阶段",
+        "V1_SCREENING_VISIT",
+        "V1筛选访视阶段",
         2,
-        "完成入组登记、基线信息和检查准备确认。",
+        "完成知情同意、筛选评估和入组前资料收集。",
     ),
     StageOptionSpec(
         "TRIAL",
-        "EXAM_EXECUTION",
-        "检查执行阶段",
+        "V2_EXPERIMENTAL_FOLLOWUP_VISIT",
+        "V2试验组随访访视",
         3,
-        "记录检查执行、原始检查资料和检查结论摘要。",
+        "完成试验组随访访视资料收集。",
     ),
     StageOptionSpec(
         "TRIAL",
-        "EARLY_FOLLOWUP",
-        "检查后早期随访阶段",
+        "V3_CONTROL_FOLLOWUP_VISIT",
+        "V3对照组随访访视（若有）",
         4,
-        "完成检查后早期随访和不良事件确认。",
+        "完成对照组随访访视资料收集。",
     ),
     StageOptionSpec(
         "TRIAL",
-        "DELAYED_FOLLOWUP",
-        "异常或延迟随访阶段",
+        "V4_UNSCHEDULED_VISIT",
+        "V4非预期访视（若有）",
         5,
-        "记录异常处理和延迟随访情况。",
-    ),
-    StageOptionSpec(
-        "TRIAL",
-        "COMPLETION",
-        "试验完成阶段",
-        6,
-        "完成受试者完成/退出记录和资料完整性确认。",
+        "按需记录非预期访视资料。",
     ),
     StageOptionSpec("CLOSEOUT", "CLOSEOUT_MATERIALS", "资料准备", 1),
 )
@@ -141,7 +128,32 @@ CLOSEOUT_MATERIAL_TEMPLATES: tuple[DefaultCenterTemplateSpec, ...] = (
     DefaultCenterTemplateSpec("CLOSEOUT", "CLOSEOUT_MATERIALS", "CLOSEOUT_055_CLINICAL_TRIAL_REPORT", "临床试验报告", 55),
 )
 
-DEFAULT_CENTER_FILE_TEMPLATES = STARTUP_MATERIAL_TEMPLATES + CLOSEOUT_MATERIAL_TEMPLATES
+TRIAL_MATERIAL_TEMPLATES: tuple[DefaultCenterTemplateSpec, ...] = (
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_027_INVESTIGATOR_BROCHURE_UPDATE", "研究者手册更新件（若有）", 27, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_028_PROTOCOL_UPDATE", "临床试验方案更新件（若有）", 28, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_029_OTHER_DOCUMENT_UPDATES", "其他文件（病例报告表、知情同意书、书面情况通知）的更新（若有）", 29, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_030_PRODUCT_TEST_REPORT_UPDATE", "试验医疗器械产品检验报告的更新（若有）", 30, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_031_ETHICS_UPDATE_OPINION", "伦理委员会对更新文件的书面审查意见（若有）", 31, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_032_INVESTIGATOR_QUALIFICATION_UPDATE", "研究者简历以及资格证明文件的更新（若有）", 32, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_033_LAB_NORMAL_RANGE_UPDATE", "临床试验有关的实验室检测正常值范围更新（若有）", 33, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_034_LAB_QC_CERTIFICATE_UPDATE", "医学或者实验室室间质控证明更新（若有）", 34, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_035_DEVICE_HANDOVER", "试验医疗器械与试验相关物资的交接单（若有）", 35, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_036_SIGNED_INFORMED_CONSENT", "已签名的知情同意书（若有）", 36, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_037_SOURCE_MEDICAL_DOCUMENTS", "原始医疗文件（若有）", 37, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_038_SIGNED_CRF", "已填并签字的病例报告表", 38),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_039_INVESTIGATOR_SAE_REPORT", "研究者对严重不良事件的报告（若有）", 39, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_040_SPONSOR_DEVICE_RELATED_SAE_REPORT", "申办者对试验医疗器械相关严重不良事件的报告（若有）", 40, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_041_OTHER_SAFETY_RISK_REPORT", "其他严重安全性风险信息的报告（若有）", 41, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_042_SUBJECT_IDENTIFICATION_CODE_LIST", "受试者鉴认代码表", 42),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_043_SUBJECT_SCREENING_AND_ENROLLMENT_TABLE", "受试者筛选表与入选表", 43),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_044_SIGNATURE_AUTHORIZATION_UPDATE", "研究者签名样张以及研究者授权表更新文件（若有）", 44, False),
+    DefaultCenterTemplateSpec("TRIAL", "TRIAL_MATERIALS", "TRIAL_045_MONITORING_REPORT", "监查员监查报告", 45),
+)
+
+DEFAULT_CENTER_FILE_TEMPLATES = (
+    STARTUP_MATERIAL_TEMPLATES + TRIAL_MATERIAL_TEMPLATES + CLOSEOUT_MATERIAL_TEMPLATES
+)
+CENTER_FILE_OPTION_CODES = frozenset({"STARTUP_MATERIALS", "TRIAL_MATERIALS", "CLOSEOUT_MATERIALS"})
 RETIRED_CENTER_FILE_STAGE_CODES = frozenset(
     {
         "PROJECT_SURVEY_CONFIRMATION",
@@ -157,6 +169,12 @@ RETIRED_CENTER_FILE_STAGE_CODES = frozenset(
         "DATA_QUERY",
         "BLINDED_REVIEW",
         "STATISTICAL_SUMMARY_REPORT",
+        "SCREENING",
+        "ENROLLMENT_PREP",
+        "EXAM_EXECUTION",
+        "EARLY_FOLLOWUP",
+        "DELAYED_FOLLOWUP",
+        "COMPLETION",
     }
 )
 
@@ -175,6 +193,12 @@ def normalize_code(value: str | None) -> str | None:
     if value is None:
         return None
     return value.strip().upper() or None
+
+
+def template_scope_for_option(option_code: str | None) -> str:
+    if option_code in CENTER_FILE_OPTION_CODES or (option_code or "").startswith("SSU_"):
+        return CENTER_FILE_SCOPE
+    return SUBJECT_ITEM_SCOPE
 
 
 def phase_template_scope(phase_code: str) -> str:
@@ -218,25 +242,32 @@ def validate_template_stage(stage: Stage, template_scope: str) -> Stage:
             detail="stage is not part of the fixed phase system",
         )
     if stage.parent_id is None:
-        first_child = first_child_stage(stage)
+        first_child = first_child_stage(stage, template_scope)
         if first_child is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="phase has no secondary stage",
             )
         stage = first_child
-    expected_scope = phase_template_scope(phase_code)
+    expected_scope = template_scope_for_option(stage.option_code or stage.code)
     if template_scope != expected_scope:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{phase_code} templates must use {expected_scope}",
+            detail=f"{stage.code} templates must use {expected_scope}",
         )
     return stage
 
 
-def first_child_stage(parent: Stage) -> Stage | None:
-    if parent.children:
-        return sorted(parent.children, key=lambda item: (item.sort_order, item.id))[0]
+def first_child_stage(parent: Stage, template_scope: str | None = None) -> Stage | None:
+    children = sorted(parent.children, key=lambda item: (item.sort_order, item.id))
+    if template_scope is not None:
+        children = [
+            child
+            for child in children
+            if template_scope_for_option(child.option_code or child.code) == template_scope
+        ]
+    if children:
+        return children[0]
     return None
 
 
@@ -258,6 +289,7 @@ def ensure_project_stage_config(db: Session, project_or_id: Project | int) -> No
     if not project.stage_template_defaults_initialized:
         _ensure_default_subject_item_templates(db, project_id, children)
         project.stage_template_defaults_initialized = True
+    _disable_retired_center_file_stages(db, project_id)
     db.flush()
 
 
@@ -356,9 +388,6 @@ def _move_parent_templates_to_children(
     children: dict[tuple[str, str], Stage],
 ) -> None:
     for phase_code, parent in parents.items():
-        first_option = OPTIONS_BY_PHASE[phase_code][0]
-        target_stage = children[(phase_code, first_option.option_code)]
-        target_scope = phase_template_scope(phase_code)
         parent_templates = list(
             db.scalars(
                 select(StageTemplate).where(
@@ -368,6 +397,10 @@ def _move_parent_templates_to_children(
             )
         )
         for template in parent_templates:
+            target_stage = _default_child_for_scope(phase_code, template.template_scope, children)
+            if target_stage is None:
+                continue
+            target_scope = template_scope_for_option(target_stage.option_code or target_stage.code)
             duplicate = db.scalar(
                 select(StageTemplate).where(
                     StageTemplate.project_id == project_id,
@@ -382,6 +415,17 @@ def _move_parent_templates_to_children(
                 continue
             template.stage_id = target_stage.id
             template.template_scope = target_scope
+
+
+def _default_child_for_scope(
+    phase_code: str,
+    template_scope: str,
+    children: dict[tuple[str, str], Stage],
+) -> Stage | None:
+    for option in OPTIONS_BY_PHASE[phase_code]:
+        if template_scope_for_option(option.option_code) == template_scope:
+            return children.get((phase_code, option.option_code))
+    return None
 
 
 def _ensure_default_center_file_templates(
@@ -444,7 +488,7 @@ def _ensure_default_subject_item_templates(
                     template_scope=SUBJECT_ITEM_SCOPE,
                     item_name=item_spec.name,
                     item_code=item_spec.code,
-                    required=True,
+                    required=item_spec.required,
                     sort_order=item_spec.sort_order,
                     description=None,
                 )

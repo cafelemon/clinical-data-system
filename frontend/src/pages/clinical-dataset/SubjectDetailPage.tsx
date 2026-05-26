@@ -103,7 +103,7 @@ export function SubjectDetailPage() {
     [items],
   );
   const backPath = subject
-    ? `/clinical-dataset?project_id=${subject.project_id}&center_id=${subject.center_id}&stage=TRIAL`
+    ? `/clinical-dataset?project_id=${subject.project_id}&center_id=${subject.center_id}&stage=TRIAL&view=visits`
     : "/clinical-dataset";
   const restoreState = location.state as
     | { restoreScrollKey?: string; restoreItemId?: number }

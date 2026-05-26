@@ -389,6 +389,8 @@ def _build_stage_rows(
 def stage_completeness_name(stage: Stage) -> str:
     if stage.code == "STARTUP_MATERIALS":
         return "试验准备阶段资料准备"
+    if stage.code == "TRIAL_MATERIALS":
+        return "试验进行阶段资料准备"
     if stage.code == "CLOSEOUT_MATERIALS":
         return "试验结束阶段资料准备"
     return stage.name

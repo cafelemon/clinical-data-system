@@ -23,8 +23,14 @@ const defaultForm: StageTemplatePayload = {
 };
 
 function stageMatchesScope(stage: Stage, scope: StageTemplatePayload["template_scope"]) {
-  if (scope === "subject_item") return stage.phase_code === "TRIAL";
-  return stage.phase_code === "STARTUP" || stage.phase_code === "CLOSEOUT";
+  if (!stage.enabled) return false;
+  const stageCode = stage.option_code ?? stage.code;
+  if (scope === "subject_item") return stage.phase_code === "TRIAL" && stageCode !== "TRIAL_MATERIALS";
+  return (
+    stage.phase_code === "STARTUP" ||
+    stage.phase_code === "CLOSEOUT" ||
+    stageCode === "TRIAL_MATERIALS"
+  );
 }
 
 function scopeLabel(scope: string) {

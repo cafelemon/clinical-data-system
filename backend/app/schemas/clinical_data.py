@@ -237,6 +237,7 @@ class ClinicalDatasetRead(BaseModel):
     startup_files: list[StageFileRead] = Field(default_factory=list)
     ssu_progress: list[ClinicalSsuProgressRead] = Field(default_factory=list)
     trial_stages: list[StageRead] = Field(default_factory=list)
+    trial_file_groups: list[StageFileGroupRead] = Field(default_factory=list)
     trial_files: list[StageFileRead] = Field(default_factory=list)
     subjects: list[SubjectRead] = Field(default_factory=list)
     closeout_file_groups: list[StageFileGroupRead] = Field(default_factory=list)

@@ -61,6 +61,7 @@ from app.services.clinical_status import (
 from app.services.pdf_packets import remove_packet_physical_file
 from app.services.stage_config import (
     CENTER_FILE_SCOPE,
+    CENTER_FILE_OPTION_CODES,
     PARENT_STAGE_CODES,
     ensure_project_stage_config,
 )
@@ -184,7 +185,7 @@ def stage_ids_for_center_files(
                 .where(
                     Stage.project_id == project_id,
                     Stage.parent_id.is_not(None),
-                    Stage.phase_code.in_(["STARTUP", "CLOSEOUT"]),
+                    Stage.option_code.in_(CENTER_FILE_OPTION_CODES),
                     Stage.enabled.is_(True),
                 )
                 .order_by(Stage.phase_code, Stage.sort_order, Stage.id)
@@ -192,11 +193,20 @@ def stage_ids_for_center_files(
         )
     stage = ensure_stage_belongs_to_project(db, project_id, stage_id)
     if stage.parent_id is None:
-        if stage.code == "TRIAL":
-            return []
         if stage.code in PARENT_STAGE_CODES:
-            return child_stage_ids_for_phase(db, project_id, stage.code)
-    if stage.phase_code == "TRIAL":
+            return list(
+                db.scalars(
+                    select(Stage.id)
+                    .where(
+                        Stage.project_id == project_id,
+                        Stage.parent_id == stage.id,
+                        Stage.option_code.in_(CENTER_FILE_OPTION_CODES),
+                        Stage.enabled.is_(True),
+                    )
+                    .order_by(Stage.sort_order, Stage.id)
+                )
+            )
+    if (stage.option_code or stage.code) not in CENTER_FILE_OPTION_CODES:
         return []
     return [stage.id]
 
@@ -517,6 +527,7 @@ def get_clinical_dataset(
         db.scalars(
             select(Stage)
             .where(Stage.project_id == project_id, Stage.parent_id.is_not(None))
+            .where(Stage.enabled.is_(True))
             .order_by(Stage.phase_code, Stage.sort_order, Stage.id)
         )
     )
@@ -534,6 +545,11 @@ def get_clinical_dataset(
         if "CLOSEOUT" in phase_by_code
         else []
     )
+    trial_files = (
+        materialize_stage_files(db, project_id, center_id, phase_by_code["TRIAL"].id)
+        if "TRIAL" in phase_by_code
+        else []
+    )
     subjects = list(
         db.scalars(
             select(Subject)
@@ -542,6 +558,14 @@ def get_clinical_dataset(
         )
     )
     startup_groups = stage_file_groups(children_by_phase.get("STARTUP", []), startup_files)
+    trial_groups = stage_file_groups(
+        [
+            stage
+            for stage in children_by_phase.get("TRIAL", [])
+            if (stage.option_code or stage.code) in CENTER_FILE_OPTION_CODES
+        ],
+        trial_files,
+    )
     closeout_groups = stage_file_groups(children_by_phase.get("CLOSEOUT", []), closeout_files)
     ssu_progress = list_ssu_progress_records(db, project_id, center_id)
     phase_reads = []
@@ -551,6 +575,9 @@ def get_clinical_dataset(
         if phase.code == "STARTUP":
             phase_files = startup_files
             phase_file_groups = startup_groups
+        if phase.code == "TRIAL":
+            phase_files = trial_files
+            phase_file_groups = trial_groups
         if phase.code == "CLOSEOUT":
             phase_files = closeout_files
             phase_file_groups = closeout_groups
@@ -573,11 +600,12 @@ def get_clinical_dataset(
         startup_files=startup_files,
         ssu_progress=ssu_progress,
         trial_stages=children_by_phase.get("TRIAL", []),
-        trial_files=[],
+        trial_file_groups=trial_groups,
+        trial_files=trial_files,
         subjects=subjects,
         closeout_file_groups=closeout_groups,
         closeout_files=closeout_files,
-        stage_file_count=len(startup_files) + len(closeout_files),
+        stage_file_count=len(startup_files) + len(trial_files) + len(closeout_files),
         subject_count=len(subjects),
     )
 
@@ -821,6 +849,8 @@ def update_subject(
         ensure_center_access(access, target_center)
     for field, value in update_data.items():
         setattr(subject, field, value)
+    if "subject_arm" in update_data:
+        create_default_subject_sections(db, subject)
     record_operation(
         db,
         action="subject.update",

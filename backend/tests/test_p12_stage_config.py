@@ -203,6 +203,8 @@ def test_template_scopes_dataset_groups_and_subject_generation(
     assert invalid_ssu.status_code == 400
     assert dataset.json()["startup_file_groups"][0]["stage"]["code"] == "STARTUP_MATERIALS"
     assert len(dataset.json()["startup_file_groups"][0]["files"]) == 27
+    assert dataset.json()["trial_file_groups"][0]["stage"]["code"] == "TRIAL_MATERIALS"
+    assert len(dataset.json()["trial_files"]) == 19
     first_file = next(
         file for file in dataset.json()["startup_files"] if file["file_type"] == "ETHICS_APPROVAL"
     )
@@ -271,20 +273,18 @@ def test_template_scopes_dataset_groups_and_subject_generation(
     )
     assert sections.status_code == 200
     section_codes = [section["section_code"] for section in sections.json()]
-    assert "COMPLETION" not in section_codes
     assert section_codes == [
-        "SCREENING",
-        "ENROLLMENT_PREP",
-        "EXAM_EXECUTION",
-        "EARLY_FOLLOWUP",
-        "DELAYED_FOLLOWUP",
+        "V1_SCREENING_VISIT",
+        "V2_EXPERIMENTAL_FOLLOWUP_VISIT",
     ]
 
     items = client.get(f"/api/subjects/{subject.json()['id']}/items", headers=admin_headers)
     assert items.status_code == 200
     assert all(item["stage_template_id"] for item in items.json())
     item_codes = {item["item_code"] for item in items.json()}
-    assert "知情同意书" in item_codes
+    item_names = {item["item_name"] for item in items.json()}
+    assert "V1_INFORMED_CONSENT" in item_codes
+    assert "知情同意书" in item_names
     assert "SCREENING_CONSENT" not in item_codes
     assert {"uploaded_by", "reviewer_id", "completeness_status"}.issubset(items.json()[0])
 
@@ -303,7 +303,7 @@ def test_deleted_default_subject_templates_are_not_regenerated(
     target = next(
         template
         for template in templates.json()
-        if template["item_code"] == "随机记录表"
+        if template["item_code"] == "V2_BOWEL_PREPARATION"
     )
 
     delete = client.delete(f"/api/stage-templates/{target['id']}", headers=admin_headers)
@@ -314,7 +314,7 @@ def test_deleted_default_subject_templates_are_not_regenerated(
         headers=admin_headers,
     )
     assert refreshed.status_code == 200
-    assert "随机记录表" not in {template["item_code"] for template in refreshed.json()}
+    assert "V2_BOWEL_PREPARATION" not in {template["item_code"] for template in refreshed.json()}
 
     subject = client.post(
         "/api/subjects",
@@ -329,4 +329,4 @@ def test_deleted_default_subject_templates_are_not_regenerated(
     assert subject.status_code == 201
     items = client.get(f"/api/subjects/{subject.json()['id']}/items", headers=admin_headers)
     assert items.status_code == 200
-    assert "随机记录表" not in {item["item_code"] for item in items.json()}
+    assert "V2_BOWEL_PREPARATION" not in {item["item_code"] for item in items.json()}

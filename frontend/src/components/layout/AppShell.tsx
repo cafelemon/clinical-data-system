@@ -9,7 +9,6 @@ import {
   FileSearch,
   FolderKanban,
   LayoutDashboard,
-  ListTree,
   LogOut,
   ClipboardList,
   ClipboardCheck,
@@ -65,7 +64,6 @@ const navItems: NavItem[] = [
   },
   { to: "/projects", label: "项目", icon: FolderKanban, permissions: ["master_data:read"], adminOnly: true },
   { to: "/centers", label: "中心", icon: Building2, permissions: ["master_data:read"], adminOnly: true },
-  { to: "/stages", label: "阶段", icon: ListTree, permissions: ["master_data:read"], adminOnly: true },
   { to: "/stage-templates", label: "模板", icon: FileText, permissions: ["master_data:read"], adminOnly: true },
   { to: "/dictionaries", label: "字典", icon: BookOpen, permissions: ["dictionaries:read"], adminOnly: true },
   {
@@ -95,11 +93,12 @@ type SidebarMode = "fixed" | "auto-hide";
 
 const SIDEBAR_MODE_STORAGE_KEY = "clinical-data-sidebar-mode";
 
-function buildDatasetPath(projectId?: number, centerId?: number, stage = "STARTUP") {
+function buildDatasetPath(projectId?: number, centerId?: number, stage = "STARTUP", view?: string) {
   const params = new URLSearchParams();
   if (projectId) params.set("project_id", String(projectId));
   if (centerId) params.set("center_id", String(centerId));
   if (stage) params.set("stage", stage);
+  if (view) params.set("view", view);
   const query = params.toString();
   return `/clinical-dataset${query ? `?${query}` : ""}`;
 }
@@ -131,6 +130,7 @@ export function AppShell() {
   const selectedProjectId = Number(datasetParams.get("project_id")) || undefined;
   const selectedCenterId = Number(datasetParams.get("center_id")) || undefined;
   const selectedStage = datasetParams.get("stage") || "STARTUP";
+  const selectedView = datasetParams.get("view") || undefined;
   const sidebarExpanded = sidebarMode === "fixed" || autoSidebarOpen;
 
   function clearSidebarTimer(timerRef: { current: number | null }) {
@@ -213,11 +213,11 @@ export function AppShell() {
   }, [canReadClinicalDataset, isClinicalDataset]);
 
   function handleDatasetProject(project: Project, centers: Center[]) {
-    navigate(buildDatasetPath(project.id, centers[0]?.id, selectedStage));
+    navigate(buildDatasetPath(project.id, centers[0]?.id, selectedStage, selectedView));
   }
 
   function handleDatasetCenter(project: Project, center: Center) {
-    navigate(buildDatasetPath(project.id, center.id, selectedStage));
+    navigate(buildDatasetPath(project.id, center.id, selectedStage, selectedView));
   }
 
   async function handleLogout() {

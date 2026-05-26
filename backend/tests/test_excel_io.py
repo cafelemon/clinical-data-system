@@ -165,7 +165,8 @@ def test_import_templates_and_four_import_upserts(
     subject_template_rows = workbook_rows(subject_template.content)
     assert "分组" in subject_template_rows[0]
     assert "知情时间" in subject_template_rows[0]
-    assert "访视5日期" in subject_template_rows[0]
+    assert "访视4日期" in subject_template_rows[0]
+    assert "访视5日期" not in subject_template_rows[0]
 
     project_result = upload_xlsx(
         client,
@@ -252,7 +253,6 @@ def test_import_templates_and_four_import_upserts(
                 "visit2_date",
                 "visit3_date",
                 "visit4_date",
-                "visit5_date",
             ],
             [
                 [
@@ -268,7 +268,6 @@ def test_import_templates_and_four_import_upserts(
                     "2026-05-03",
                     "2026-05-04",
                     "2026-05-05",
-                    "2026-05-06",
                 ]
             ],
         ),
@@ -281,13 +280,13 @@ def test_import_templates_and_four_import_upserts(
     assert subject["screening_no"] == "P7-S001"
     assert subject["subject_arm"] == "experimental"
     assert subject["informed_at"].startswith("2026-05-01T09:30")
-    assert subject["visit5_date"] == "2026-05-06"
+    assert subject["visit4_date"] == "2026-05-05"
 
     with db_session(client) as db:
         item_count = db.scalar(
             select(func.count(SubjectItem.id)).where(SubjectItem.subject_id == subject["id"])
         )
-    assert item_count == 19
+    assert item_count == 16
 
 
 def test_import_validation_is_all_or_nothing(
@@ -539,7 +538,8 @@ def test_exports_include_expected_workbooks_and_missing_unmaterialized_stage_ite
     )
     subject_headers = workbook_rows(subject_completeness.content)[0]
     assert "知情时间" in subject_headers
-    assert "访视5日期" in subject_headers
+    assert "访视4日期" in subject_headers
+    assert "访视5日期" not in subject_headers
 
     missing = client.get(
         f"/api/export/missing-items?project_id={project_id}&center_id={center_id}",

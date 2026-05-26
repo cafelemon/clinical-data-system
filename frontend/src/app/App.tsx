@@ -22,7 +22,6 @@ import { ProjectsPage } from "@/pages/projects/ProjectsPage";
 import { RolesPage } from "@/pages/roles/RolesPage";
 import { SettingsPage } from "@/pages/settings/SettingsPage";
 import { StageTemplatesPage } from "@/pages/stage-templates/StageTemplatesPage";
-import { StagesPage } from "@/pages/stages/StagesPage";
 import { UsersPage } from "@/pages/users/UsersPage";
 
 function ProtectedShell() {
@@ -128,14 +127,6 @@ export default function App() {
           element={
             <AdminOnlyRoute title="中心管理">
               <CentersPage />
-            </AdminOnlyRoute>
-          }
-        />
-        <Route
-          path="/stages"
-          element={
-            <AdminOnlyRoute title="阶段管理">
-              <StagesPage />
             </AdminOnlyRoute>
           }
         />
