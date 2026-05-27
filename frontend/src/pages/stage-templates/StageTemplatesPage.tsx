@@ -37,6 +37,22 @@ function scopeLabel(scope: string) {
   return scope === "subject_item" ? "受试者资料项" : "中心资料项";
 }
 
+function phaseLabel(phaseCode: string | null) {
+  if (phaseCode === "STARTUP") return "试验准备阶段";
+  if (phaseCode === "TRIAL") return "试验进行阶段";
+  if (phaseCode === "CLOSEOUT") return "试验结束阶段";
+  return "";
+}
+
+function stageOptionLabel(stage: Stage) {
+  const phase = phaseLabel(stage.phase_code);
+  if (!phase) return stage.name;
+  if (stage.option_code?.endsWith("_MATERIALS") || stage.name === "资料准备" || stage.name === "准备资料") {
+    return `${phase}${stage.name}`;
+  }
+  return stage.name;
+}
+
 export function StageTemplatesPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
@@ -267,7 +283,7 @@ export function StageTemplatesPage() {
                   </option>
                   {formStages.map((stage) => (
                     <option key={stage.id} value={stage.id}>
-                      {stage.name}
+                      {stageOptionLabel(stage)}
                     </option>
                   ))}
                 </SelectField>
@@ -394,7 +410,7 @@ export function StageTemplatesPage() {
                   <option value="">全部阶段</option>
                   {filteredStageOptions.map((stage) => (
                     <option key={stage.id} value={stage.id}>
-                      {stage.name}
+                      {stageOptionLabel(stage)}
                     </option>
                   ))}
                 </SelectField>
@@ -410,7 +426,10 @@ export function StageTemplatesPage() {
               onDelete={(template) => void handleDelete(template)}
               columns={[
                 { key: "project", label: "项目", render: (template) => projectNameById.get(template.project_id) ?? "-" },
-                { key: "stage", label: "阶段", render: (template) => stageById.get(template.stage_id)?.name ?? "-" },
+                { key: "stage", label: "阶段", render: (template) => {
+                  const stage = stageById.get(template.stage_id);
+                  return stage ? stageOptionLabel(stage) : "-";
+                } },
                 { key: "scope", label: "用途", render: (template) => scopeLabel(template.template_scope) },
                 { key: "name", label: "资料", render: (template) => template.item_name },
                 { key: "code", label: "编码", render: (template) => template.item_code },
