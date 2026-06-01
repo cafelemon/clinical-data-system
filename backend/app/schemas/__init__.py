@@ -97,6 +97,15 @@ from app.schemas.review import (
     ReviewRecordRead,
     StageCompletenessRead,
 )
+from app.schemas.trial_protocol import (
+    TrialProtocolApplyResult,
+    TrialProtocolCenterDraft,
+    TrialProtocolDraft,
+    TrialProtocolItemDraft,
+    TrialProtocolVersionRead,
+    TrialProtocolVersionSummary,
+    TrialProtocolVisitDraft,
+)
 
 __all__ = [
     "CenterCreate",
@@ -184,6 +193,13 @@ __all__ = [
     "SubjectSectionRead",
     "SubjectUpdate",
     "TokenRead",
+    "TrialProtocolApplyResult",
+    "TrialProtocolCenterDraft",
+    "TrialProtocolDraft",
+    "TrialProtocolItemDraft",
+    "TrialProtocolVersionRead",
+    "TrialProtocolVersionSummary",
+    "TrialProtocolVisitDraft",
     "UserCreate",
     "UserRead",
     "UserUpdate",

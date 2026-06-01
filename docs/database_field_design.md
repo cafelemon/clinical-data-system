@@ -9,6 +9,7 @@
 ```mermaid
 erDiagram
   projects ||--o{ centers : contains
+  projects ||--o{ trial_protocol_versions : versions
   projects ||--o{ stages : configures
   stages ||--o{ stage_templates : owns
   centers ||--o{ subjects : enrolls
@@ -49,6 +50,7 @@ erDiagram
 
 - `dashboard:read`：查看纯展示看板。
 - `dashboard:write`：旧看板维护权限，但 V3.2.3 起写入还必须满足管理员或 `project_manager` 角色。
+- `trial_protocol_versions` 写入：管理员可维护全部项目；项目负责人仅可维护 `user_project_scopes` 内项目。
 - 管理员忽略项目/中心范围；项目负责人只能写 `user_project_scopes` 内项目。
 
 ## 3. 主数据与模板
@@ -56,6 +58,7 @@ erDiagram
 | 表 | 粒度 | 关键字段 | 业务说明 |
 | --- | --- | --- | --- |
 | `projects` | 项目 | `name`, `code`, `status`, `stage_template_defaults_initialized` | 临床试验项目根对象。 |
+| `trial_protocol_versions` | 项目方案版本 | `project_id`, `version_number`, `original_name`, `storage_path`, `file_hash`, `page_count`, `parsing_status`, `protocol_no`, `protocol_version`, `protocol_date`, `draft_json`, `apply_result_json`, `uploaded_by`, `applied_by`, `uploaded_at`, `applied_at` | 项目级临床试验方案 PDF 版本、解析草稿和应用结果。 |
 | `centers` | 项目下中心 | `project_id`, `name`, `code`, `contact_person`, `status` | 中心机构和项目执行点。 |
 | `stages` | 项目阶段 | `project_id`, `name`, `code`, `parent_id`, `phase_code`, `option_code`, `is_system`, `enabled`, `sort_order` | 三大阶段和二级阶段；V1-V4 访视为系统固定结构。 |
 | `stage_templates` | 阶段资料模板 | `project_id`, `stage_id`, `item_name`, `item_code`, `template_scope`, `required`, `recognition_keywords` | 生成中心级资料或受试者资料项的模板。 |
@@ -64,6 +67,7 @@ erDiagram
 关键唯一性：
 
 - `projects.code` 唯一。
+- `trial_protocol_versions(project_id, version_number)` 唯一。
 - `centers(project_id, code)` 唯一。
 - `stages(project_id, code)` 唯一。
 - `stage_templates(stage_id, item_code)` 唯一。

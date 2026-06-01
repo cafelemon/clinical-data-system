@@ -29,6 +29,7 @@ from app.models.project import Project
 from app.models.review import ReviewRecord
 from app.models.stage import Stage
 from app.models.stage_template import StageTemplate
+from app.models.trial_protocol import TrialProtocolVersion
 
 __all__ = [
     "Center",
@@ -60,6 +61,7 @@ __all__ = [
     "Subject",
     "SubjectItem",
     "SubjectSection",
+    "TrialProtocolVersion",
     "User",
     "role_permissions",
     "user_center_scopes",
