@@ -12,6 +12,7 @@ import { SubjectDetailPage } from "@/pages/clinical-dataset/SubjectDetailPage";
 import { CorrectionTaskDetailPage } from "@/pages/correction-tasks/CorrectionTaskDetailPage";
 import { CorrectionTasksPage } from "@/pages/correction-tasks/CorrectionTasksPage";
 import { DashboardPage } from "@/pages/dashboard/DashboardPage";
+import { DashboardMaintenancePage } from "@/pages/dashboard/DashboardMaintenancePage";
 import { DictionariesPage } from "@/pages/dictionaries/DictionariesPage";
 import { ExcelIoPage } from "@/pages/excel-io/ExcelIoPage";
 import { LoginPage } from "@/pages/login/LoginPage";
@@ -114,6 +115,7 @@ export default function App() {
       <Route path="/login" element={<LoginRoute />} />
       <Route element={<ProtectedShell />}>
         <Route index element={<DashboardPage />} />
+        <Route path="/dashboard-maintenance" element={<DashboardMaintenancePage />} />
         <Route
           path="/projects"
           element={

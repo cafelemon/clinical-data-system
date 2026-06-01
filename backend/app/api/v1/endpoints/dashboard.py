@@ -48,15 +48,25 @@ from app.schemas.dashboard import (
     DashboardSubjectResultUpdate,
     DashboardV31ImportResultRead,
     DashboardV31OverviewRead,
+    DashboardV323CenterRead,
+    DashboardV323EnrollmentRead,
+    DashboardV323KpisRead,
+    DashboardV323ManualSupplementsRead,
+    DashboardV323OverviewRead,
+    DashboardV323ScopeRead,
+    DashboardV323TrendRead,
+    DashboardV323WarningRead,
 )
 from app.services.clinical_status import (
     build_completeness_summary,
     build_stage_file_statuses,
 )
 from app.services.dashboard_v31 import (
+    DASHBOARD_V31_CONFIGS,
     XLSX_MEDIA_TYPE,
     build_overview,
     build_template_workbook,
+    build_warnings,
     create_record,
     delete_record,
     export_records_workbook,
@@ -93,6 +103,63 @@ def visible_centers(db: Session, access: AccessContext, project_id: int) -> list
 
 def visible_center_ids(db: Session, access: AccessContext, project_id: int) -> list[int]:
     return [center.id for center in visible_centers(db, access, project_id)]
+
+
+def visible_projects(db: Session, access: AccessContext) -> list[Project]:
+    statement = select(Project).order_by(Project.id)
+    if access.is_admin:
+        return list(db.scalars(statement))
+    project_ids = access.project_ids | access.center_project_ids
+    if not project_ids:
+        return []
+    return list(db.scalars(statement.where(Project.id.in_(project_ids))))
+
+
+def resolve_v323_scope(
+    db: Session,
+    access: AccessContext,
+    project_id: int | None,
+    center_id: int | None,
+) -> tuple[list[Project], list[Center], DashboardV323ScopeRead]:
+    if center_id is not None:
+        center = db.get(Center, center_id)
+        if center is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="center not found")
+        if project_id is not None and center.project_id != project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="center does not belong to project"
+            )
+        ensure_project_access(access, center.project_id)
+        if not access.can_access_center(center.id, center.project_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Center scope denied")
+        project = get_project_or_404(db, center.project_id)
+        return [
+            project
+        ], [
+            center
+        ], DashboardV323ScopeRead(
+            level="center",
+            project_id=project.id,
+            project_name=project.name,
+            center_id=center.id,
+            center_name=center.name,
+        )
+    if project_id is not None:
+        project = get_project_or_404(db, project_id)
+        ensure_project_access(access, project_id)
+        centers = visible_centers(db, access, project_id)
+        return [
+            project
+        ], centers, DashboardV323ScopeRead(
+            level="project",
+            project_id=project.id,
+            project_name=project.name,
+        )
+    projects = visible_projects(db, access)
+    centers = [
+        center for project in projects for center in visible_centers(db, access, project.id)
+    ]
+    return projects, centers, DashboardV323ScopeRead(level="all")
 
 
 def scoped_subjects(
@@ -217,6 +284,20 @@ def scoped_center_ids(access: AccessContext) -> set[int] | None:
     if access.is_admin:
         return None
     return access.center_ids
+
+
+def completion_rate(completed_count: int, total_count: int) -> float:
+    return round(completed_count / total_count * 100, 1) if total_count else 0.0
+
+
+def combined_completeness_count(
+    stage_files: CompletenessStatusCount, subjects: CompletenessStatusCount
+) -> CompletenessStatusCount:
+    return CompletenessStatusCount(
+        complete=stage_files.complete + subjects.complete,
+        checking=stage_files.checking + subjects.checking,
+        incomplete=stage_files.incomplete + subjects.incomplete,
+    )
 
 
 @router.get("/dashboard/project/{project_id}", response_model=DashboardProjectSummaryRead)
@@ -389,6 +470,166 @@ def dashboard_project_completeness(
             )
             for row in summary.stages
         ],
+    )
+
+
+@router.get("/dashboard/v323/overview", response_model=DashboardV323OverviewRead)
+def dashboard_v323_overview(
+    db: DBSession,
+    access: DashboardReadAccess,
+    project_id: int | None = None,
+    center_id: int | None = None,
+) -> DashboardV323OverviewRead:
+    projects, centers, scope = resolve_v323_scope(db, access, project_id, center_id)
+    project_by_id = {project.id: project for project in projects}
+    center_by_id = {center.id: center for center in centers}
+    selected_project_ids = set(project_by_id)
+    selected_center_ids = set(center_by_id)
+
+    summary_project_ids = None if access.is_admin else selected_project_ids & access.project_ids
+    summary_center_ids = (
+        selected_center_ids
+        if center_id is not None or not access.is_admin or project_id is None
+        else None
+    )
+    summary = build_completeness_summary(
+        db,
+        project_ids=summary_project_ids,
+        center_ids=summary_center_ids,
+        project_id=project_id,
+        center_id=center_id,
+    )
+    stage_file_counts = status_counter_to_read(summary.stage_files)
+    subject_counts = status_counter_to_read(summary.subjects)
+    completeness = combined_completeness_count(stage_file_counts, subject_counts)
+
+    all_subjects: list[Subject] = []
+    review_counts: Counter[str] = Counter()
+    pending_rejected: Counter[tuple[int, str]] = Counter()
+    for project in projects:
+        project_center_ids = [
+            center.id for center in centers if center.project_id == project.id
+        ]
+        all_subjects.extend(scoped_subjects(db, project.id, project_center_ids))
+        counts, center_counts = review_status_counts(db, project.id, project_center_ids)
+        review_counts.update(counts)
+        pending_rejected.update(center_counts)
+
+    completed_subjects = [
+        subject for subject in all_subjects if subject.data_status == DATA_COMPLETE
+    ]
+    center_status_by_id = {row["center_id"]: row["status"] for row in summary.centers}
+    center_rows = []
+    for center in centers:
+        center_subjects = [subject for subject in all_subjects if subject.center_id == center.id]
+        center_completed = [
+            subject for subject in center_subjects if subject.data_status == DATA_COMPLETE
+        ]
+        project = project_by_id[center.project_id]
+        center_rows.append(
+            DashboardV323CenterRead(
+                project_id=project.id,
+                project_name=project.name,
+                center_id=center.id,
+                center_name=center.name,
+                subject_count=len(center_subjects),
+                completed_subject_count=len(center_completed),
+                completion_rate=completion_rate(len(center_completed), len(center_subjects)),
+                completeness_status=center_status_by_id.get(center.id, "incomplete"),
+                pending_review_count=pending_rejected[(center.id, "pending")],
+                rejected_review_count=pending_rejected[(center.id, "rejected")],
+            )
+        )
+
+    manual_counts: Counter[str] = Counter()
+    task_status: Counter[str] = Counter()
+    contract_count = 0
+    planned_next_week = 0
+    maintained_current_enrolled = 0
+    warnings: list[DashboardV323WarningRead] = []
+    for project in projects:
+        scoped_center_id = (
+            center_id if center_id is not None and project.id == scope.project_id else None
+        )
+        for kind in DASHBOARD_V31_CONFIGS:
+            records = list_records(db, access, kind, project.id, scoped_center_id)
+            manual_counts[kind] += len(records)
+            if kind == "enrollment-plans":
+                contract_count += sum(row.contract_count or 0 for row in records)
+                planned_next_week += sum(row.next_week_plan_count or 0 for row in records)
+                maintained_current_enrolled += sum(
+                    row.current_enrolled_count or 0 for row in records
+                )
+            if kind == "important-tasks":
+                task_status.update(row.status for row in records)
+        for warning in build_warnings(db, access, project.id):
+            if center_id is not None and warning["center_id"] != center_id:
+                continue
+            warning_center = center_by_id.get(warning["center_id"] or 0)
+            warnings.append(
+                DashboardV323WarningRead(
+                    source=warning["source"],
+                    project_id=project.id,
+                    project_name=project.name,
+                    id=warning["id"],
+                    title=warning["title"],
+                    center_id=warning["center_id"],
+                    center_name=warning_center.name if warning_center else None,
+                    planned_date=warning["planned_date"],
+                    status=warning["status"],
+                    warning_level=warning["warning_level"],
+                )
+            )
+
+    trend_counts: Counter[date] = Counter()
+    for subject in completed_subjects:
+        if subject.completed_at is not None:
+            trend_counts[period_start(subject.completed_at.date(), "week")] += 1
+    trends = [
+        DashboardV323TrendRead(period=period_label(period, "week"), completed_count=count)
+        for period, count in sorted(trend_counts.items())
+    ]
+
+    return DashboardV323OverviewRead(
+        scope=scope,
+        kpis=DashboardV323KpisRead(
+            project_count=len(projects),
+            center_count=len(centers),
+            subject_count=len(all_subjects),
+            completed_subject_count=len(completed_subjects),
+            completion_rate=completion_rate(len(completed_subjects), len(all_subjects)),
+            active_warning_count=len(warnings),
+            pending_review_count=review_counts["pending"],
+            rejected_review_count=review_counts["rejected"],
+        ),
+        completeness=completeness,
+        stage_files=stage_file_counts,
+        subjects=subject_counts,
+        reviews=DashboardReviewStatusRead(
+            unreviewed=review_counts["unreviewed"],
+            pending=review_counts["pending"],
+            approved=review_counts["approved"],
+            rejected=review_counts["rejected"],
+        ),
+        enrollment=DashboardV323EnrollmentRead(
+            subject_count=len(all_subjects),
+            completed_subject_count=len(completed_subjects),
+            contract_count=contract_count,
+            planned_next_week=planned_next_week,
+            maintained_current_enrolled=maintained_current_enrolled,
+        ),
+        centers=sorted(
+            center_rows,
+            key=lambda row: (row.completeness_status != "incomplete", row.completion_rate),
+        ),
+        trends=trends,
+        warnings=sorted(warnings, key=lambda row: (row.planned_date, row.source, row.id)),
+        manual_supplements=DashboardV323ManualSupplementsRead(
+            counts=dict(manual_counts),
+            important_task_status=dict(task_status),
+            clinical_event_count=manual_counts["clinical-events"],
+            device_issue_count=manual_counts["device-issues"],
+        ),
     )
 
 

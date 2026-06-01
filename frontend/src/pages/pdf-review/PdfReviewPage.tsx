@@ -12,6 +12,8 @@ import {
   Minus,
   MousePointer2,
   Plus,
+  RotateCcw,
+  RotateCw,
   Save,
   SquarePen,
   Trash2,
@@ -44,6 +46,15 @@ type DraftRect = {
 type Point = {
   x: number;
   y: number;
+};
+
+type Rotation = 0 | 90 | 180 | 270;
+
+type NormalizedRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 const issueTypes = [
@@ -114,6 +125,46 @@ function pointFromEvent(event: PointerEvent<SVGSVGElement>): Point {
   };
 }
 
+function normalizeRotation(value: number): Rotation {
+  const normalized = ((value % 360) + 360) % 360;
+  if (normalized === 90 || normalized === 180 || normalized === 270) {
+    return normalized;
+  }
+  return 0;
+}
+
+function rotateRectToDisplay(rect: NormalizedRect, rotation: Rotation): NormalizedRect {
+  if (rotation === 90) {
+    return {
+      x: 1 - (rect.y + rect.height),
+      y: rect.x,
+      width: rect.height,
+      height: rect.width,
+    };
+  }
+  if (rotation === 180) {
+    return {
+      x: 1 - (rect.x + rect.width),
+      y: 1 - (rect.y + rect.height),
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+  if (rotation === 270) {
+    return {
+      x: rect.y,
+      y: 1 - (rect.x + rect.width),
+      width: rect.height,
+      height: rect.width,
+    };
+  }
+  return rect;
+}
+
+function rotateRectToCanonical(rect: NormalizedRect, rotation: Rotation): NormalizedRect {
+  return rotateRectToDisplay(rect, normalizeRotation(360 - rotation));
+}
+
 async function loadPdfWithModule(
   module: PdfJsModule,
   workerSrc: string,
@@ -177,6 +228,7 @@ export function PdfReviewPage() {
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [pageNo, setPageNo] = useState(1);
   const [scale, setScale] = useState(1.2);
+  const [pageRotations, setPageRotations] = useState<Record<number, Rotation>>({});
   const [pageSize, setPageSize] = useState({ width: 0, height: 0 });
   const [tool, setTool] = useState<"select" | "annotate">("select");
   const [showAnnotations, setShowAnnotations] = useState(true);
@@ -197,6 +249,7 @@ export function PdfReviewPage() {
       from: "/correction-tasks",
       backLabel: "返回任务",
     } satisfies NavigationOriginState);
+  const pageRotation = pageRotations[pageNo] ?? 0;
 
   const annotationsForPage = useMemo(
     () => (reviewFile?.annotations ?? []).filter((annotation) => annotation.page_no === pageNo),
@@ -222,6 +275,10 @@ export function PdfReviewPage() {
   useEffect(() => {
     void loadReviewFile();
   }, [loadReviewFile]);
+
+  useEffect(() => {
+    setPageRotations({});
+  }, [fileId, requestedFileVersionId, requestedVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -254,7 +311,7 @@ export function PdfReviewPage() {
       if (!pdfDoc || !canvasRef.current) return;
       const page = await pdfDoc.getPage(pageNo);
       if (cancelled || !canvasRef.current) return;
-      const viewport = page.getViewport({ scale });
+      const viewport = page.getViewport({ scale, rotation: pageRotation });
       const canvas = canvasRef.current;
       const context = canvas.getContext("2d");
       if (!context) return;
@@ -269,18 +326,29 @@ export function PdfReviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [pageNo, pdfDoc, scale]);
+  }, [pageNo, pageRotation, pdfDoc, scale]);
 
   function handleVersionChange(version: number) {
     setSearchParams({ version: String(version) });
   }
 
+  function rotatePage(delta: number) {
+    setPageRotations((current) => ({
+      ...current,
+      [pageNo]: normalizeRotation((current[pageNo] ?? 0) + delta),
+    }));
+  }
+
   function handlePointerDown(event: PointerEvent<SVGSVGElement>) {
     if (!canAnnotate || tool !== "annotate") return;
     const point = pointFromEvent(event);
+    const canonicalRect = rotateRectToCanonical(
+      { x: point.x, y: point.y, width: 0.001, height: 0.001 },
+      pageRotation,
+    );
     event.currentTarget.setPointerCapture(event.pointerId);
     setDraftStart(point);
-    setDraft({ page_no: pageNo, x: point.x, y: point.y, width: 0.001, height: 0.001 });
+    setDraft({ page_no: pageNo, ...canonicalRect });
   }
 
   function handlePointerMove(event: PointerEvent<SVGSVGElement>) {
@@ -290,14 +358,16 @@ export function PdfReviewPage() {
     const y = Math.min(draftStart.y, point.y);
     const width = Math.abs(point.x - draftStart.x);
     const height = Math.abs(point.y - draftStart.y);
-    setDraft({ page_no: pageNo, x, y, width, height });
+    const canonicalRect = rotateRectToCanonical({ x, y, width, height }, pageRotation);
+    setDraft({ page_no: pageNo, ...canonicalRect });
   }
 
   function handlePointerUp(event: PointerEvent<SVGSVGElement>) {
     if (!draftStart || !draft) return;
     event.currentTarget.releasePointerCapture(event.pointerId);
     setDraftStart(null);
-    if (draft.width < 0.005 || draft.height < 0.005) {
+    const displayDraft = rotateRectToDisplay(draft, pageRotation);
+    if (displayDraft.width < 0.005 || displayDraft.height < 0.005) {
       setDraft(null);
     }
   }
@@ -486,6 +556,24 @@ export function PdfReviewPage() {
               >
                 <Plus className="size-4" aria-hidden="true" />
               </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => rotatePage(-90)}
+                title="逆时针旋转90度"
+                aria-label="逆时针旋转90度"
+              >
+                <RotateCcw className="size-4" aria-hidden="true" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => rotatePage(90)}
+                title="顺时针旋转90度"
+                aria-label="顺时针旋转90度"
+              >
+                <RotateCw className="size-4" aria-hidden="true" />
+              </Button>
             </div>
           </div>
           <div
@@ -503,38 +591,46 @@ export function PdfReviewPage() {
               onPointerUp={handlePointerUp}
             >
               {showAnnotations &&
-                annotationsForPage.map((annotation, index) => (
-                  <g key={annotation.id}>
+                annotationsForPage.map((annotation, index) => {
+                  const displayRect = rotateRectToDisplay(annotation, pageRotation);
+                  return (
+                    <g key={annotation.id}>
+                      <rect
+                        x={displayRect.x * pageSize.width}
+                        y={displayRect.y * pageSize.height}
+                        width={displayRect.width * pageSize.width}
+                        height={displayRect.height * pageSize.height}
+                        fill="rgba(16, 185, 129, 0.12)"
+                        stroke="#059669"
+                        strokeWidth="2"
+                      />
+                      <text
+                        x={displayRect.x * pageSize.width + 6}
+                        y={displayRect.y * pageSize.height + 18}
+                        className="fill-emerald-700 text-sm font-semibold"
+                      >
+                        #{index + 1}
+                      </text>
+                    </g>
+                  );
+                })}
+              {draft &&
+                draft.page_no === pageNo &&
+                (() => {
+                  const displayDraft = rotateRectToDisplay(draft, pageRotation);
+                  return (
                     <rect
-                      x={annotation.x * pageSize.width}
-                      y={annotation.y * pageSize.height}
-                      width={annotation.width * pageSize.width}
-                      height={annotation.height * pageSize.height}
-                      fill="rgba(16, 185, 129, 0.12)"
-                      stroke="#059669"
+                      x={displayDraft.x * pageSize.width}
+                      y={displayDraft.y * pageSize.height}
+                      width={displayDraft.width * pageSize.width}
+                      height={displayDraft.height * pageSize.height}
+                      fill="rgba(220, 38, 38, 0.12)"
+                      stroke="#dc2626"
+                      strokeDasharray="6 4"
                       strokeWidth="2"
                     />
-                    <text
-                      x={annotation.x * pageSize.width + 6}
-                      y={annotation.y * pageSize.height + 18}
-                      className="fill-emerald-700 text-sm font-semibold"
-                    >
-                      #{index + 1}
-                    </text>
-                  </g>
-                ))}
-              {draft && draft.page_no === pageNo && (
-                <rect
-                  x={draft.x * pageSize.width}
-                  y={draft.y * pageSize.height}
-                  width={draft.width * pageSize.width}
-                  height={draft.height * pageSize.height}
-                  fill="rgba(220, 38, 38, 0.12)"
-                  stroke="#dc2626"
-                  strokeDasharray="6 4"
-                  strokeWidth="2"
-                />
-              )}
+                  );
+                })()}
             </svg>
           </div>
         </div>

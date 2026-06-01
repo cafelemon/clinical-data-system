@@ -242,14 +242,23 @@ def ensure_project_read(access: AccessContext, project_id: int) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project scope denied")
 
 
+def ensure_dashboard_maintainer(access: AccessContext, project_id: int) -> None:
+    if access.is_admin:
+        return
+    if "project_manager" in access.roles and project_id in access.project_ids:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Dashboard maintenance requires admin or project manager scope",
+    )
+
+
 def ensure_center_scope(
     db: Session, access: AccessContext, project_id: int, center_id: int | None, write: bool
 ) -> None:
+    if write:
+        ensure_dashboard_maintainer(access, project_id)
     if center_id is None:
-        if write and not (access.is_admin or project_id in access.project_ids):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="Project write scope denied"
-            )
         return
     center = db.get(Center, center_id)
     if center is None or center.project_id != project_id:

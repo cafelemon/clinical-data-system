@@ -368,3 +368,82 @@ class DashboardV31ImportResultRead(BaseModel):
     updated_count: int
     errors: list[DashboardV31ImportErrorRead] = []
     rows: list[dict[str, Any]] = []
+
+
+class DashboardV323ScopeRead(BaseModel):
+    level: str
+    project_id: int | None = None
+    project_name: str | None = None
+    center_id: int | None = None
+    center_name: str | None = None
+
+
+class DashboardV323KpisRead(BaseModel):
+    project_count: int = 0
+    center_count: int = 0
+    subject_count: int = 0
+    completed_subject_count: int = 0
+    completion_rate: float = 0
+    active_warning_count: int = 0
+    pending_review_count: int = 0
+    rejected_review_count: int = 0
+
+
+class DashboardV323EnrollmentRead(BaseModel):
+    subject_count: int = 0
+    completed_subject_count: int = 0
+    contract_count: int = 0
+    planned_next_week: int = 0
+    maintained_current_enrolled: int = 0
+
+
+class DashboardV323CenterRead(BaseModel):
+    project_id: int
+    project_name: str
+    center_id: int
+    center_name: str
+    subject_count: int = 0
+    completed_subject_count: int = 0
+    completion_rate: float = 0
+    completeness_status: str = "incomplete"
+    pending_review_count: int = 0
+    rejected_review_count: int = 0
+
+
+class DashboardV323TrendRead(BaseModel):
+    period: str
+    completed_count: int = 0
+
+
+class DashboardV323WarningRead(BaseModel):
+    source: str
+    project_id: int
+    project_name: str
+    id: int
+    title: str
+    center_id: int | None = None
+    center_name: str | None = None
+    planned_date: date
+    status: str
+    warning_level: str
+
+
+class DashboardV323ManualSupplementsRead(BaseModel):
+    counts: dict[str, int] = Field(default_factory=dict)
+    important_task_status: dict[str, int] = Field(default_factory=dict)
+    clinical_event_count: int = 0
+    device_issue_count: int = 0
+
+
+class DashboardV323OverviewRead(BaseModel):
+    scope: DashboardV323ScopeRead
+    kpis: DashboardV323KpisRead
+    completeness: CompletenessStatusCount
+    stage_files: CompletenessStatusCount
+    subjects: CompletenessStatusCount
+    reviews: DashboardReviewStatusRead
+    enrollment: DashboardV323EnrollmentRead
+    centers: list[DashboardV323CenterRead]
+    trends: list[DashboardV323TrendRead]
+    warnings: list[DashboardV323WarningRead]
+    manual_supplements: DashboardV323ManualSupplementsRead

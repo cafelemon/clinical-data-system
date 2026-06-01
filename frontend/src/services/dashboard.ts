@@ -9,6 +9,7 @@ import type {
   DashboardV31Kind,
   DashboardV31Overview,
   DashboardV31Record,
+  DashboardV323Overview,
 } from "@/types/dashboard";
 
 async function read<T>(url: string, params?: Record<string, unknown>) {
@@ -48,6 +49,11 @@ export const dashboardApi = {
     read<DashboardCompleteness>(`/dashboard/project/${projectId}/completeness`),
   getV31Overview: (projectId: number) =>
     read<DashboardV31Overview>(`/dashboard/v31/project/${projectId}/overview`),
+  getV323Overview: (projectId?: number, centerId?: number) =>
+    read<DashboardV323Overview>("/dashboard/v323/overview", {
+      project_id: projectId,
+      center_id: centerId,
+    }),
   listV31Records: (kind: DashboardV31Kind, projectId: number, centerId?: number) =>
     read<DashboardV31Record[]>(`/dashboard/v31/${kind}`, {
       project_id: projectId,

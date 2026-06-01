@@ -34,10 +34,18 @@ type NavItem = {
   icon: LucideIcon;
   permissions: string[];
   adminOnly?: boolean;
+  managerOnly?: boolean;
 };
 
 const navItems: NavItem[] = [
   { to: "/", label: "看板", icon: LayoutDashboard, permissions: ["dashboard:read"] },
+  {
+    to: "/dashboard-maintenance",
+    label: "看板维护",
+    icon: FileSpreadsheet,
+    permissions: ["dashboard:write"],
+    managerOnly: true,
+  },
   {
     to: "/clinical-dataset",
     label: "临床数据集",
@@ -111,8 +119,12 @@ export function AppShell() {
   const navigate = useNavigate();
   const isClinicalDataset = location.pathname.startsWith("/clinical-dataset");
   const canReadClinicalDataset = hasAnyPermission(["clinical_data:read"]);
+  const canMaintainDashboard = Boolean(user?.is_admin || user?.roles.includes("project_manager"));
   const visibleNavItems = navItems.filter(
-    (item) => (!item.adminOnly || user?.is_admin) && hasAnyPermission(item.permissions),
+    (item) =>
+      (!item.adminOnly || user?.is_admin) &&
+      (!item.managerOnly || canMaintainDashboard) &&
+      hasAnyPermission(item.permissions),
   );
   const [datasetTree, setDatasetTree] = useState<DatasetTreeItem[]>([]);
   const [datasetTreeLoading, setDatasetTreeLoading] = useState(false);
