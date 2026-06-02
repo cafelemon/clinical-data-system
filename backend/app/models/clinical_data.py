@@ -89,6 +89,11 @@ class Subject(Base):
         order_by="SubjectItem.sort_order",
     )
     file_assets = relationship("FileAsset", back_populates="subject", cascade="all, delete-orphan")
+    image_records = relationship(
+        "SubjectImageRecord",
+        back_populates="subject",
+        cascade="all, delete-orphan",
+    )
     pdf_packets = relationship("PdfPacket", back_populates="subject", cascade="all, delete-orphan")
 
 

@@ -15,6 +15,7 @@ import { DashboardPage } from "@/pages/dashboard/DashboardPage";
 import { DashboardMaintenancePage } from "@/pages/dashboard/DashboardMaintenancePage";
 import { DictionariesPage } from "@/pages/dictionaries/DictionariesPage";
 import { ExcelIoPage } from "@/pages/excel-io/ExcelIoPage";
+import { ImageDataPage } from "@/pages/image-data/ImageDataPage";
 import { LoginPage } from "@/pages/login/LoginPage";
 import { OperationLogsPage } from "@/pages/operation-logs/OperationLogsPage";
 import { PdfPacketsPage } from "@/pages/pdf-packets/PdfPacketsPage";
@@ -179,6 +180,7 @@ export default function App() {
         />
         <Route path="/clinical-dataset" element={<ClinicalDatasetPage />} />
         <Route path="/clinical-dataset/subjects/:subjectId" element={<SubjectDetailPage />} />
+        <Route path="/image-data" element={<ImageDataPage />} />
         <Route
           path="/settings"
           element={

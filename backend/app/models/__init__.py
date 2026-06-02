@@ -22,6 +22,7 @@ from app.models.identity import (
     user_project_scopes,
     user_roles,
 )
+from app.models.image_data import SubjectImageRecord
 from app.models.operation_log import OperationLog
 from app.models.pdf_packet import PdfPacket, PdfPacketSegment
 from app.models.pdf_review import CorrectionTask, CorrectionTaskAnnotation, PdfAnnotation
@@ -59,6 +60,7 @@ __all__ = [
     "StageFile",
     "StageTemplate",
     "Subject",
+    "SubjectImageRecord",
     "SubjectItem",
     "SubjectSection",
     "TrialProtocolVersion",

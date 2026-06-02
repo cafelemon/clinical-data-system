@@ -15,6 +15,7 @@ erDiagram
   centers ||--o{ subjects : enrolls
   subjects ||--o{ subject_sections : has
   subject_sections ||--o{ subject_items : contains
+  subjects ||--o{ subject_image_records : owns
   stage_templates ||--o{ stage_files : materializes
   stage_templates ||--o{ subject_items : seeds
   stage_files ||--o{ file_assets : stores
@@ -51,6 +52,12 @@ erDiagram
 - `dashboard:read`：查看纯展示看板。
 - `dashboard:write`：旧看板维护权限，但 V3.2.3 起写入还必须满足管理员或 `project_manager` 角色。
 - `trial_protocol_versions` 写入：管理员可维护全部项目；项目负责人仅可维护 `user_project_scopes` 内项目。
+- `image_data:read`：查看图像数据状态和元数据。
+- `image_data:upload_raw`：上传或下载原始图像记录。
+- `image_data:copy_raw`：研发原始图像副本下载入口，不修改原始记录文件。
+- `image_data:upload_enhanced`：上传或下载增强图像记录。
+- `image_data:upload_report`：上传或下载电子报告。
+- `image_data:delete`：清空图像数据记录。
 - 管理员忽略项目/中心范围；项目负责人只能写 `user_project_scopes` 内项目。
 
 ## 3. 主数据与模板
@@ -81,6 +88,7 @@ erDiagram
 | `subject_items` | 受试者资料项 | `subject_id`, `section_id`, `stage_template_id`, `item_name`, `item_code`, `required`, `upload_status`, `review_status`, `remark` | 受试者级资料上传、审核和完整性计算。 |
 | `stage_files` | 中心级阶段资料 | `project_id`, `center_id`, `stage_id`, `stage_template_id`, `file_name`, `file_type`, `required`, `upload_status`, `review_status`, `not_applicable`, `not_applicable_reason`, `remark` | 中心级资料项，支持“若有”资料声明无此材料。 |
 | `clinical_ssu_progress` | SSU 节点进展 | `project_id`, `center_id`, `stage_code`, `status`, `submitted_at`, `approved_at`, `completed_at`, `version_info`, `file_checklist`, `summary`, `fee_detail`, `notes` | 试验准备阶段 SSU 进展人工维护。 |
+| `subject_image_records` | 受试者图像数据 | `project_id`, `center_id`, `subject_id`, `image_type`, `screening_no_snapshot`, `upload_status`, `original_name`, `storage_path`, `file_hash`, `file_size`, `version`, `extracted_dir`, `image_count`, `image_total_size`, `image_extensions_json`, `parse_warning`, `source_raw_record_id`, `uploaded_by`, `uploaded_at`, `copied_by`, `copied_at` | 按试验序列号管理原始图像、增强图像和电子报告。 |
 
 状态口径：
 
@@ -88,6 +96,14 @@ erDiagram
 - `review_status`：`unreviewed`、`pending`、`approved`、`rejected`。
 - `data_status`：`incomplete`、`checking`、`complete`。
 - `not_applicable=true` 只适用于非必填资料；已有上传文件时不能声明无此材料。
+
+图像数据口径：
+
+- `subject_image_records(subject_id, image_type)` 唯一，`image_type` 取 `raw`、`enhanced`、`report`。
+- 新增受试者时生成三类记录；历史受试者访问图像列表时懒补齐；删除受试者时级联删除图像记录。
+- 原始/增强图像以 zip 上传，保存原始包并安全解包统计图片数量、图片总大小和扩展名分布。
+- `source_raw_record_id` 用于增强图像关联来源原始图像记录；研发下载原始副本时只写 `copied_by/copied_at` 和操作日志。
+- zip 根目录名与 `screening_no_snapshot` 不一致时写入 `parse_warning`，不阻断保存；路径穿越或非法 zip 会拒绝上传。
 
 ## 5. 文件、审核与整改
 

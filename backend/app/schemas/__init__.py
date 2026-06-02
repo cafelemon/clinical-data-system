@@ -39,6 +39,11 @@ from app.schemas.identity import (
     UserRead,
     UserUpdate,
 )
+from app.schemas.image_data import (
+    SubjectImageRecordRead,
+    SubjectImageRowRead,
+    SubjectImageUploadRead,
+)
 from app.schemas.master_data import (
     CenterCreate,
     CenterRead,
@@ -184,6 +189,9 @@ __all__ = [
     "StageTemplateUpdate",
     "StageUpdate",
     "SubjectCreate",
+    "SubjectImageRecordRead",
+    "SubjectImageRowRead",
+    "SubjectImageUploadRead",
     "SubjectItemRead",
     "SubjectItemRemarkRead",
     "SubjectItemRemarkUpdate",

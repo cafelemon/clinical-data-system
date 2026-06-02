@@ -8,6 +8,7 @@ import {
   FileSpreadsheet,
   FileSearch,
   FolderKanban,
+  Images,
   LayoutDashboard,
   LogOut,
   ClipboardList,
@@ -48,9 +49,15 @@ const navItems: NavItem[] = [
   },
   {
     to: "/clinical-dataset",
-    label: "临床数据集",
+    label: "试验数据",
     icon: Database,
     permissions: ["clinical_data:read"],
+  },
+  {
+    to: "/image-data",
+    label: "图像数据",
+    icon: Images,
+    permissions: ["image_data:read"],
   },
   {
     to: "/excel-io",
@@ -118,6 +125,7 @@ export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const isClinicalDataset = location.pathname.startsWith("/clinical-dataset");
+  const isImageData = location.pathname.startsWith("/image-data");
   const canReadClinicalDataset = hasAnyPermission(["clinical_data:read"]);
   const canMaintainDashboard = Boolean(user?.is_admin || user?.roles.includes("project_manager"));
   const visibleNavItems = navItems.filter(
@@ -446,7 +454,7 @@ export function AppShell() {
         <main
           className={cn(
             "mx-auto w-full px-4 py-6 sm:px-6 lg:px-8",
-            isClinicalDataset ? "max-w-[1600px]" : "max-w-7xl",
+            isClinicalDataset || isImageData ? "max-w-[1600px]" : "max-w-7xl",
           )}
         >
           <Outlet />

@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.core.files import ensure_relative_path
 from app.models import (
     Center,
+    ClinicalSsuProgress,
     CorrectionTask,
     FileAsset,
     FileVersion,
@@ -31,7 +32,6 @@ from app.models import (
     SubjectItem,
     User,
 )
-from app.models import ClinicalSsuProgress
 from app.models.clinical_data import SubjectSection
 from app.schemas import (
     ClinicalDatasetRead,
@@ -58,10 +58,11 @@ from app.services.clinical_status import (
     required_item_status,
     stage_file_item_status,
 )
+from app.services.image_data import ensure_subject_image_records
 from app.services.pdf_packets import remove_packet_physical_file
 from app.services.stage_config import (
-    CENTER_FILE_SCOPE,
     CENTER_FILE_OPTION_CODES,
+    CENTER_FILE_SCOPE,
     PARENT_STAGE_CODES,
     ensure_project_stage_config,
 )
@@ -680,7 +681,10 @@ def update_ssu_progress(
     return progress
 
 
-@router.delete("/clinical-datasets/ssu-progress/{progress_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/clinical-datasets/ssu-progress/{progress_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 def delete_ssu_progress(
     progress_id: int,
     db: DBSession,
@@ -800,6 +804,7 @@ def create_subject(
     try:
         db.flush()
         create_default_subject_sections(db, subject)
+        ensure_subject_image_records(db, subject)
         record_operation(
             db,
             action="subject.create",
