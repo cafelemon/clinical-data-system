@@ -38,18 +38,33 @@ class SubjectImageRecord(Base):
     )
     image_type: Mapped[str] = mapped_column(String(30), index=True, nullable=False)
     screening_no_snapshot: Mapped[str] = mapped_column(String(80), nullable=False)
-    upload_status: Mapped[str] = mapped_column(String(30), default="not_uploaded", nullable=False)
+    upload_status: Mapped[str] = mapped_column(
+        String(30),
+        default="not_uploaded",
+        server_default="not_uploaded",
+        nullable=False,
+    )
     original_name: Mapped[str | None] = mapped_column(String(255))
     stored_name: Mapped[str | None] = mapped_column(String(255))
     file_ext: Mapped[str | None] = mapped_column(String(30))
     mime_type: Mapped[str | None] = mapped_column(String(120))
-    file_size: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    file_size: Mapped[int] = mapped_column(
+        BigInteger,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
     file_hash: Mapped[str | None] = mapped_column(String(64))
     storage_path: Mapped[str | None] = mapped_column(Text)
     extracted_dir: Mapped[str | None] = mapped_column(Text)
-    version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    image_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    image_total_size: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    image_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    image_total_size: Mapped[int] = mapped_column(
+        BigInteger,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
     image_extensions_json: Mapped[dict | None] = mapped_column(JSON)
     parse_warning: Mapped[str | None] = mapped_column(Text)
     source_raw_record_id: Mapped[int | None] = mapped_column(

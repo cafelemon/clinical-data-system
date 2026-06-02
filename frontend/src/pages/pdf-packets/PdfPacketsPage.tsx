@@ -87,10 +87,6 @@ function statusTone(status: string): BadgeTone {
   return "neutral";
 }
 
-function formatDateTime(value: string) {
-  return value ? value.replace("T", " ").slice(0, 16) : "-";
-}
-
 function openBlob(blob: Blob, page?: number) {
   const url = window.URL.createObjectURL(blob);
   window.open(`${url}${page ? `#page=${page}` : ""}`, "_blank", "noopener,noreferrer");

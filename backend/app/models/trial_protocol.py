@@ -21,8 +21,13 @@ class TrialProtocolVersion(Base):
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
-    page_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    parsing_status: Mapped[str] = mapped_column(String(30), default="parsed", nullable=False)
+    page_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    parsing_status: Mapped[str] = mapped_column(
+        String(30),
+        default="parsed",
+        server_default="parsed",
+        nullable=False,
+    )
     protocol_no: Mapped[str | None] = mapped_column(String(80))
     protocol_version: Mapped[str | None] = mapped_column(String(80))
     protocol_date: Mapped[str | None] = mapped_column(String(80))
