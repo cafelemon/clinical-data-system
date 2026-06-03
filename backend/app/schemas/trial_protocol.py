@@ -25,6 +25,10 @@ class TrialProtocolCenterDraft(BaseModel):
     filing_no: str | None = Field(default=None, max_length=80)
     principal_investigator: str | None = Field(default=None, max_length=100)
     enabled: bool = True
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    requires_confirmation: bool = False
+    confirmed: bool = True
+    evidence: dict | None = None
 
 
 class TrialProtocolDeactivateMissing(BaseModel):
@@ -39,6 +43,7 @@ class TrialProtocolDraft(BaseModel):
     deactivate_missing: TrialProtocolDeactivateMissing = Field(
         default_factory=TrialProtocolDeactivateMissing
     )
+    parse_meta: dict | None = None
 
 
 class TrialProtocolVersionRead(BaseModel):

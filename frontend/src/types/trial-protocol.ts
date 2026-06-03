@@ -20,6 +20,20 @@ export type TrialProtocolCenterDraft = {
   filing_no: string | null;
   principal_investigator: string | null;
   enabled: boolean;
+  confidence?: number | null;
+  requires_confirmation?: boolean;
+  confirmed?: boolean;
+  evidence?: {
+    page_no?: number;
+    source?: string;
+    risk_reasons?: string[];
+    lines?: {
+      page_no: number;
+      text: string;
+      source?: string;
+      confidence?: number | null;
+    }[];
+  } | null;
 };
 
 export type TrialProtocolDraft = {
@@ -30,6 +44,13 @@ export type TrialProtocolDraft = {
     items: boolean;
     centers: boolean;
   };
+  parse_meta?: {
+    text_source?: string;
+    page_count?: number;
+    center_count?: number;
+    center_risk_count?: number;
+    evidence_mode?: string;
+  } | null;
 };
 
 export type TrialProtocolVersion = {

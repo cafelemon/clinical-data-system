@@ -235,6 +235,10 @@ export function ProjectsPage() {
   async function applyProtocol() {
     if (!selectedProjectId || !activeProtocol) return;
     try {
+      if (draft && draft.centers.some(centerNeedsConfirmation)) {
+        setMessage("存在未确认的高风险中心字段，请确认后再应用");
+        return;
+      }
       if (draft) {
         await trialProtocolApi.updateDraft(selectedProjectId, activeProtocol.id, draft);
       }
@@ -351,11 +355,19 @@ export function ProjectsPage() {
   function updateCenter(index: number, patch: Partial<TrialProtocolCenterDraft>) {
     setDraft((current) => {
       if (!current) return current;
+      const fieldChanged =
+        "code" in patch ||
+        "name" in patch ||
+        "filing_no" in patch ||
+        "principal_investigator" in patch;
       return {
         ...current,
-        centers: current.centers.map((center, itemIndex) =>
-          itemIndex === index ? { ...center, ...patch } : center,
-        ),
+        centers: current.centers.map((center, itemIndex) => {
+          if (itemIndex !== index) return center;
+          const confirmedPatch =
+            fieldChanged && center.requires_confirmation ? { confirmed: false } : {};
+          return { ...center, ...confirmedPatch, ...patch };
+        }),
       };
     });
   }
@@ -368,6 +380,10 @@ export function ProjectsPage() {
         filing_no: null,
         principal_investigator: null,
         enabled: true,
+        confidence: null,
+        requires_confirmation: false,
+        confirmed: true,
+        evidence: null,
       };
       return current
         ? { ...current, centers: [...current.centers, nextCenter] }
@@ -387,7 +403,26 @@ export function ProjectsPage() {
     );
   }
 
+  function centerNeedsConfirmation(center: TrialProtocolCenterDraft) {
+    return Boolean(center.requires_confirmation && !center.confirmed);
+  }
+
+  function centerStatus(center: TrialProtocolCenterDraft) {
+    if (centerNeedsConfirmation(center)) {
+      return { label: "需确认", tone: "warning" as const };
+    }
+    if (center.requires_confirmation && center.confirmed) {
+      return { label: "已确认", tone: "success" as const };
+    }
+    return { label: "正常", tone: "neutral" as const };
+  }
+
+  function confirmCenter(index: number) {
+    updateCenter(index, { confirmed: true });
+  }
+
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const pendingCenterConfirmations = draft?.centers.filter(centerNeedsConfirmation).length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -618,6 +653,13 @@ export function ProjectsPage() {
 
           {draft ? (
             <div className="space-y-6">
+              {draft.parse_meta && (
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  文本来源：{draft.parse_meta.text_source || "-"} · 中心数：
+                  {draft.parse_meta.center_count ?? draft.centers.length} · 风险中心：
+                  {draft.parse_meta.center_risk_count ?? pendingCenterConfirmations}
+                </div>
+              )}
               <section className="space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <h2 className="text-sm font-semibold text-slate-900">访视与资料项</h2>
@@ -747,53 +789,93 @@ export function ProjectsPage() {
                 </div>
                 <div className="space-y-2">
                   {draft.centers.map((center, centerIndex) => (
-                    <div
-                      key={`${center.code}-${centerIndex}`}
-                      className="grid gap-2 rounded-md border border-slate-200 p-3 lg:grid-cols-[80px_1fr_120px_120px_90px_auto]"
-                    >
-                      <input
-                        className={inputClassName("h-9")}
-                        value={center.code}
-                        onChange={(event) => updateCenter(centerIndex, { code: event.target.value })}
-                        placeholder="代号"
-                      />
-                      <input
-                        className={inputClassName("h-9")}
-                        value={center.name}
-                        onChange={(event) => updateCenter(centerIndex, { name: event.target.value })}
-                      />
-                      <input
-                        className={inputClassName("h-9")}
-                        value={center.filing_no ?? ""}
-                        onChange={(event) => updateCenter(centerIndex, { filing_no: event.target.value })}
-                        placeholder="备案号"
-                      />
-                      <input
-                        className={inputClassName("h-9")}
-                        value={center.principal_investigator ?? ""}
-                        onChange={(event) =>
-                          updateCenter(centerIndex, { principal_investigator: event.target.value })
-                        }
-                        placeholder="研究者"
-                      />
-                      <label className="flex items-center gap-2 text-xs text-slate-600">
+                    <div key={`${center.code}-${centerIndex}`} className="rounded-md border border-slate-200 p-3">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <Badge tone={centerStatus(center).tone}>{centerStatus(center).label}</Badge>
+                        {typeof center.confidence === "number" && (
+                          <span className="text-xs text-slate-500">
+                            置信度 {Math.round(center.confidence * 100)}%
+                          </span>
+                        )}
+                        {center.evidence?.page_no && (
+                          <span className="text-xs text-slate-500">来源页 {center.evidence.page_no}</span>
+                        )}
+                        {centerNeedsConfirmation(center) && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => confirmCenter(centerIndex)}
+                          >
+                            确认本行
+                          </Button>
+                        )}
+                      </div>
+                      <div className="grid gap-2 lg:grid-cols-[80px_1fr_120px_120px_90px_auto]">
                         <input
-                          type="checkbox"
-                          checked={center.enabled}
-                          onChange={(event) =>
-                            updateCenter(centerIndex, { enabled: event.target.checked })
-                          }
+                          className={inputClassName("h-9")}
+                          value={center.code}
+                          onChange={(event) => updateCenter(centerIndex, { code: event.target.value })}
+                          placeholder="代号"
                         />
-                        启用
-                      </label>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => removeCenter(centerIndex)}
-                      >
-                        <Trash2 className="size-4" aria-hidden="true" />
-                      </Button>
+                        <input
+                          className={inputClassName(
+                            centerNeedsConfirmation(center) ? "h-9 border-amber-300" : "h-9",
+                          )}
+                          value={center.name}
+                          onChange={(event) => updateCenter(centerIndex, { name: event.target.value })}
+                        />
+                        <input
+                          className={inputClassName(
+                            centerNeedsConfirmation(center) ? "h-9 border-amber-300" : "h-9",
+                          )}
+                          value={center.filing_no ?? ""}
+                          onChange={(event) => updateCenter(centerIndex, { filing_no: event.target.value })}
+                          placeholder="备案号"
+                        />
+                        <input
+                          className={inputClassName(
+                            centerNeedsConfirmation(center) ? "h-9 border-amber-300" : "h-9",
+                          )}
+                          value={center.principal_investigator ?? ""}
+                          onChange={(event) =>
+                            updateCenter(centerIndex, { principal_investigator: event.target.value })
+                          }
+                          placeholder="研究者"
+                        />
+                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={center.enabled}
+                            onChange={(event) =>
+                              updateCenter(centerIndex, { enabled: event.target.checked })
+                            }
+                          />
+                          启用
+                        </label>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => removeCenter(centerIndex)}
+                        >
+                          <Trash2 className="size-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                      {center.evidence && (
+                        <div className="mt-2 rounded bg-slate-50 p-2 text-xs text-slate-500">
+                          {center.evidence.risk_reasons && center.evidence.risk_reasons.length > 0 && (
+                            <p className="mb-1 text-amber-700">
+                              风险：{center.evidence.risk_reasons.join("、")}
+                            </p>
+                          )}
+                          {center.evidence.lines?.slice(0, 3).map((line, lineIndex) => (
+                            <p key={`${line.page_no}-${lineIndex}`} className="truncate">
+                              P{line.page_no}: {line.text}
+                            </p>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -806,7 +888,9 @@ export function ProjectsPage() {
                 </Button>
                 <Button type="button" onClick={() => void applyProtocol()}>
                   <CheckCircle2 className="size-4" aria-hidden="true" />
-                  确认应用
+                  {pendingCenterConfirmations > 0
+                    ? `确认应用（${pendingCenterConfirmations}项待确认）`
+                    : "确认应用"}
                 </Button>
               </div>
             </div>

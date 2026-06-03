@@ -3,9 +3,15 @@
 @tailwind utilities;
 
 :root {
-  --background: 210 20% 98%;
-  --foreground: 224 28% 14%;
-  --border: 214 19% 86%;
+  --background: 204 45% 98%;
+  --foreground: 215 60% 15%;
+  --border: 207 35% 90%;
+  --brand-navy: #0b2e63;
+  --brand-text: #10233f;
+  --brand-blue: #0f78d4;
+  --brand-teal: #10bfb3;
+  --brand-fortune: #92c90e;
+  --surface: #ffffff;
 }
 
 body {
@@ -17,7 +23,11 @@ body {
     sans-serif;
 }
 
+::selection {
+  background: rgba(16, 191, 179, 0.22);
+  color: var(--brand-text);
+}
+
 * {
   box-sizing: border-box;
 }
-

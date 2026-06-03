@@ -70,7 +70,7 @@ function ProtectedShell() {
   }
   if (!initialized) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100 text-sm text-slate-500">
+      <main className="flex min-h-screen items-center justify-center bg-[#F5F8FB] text-sm text-[#5D7188]">
         正在进入系统
       </main>
     );

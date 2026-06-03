@@ -45,6 +45,35 @@ CENTER_PAGE_TEXT = """
             学中心               201900011
 """
 
+APPLE_VISION_CENTER_TEXT = """
+附件 1：临床试验机构和主要研究者信息
+临床试验机构名称
+备案号
+研究者
+机构代号
+首都医科大学附属北京友谊医
+01
+李鹏
+院
+201800254
+陆军军医大学第二附属医院
+02
+谢霞
+201800305
+"""
+
+MIXED_CENTER_TEXT = """
+附件 1：临床试验机构和主要研究者信息
+机构代号 临床试验机构名称 备案号 研究者
+01 李鹏首都医科大学附属北京友谊医院 201800254
+"""
+
+RISKY_CENTER_TEXT = """
+附件 1：临床试验机构和主要研究者信息
+机构代号 临床试验机构名称 备案号 研究者
+01 李鹏
+"""
+
 
 def login_headers(client: TestClient, username: str, password: str) -> dict[str, str]:
     response = client.post("/api/auth/login", json={"username": username, "password": password})
@@ -153,19 +182,50 @@ def test_trial_protocol_parser_extracts_visits_and_centers() -> None:
     assert len(centers) == 3
     assert centers[0]["name"] == "首都医科大学附属北京友谊医院"
     assert centers[0]["principal_investigator"] == "李鹏"
+    assert centers[0]["requires_confirmation"] is False
+    assert centers[0]["confirmed"] is True
+    assert centers[0]["evidence"]["page_no"] == 1
     assert centers[1]["code"] == "02"
+
+
+def test_trial_protocol_center_parser_handles_apple_vision_line_order() -> None:
+    centers = parse_centers([APPLE_VISION_CENTER_TEXT])
+
+    assert len(centers) == 2
+    assert centers[0]["name"] == "首都医科大学附属北京友谊医院"
+    assert centers[0]["filing_no"] == "201800254"
+    assert centers[0]["principal_investigator"] == "李鹏"
+    assert centers[0]["requires_confirmation"] is False
+    assert centers[1]["name"] == "陆军军医大学第二附属医院"
+
+
+def test_trial_protocol_center_parser_flags_mixed_or_missing_fields() -> None:
+    mixed = parse_centers([MIXED_CENTER_TEXT])
+    risky = parse_centers([RISKY_CENTER_TEXT])
+
+    assert mixed[0]["name"] == "首都医科大学附属北京友谊医院"
+    assert mixed[0]["principal_investigator"] == "李鹏"
+    assert mixed[0]["requires_confirmation"] is True
+    assert "OCR行疑似混合机构名称和研究者" in mixed[0]["evidence"]["risk_reasons"]
+    assert risky[0]["requires_confirmation"] is True
+    assert "备案号缺失或格式异常" in risky[0]["evidence"]["risk_reasons"]
 
 
 def test_trial_protocol_uses_ocr_text_fallback(monkeypatch, tmp_path: Path) -> None:
     from app.services import trial_protocols
+    from app.services.protocol_text_parser import ProtocolTextExtraction, lines_from_page_texts
 
     protocol_path = tmp_path / "protocol.pdf"
     protocol_path.write_bytes(b"%PDF-1.4")
     monkeypatch.setattr(trial_protocols, "pdf_page_count", lambda _: 2)
     monkeypatch.setattr(
         trial_protocols,
-        "extract_page_texts",
-        lambda *_: [FLOW_PAGE_TEXT, CENTER_PAGE_TEXT],
+        "extract_protocol_text",
+        lambda *_: ProtocolTextExtraction(
+            source="ocr_api",
+            page_texts=[FLOW_PAGE_TEXT, CENTER_PAGE_TEXT],
+            lines=lines_from_page_texts([FLOW_PAGE_TEXT, CENTER_PAGE_TEXT], "ocr_api"),
+        ),
     )
 
     page_count, draft, *_ = trial_protocols.parse_protocol_file(protocol_path)
@@ -173,6 +233,56 @@ def test_trial_protocol_uses_ocr_text_fallback(monkeypatch, tmp_path: Path) -> N
     assert page_count == 2
     assert len(draft["visits"]) == 5
     assert len(draft["centers"]) == 3
+    assert draft["parse_meta"]["text_source"] == "ocr_api"
+
+
+def test_protocol_text_ocr_api_keeps_block_and_text_line_metadata(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from app.services import protocol_text_parser
+
+    protocol_path = tmp_path / "protocol.pdf"
+    protocol_path.write_bytes(b"%PDF-1.4")
+    include_blocks_values: list[bool] = []
+
+    class FakeOcrClient:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def ocr_pdf_payload(
+            self,
+            *_: Any,
+            include_blocks: bool = False,
+            **__: Any,
+        ) -> dict[str, Any]:
+            include_blocks_values.append(include_blocks)
+            return {
+                "pages": [
+                    {
+                        "page_no": 1,
+                        "text": "第一页",
+                        "blocks": [
+                            {
+                                "text": "第一页 block",
+                                "confidence": 0.88,
+                                "box": {"x": 1.0, "y": 2.0, "w": 3.0, "h": 4.0},
+                            }
+                        ],
+                    },
+                    {"page_no": 2, "text": "第二页纯文本\n第二行"},
+                ]
+            }
+
+    monkeypatch.setattr(protocol_text_parser, "PaddleOcrClient", FakeOcrClient)
+    monkeypatch.setattr(protocol_text_parser.settings, "pdf_packet_ocr_api_url", "http://ocr")
+
+    extraction = protocol_text_parser.extract_text_with_ocr_api(protocol_path, page_count=2)
+
+    assert include_blocks_values == [True]
+    assert extraction.lines[0].page_no == 1
+    assert extraction.lines[0].confidence == 0.88
+    assert [line.page_no for line in extraction.lines[1:]] == [2, 2]
 
 
 def test_trial_protocol_upload_draft_apply_and_versioning(
@@ -239,6 +349,60 @@ def test_trial_protocol_upload_draft_apply_and_versioning(
     versions = client.get(f"/api/projects/{project['id']}/protocol-versions", headers=admin_headers)
     assert versions.status_code == 200
     assert versions.json()[0]["version_number"] == 1
+
+
+def test_trial_protocol_apply_blocks_unconfirmed_risky_center(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+) -> None:
+    from app.api.v1.endpoints import trial_protocols as endpoint
+
+    project = create_project(client, admin_headers, "RISKY_PROTOCOL")
+    risky_draft = parsed_draft()
+    risky_draft["centers"][0].update(
+        {
+            "requires_confirmation": True,
+            "confirmed": False,
+            "confidence": 0.58,
+            "evidence": {"page_no": 9, "risk_reasons": ["研究者疑似混入机构名称"]},
+        }
+    )
+    monkeypatch.setattr(
+        endpoint,
+        "parse_protocol_file",
+        lambda _: (1, risky_draft, None, None, None),
+    )
+
+    upload = client.post(
+        f"/api/projects/{project['id']}/protocol-versions",
+        headers=admin_headers,
+        files={"file": ("protocol.pdf", b"%PDF", "application/pdf")},
+    )
+    assert upload.status_code == 201
+    version = upload.json()
+
+    blocked = client.post(
+        f"/api/projects/{project['id']}/protocol-versions/{version['id']}/apply",
+        headers=admin_headers,
+    )
+    assert blocked.status_code == 400
+    assert blocked.json()["detail"] == "存在未确认的高风险中心字段，请确认后再应用"
+
+    draft = version["draft_json"]
+    draft["centers"][0]["confirmed"] = True
+    save = client.patch(
+        f"/api/projects/{project['id']}/protocol-versions/{version['id']}/draft",
+        headers=admin_headers,
+        json=draft,
+    )
+    assert save.status_code == 200
+    allowed = client.post(
+        f"/api/projects/{project['id']}/protocol-versions/{version['id']}/apply",
+        headers=admin_headers,
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["result"]["created_centers"] == 1
 
 
 def test_trial_protocol_project_manager_scope(

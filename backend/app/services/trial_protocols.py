@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.files import ensure_relative_path, normalize_mime_type, safe_path_part
 from app.models import Center, Project, Stage, StageTemplate, TrialProtocolVersion
-from app.services.pdf_packets import PdfPacketError, extract_page_texts, pdf_page_count
+from app.services.pdf_packets import PdfPacketError, pdf_page_count
+from app.services.protocol_text_parser import ProtocolTextLine, compact_line, extract_protocol_text
 from app.services.stage_config import SUBJECT_ITEM_SCOPE, ensure_project_stage_config
 
 
@@ -35,6 +36,57 @@ VISIT_NAME_KEYWORDS = (
     ("胶囊排出", "非预期随访-胶囊排出确认"),
     ("胶囊滞留", "非预期随访-胶囊滞留处理"),
 )
+
+INSTITUTION_TERMS = (
+    "医院",
+    "中心",
+    "大学",
+    "院区",
+    "医科",
+    "总院",
+    "分院",
+    "附属",
+)
+COMMON_CHINESE_SURNAMES = (
+    "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华"
+    "金魏陶姜戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方"
+    "俞任袁柳鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮"
+    "卞齐康伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计"
+    "伏成戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童"
+    "颜郭梅盛林刁钟徐邱骆高夏蔡田胡凌霍虞万支柯昝管卢莫经房裘"
+    "缪干解应宗丁宣邓郁单杭洪包诸左石崔吉龚程邢裴陆荣翁荀羊於"
+    "惠甄曲家封芮羿储靳汲邴糜松井段富巫乌焦巴弓牧隗山谷车侯宓"
+    "蓬全郗班仰秋仲伊宫宁仇栾暴甘钭厉戎祖武符刘景詹束龙叶幸司"
+    "韶郜黎蓟薄印宿白怀蒲台从鄂索咸籍赖卓蔺屠蒙池乔阴欎胥能苍"
+    "双闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍郤璩桑桂濮牛寿通边扈燕"
+    "冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾"
+    "终暨居衡步都耿满弘匡国文寇广禄阙东欧殳沃利蔚越夔隆师巩厍"
+    "聂晁勾敖融冷訾辛阚那简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆"
+    "红游竺权逯盖益桓公"
+)
+INSTITUTION_LEADING_TERMS = (
+    "首都",
+    "北京",
+    "上海",
+    "天津",
+    "重庆",
+    "陆军",
+    "海军",
+    "空军",
+    "中国",
+    "人民",
+    "解放",
+)
+LOCATION_SUFFIX_CHARS = "州京沪津渝都省市县区"
+FIELD_HEADER_TERMS = (
+    "临床试验",
+    "机构名称",
+    "机构代号",
+    "备案号",
+    "研究者",
+    "附件",
+)
+CONFIRMATION_ERROR = "存在未确认的高风险中心字段，请确认后再应用"
 
 
 def write_protocol_upload(
@@ -105,13 +157,15 @@ def parse_protocol_file(
 ) -> tuple[int, dict[str, Any], str | None, str | None, str | None]:
     try:
         page_count = pdf_page_count(path)
-        page_texts = extract_page_texts(path, page_count)
+        extraction = extract_protocol_text(path, page_count)
     except PdfPacketError as exc:
         raise TrialProtocolError(str(exc)) from exc
 
+    page_texts = extraction.page_texts
     protocol_no, protocol_version, protocol_date = parse_protocol_meta(page_texts)
     visits = parse_visits(page_texts)
-    centers = parse_centers(page_texts)
+    centers = parse_centers(page_texts, extraction.lines)
+    risky_centers = sum(1 for center in centers if center.get("requires_confirmation"))
     draft = {
         "visits": visits,
         "centers": centers,
@@ -119,6 +173,13 @@ def parse_protocol_file(
             "visits": False,
             "items": False,
             "centers": False,
+        },
+        "parse_meta": {
+            "text_source": extraction.source,
+            "page_count": page_count,
+            "center_count": len(centers),
+            "center_risk_count": risky_centers,
+            "evidence_mode": "summary",
         },
     }
     return page_count, draft, protocol_no, protocol_version, protocol_date
@@ -249,44 +310,46 @@ def clean_item_name(value: str) -> str:
     return cleaned
 
 
-def parse_centers(page_texts: list[str]) -> list[dict[str, Any]]:
-    center_text = next(
-        (text for text in page_texts if "临床试验机构" in text and "机构代号" in text),
-        "",
+def parse_centers(
+    page_texts: list[str],
+    text_lines: list[ProtocolTextLine] | None = None,
+) -> list[dict[str, Any]]:
+    center_page_no, center_text = next(
+        (
+            (page_index + 1, text)
+            for page_index, text in enumerate(page_texts)
+            if "临床试验机构" in text and "机构代号" in text
+        ),
+        (None, ""),
     )
-    if not center_text:
+    if center_page_no is None or not center_text:
         return []
-    lines = center_text.splitlines()
+    lines = scoped_center_lines(center_text, center_page_no, text_lines)
     centers: list[dict[str, Any]] = []
     for index, line in enumerate(lines):
-        if re.match(r"^\s*20\d{7}\s*$", line):
+        if re.match(r"^\s*20\d{7}\s*$", line.text):
             continue
-        match = re.match(r"^\s*(\d{2})\s*(.*)$", line)
+        match = re.match(r"^\s*(\d{2})\s*(.*)$", line.text)
         if match is None:
             continue
         code = match.group(1)
         inline = match.group(2).strip()
-        prev_line = lines[index - 1].strip() if index > 0 else ""
-        next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
-        filing_no = _first_match(r"(20\d{7})", "\n".join([prev_line, inline, next_line]))
-        investigator = extract_investigator(inline)
-        inline_name = inline
-        if investigator and investigator in inline_name:
-            inline_name = inline_name.rsplit(investigator, 1)[0].strip()
-        inline_name = re.sub(r"20\d{7}", "", inline_name).strip()
-        name_parts = []
-        prev_name = strip_filing_label(prev_line)
-        next_name = strip_filing_label(re.sub(r"20\d{7}", "", next_line).strip())
-        if inline_name and len(inline_name) > 4:
-            name_parts.append(inline_name)
-        else:
-            if prev_name:
-                name_parts.append(prev_name)
-            if next_name:
-                name_parts.append(next_name)
-        center_name = "".join(name_parts).strip()
+        window = lines[max(0, index - 2) : min(len(lines), index + 4)]
+        center_name, investigator, filing_no, mixed_investigator = parse_center_fields(
+            code,
+            inline,
+            window,
+        )
         if not center_name:
             continue
+        risk_reasons = center_risk_reasons(
+            code=code,
+            center_name=center_name,
+            filing_no=filing_no,
+            investigator=investigator,
+            mixed_investigator=mixed_investigator,
+        )
+        confidence = center_confidence(risk_reasons, window)
         centers.append(
             {
                 "code": code,
@@ -294,9 +357,173 @@ def parse_centers(page_texts: list[str]) -> list[dict[str, Any]]:
                 "filing_no": filing_no,
                 "principal_investigator": investigator,
                 "enabled": True,
+                "confidence": confidence,
+                "requires_confirmation": bool(risk_reasons),
+                "confirmed": not risk_reasons,
+                "evidence": {
+                    "page_no": line.page_no,
+                    "source": line.source,
+                    "lines": evidence_lines(window),
+                    "risk_reasons": risk_reasons,
+                },
             }
         )
     return centers
+
+
+def scoped_center_lines(
+    center_text: str,
+    center_page_no: int,
+    text_lines: list[ProtocolTextLine] | None,
+) -> list[ProtocolTextLine]:
+    if text_lines:
+        page_lines = [
+            line
+            for line in text_lines
+            if line.page_no == center_page_no and line.text.strip()
+        ]
+        if page_lines:
+            return page_lines
+    return [
+        ProtocolTextLine(page_no=center_page_no, text=line, source="page_text")
+        for line in center_text.splitlines()
+        if line.strip()
+    ]
+
+
+def parse_center_fields(
+    code: str,
+    inline: str,
+    window: list[ProtocolTextLine],
+) -> tuple[str, str | None, str | None, bool]:
+    raw_values = scoped_center_field_values(code, inline, window)
+    compact_values = [compact_line(value) for value in raw_values]
+    combined = "\n".join(raw_values)
+    compact_combined = "".join(compact_values)
+
+    filing_no = _first_match(r"(20\d{7})", combined)
+    investigator = extract_investigator(inline) or extract_investigator_from_values(raw_values)
+    mixed_investigator = False
+
+    candidates = []
+    for value in raw_values:
+        if is_mixed_investigator_line(value, investigator):
+            mixed_investigator = True
+        candidate = clean_center_name_candidate(value, investigator)
+        if candidate:
+            candidates.append(candidate)
+    fragment_candidate = clean_center_name_candidate(
+        "".join(center_name_fragments(raw_values, investigator)),
+        investigator,
+    )
+    if fragment_candidate:
+        candidates.append(fragment_candidate)
+    compact_candidate = clean_center_name_candidate(compact_combined, investigator)
+    if compact_candidate:
+        candidates.append(compact_candidate)
+
+    center_name = best_center_name(candidates) or fallback_risky_center_name(raw_values)
+    return center_name, investigator, filing_no, mixed_investigator
+
+
+def scoped_center_field_values(
+    code: str,
+    inline: str,
+    window: list[ProtocolTextLine],
+) -> list[str]:
+    code_line_index = next(
+        (
+            index
+            for index, line in enumerate(window)
+            if re.match(rf"^\s*{re.escape(code)}\b", line.text)
+        ),
+        0,
+    )
+    values: list[str] = []
+    for line in reversed(window[:code_line_index]):
+        text = line.text.strip()
+        if is_center_code_line(text) or is_center_header_line(text):
+            break
+        values.insert(0, text)
+    values.append(inline)
+    for line in window[code_line_index + 1 :]:
+        text = line.text.strip()
+        if is_center_code_line(text):
+            break
+        values.append(text)
+    return [value for value in values if value.strip()]
+
+
+def is_center_code_line(value: str) -> bool:
+    return re.match(r"^\s*\d{2}\b", value) is not None
+
+
+def is_center_header_line(value: str) -> bool:
+    compact = compact_line(value)
+    return any(term in compact for term in FIELD_HEADER_TERMS)
+
+
+def is_mixed_investigator_line(value: str, investigator: str | None) -> bool:
+    if not investigator or investigator not in value:
+        return False
+    if not any(term in value for term in INSTITUTION_TERMS):
+        return False
+    # Normal table extraction often separates the investigator column with wide
+    # whitespace. Treat only visually glued values as risky.
+    return re.search(rf"\s{{2,}}{re.escape(investigator)}\s*$", value) is None
+
+
+def clean_center_name_candidate(value: str, investigator: str | None) -> str:
+    cleaned = strip_filing_label(value)
+    cleaned = re.sub(r"^\d{2}", "", cleaned)
+    if investigator:
+        cleaned = cleaned.replace(investigator, "")
+    for term in FIELD_HEADER_TERMS:
+        cleaned = cleaned.replace(term, "")
+    cleaned = re.sub(r"[\s:：|｜]+", "", cleaned)
+    cleaned = re.sub(r"^[一二三四五六七八九十、.．]+", "", cleaned)
+    return cleaned.strip()
+
+
+def center_name_fragments(values: list[str], investigator: str | None) -> list[str]:
+    fragments: list[str] = []
+    for value in values:
+        cleaned = clean_center_name_candidate(value, investigator)
+        if not cleaned:
+            continue
+        if re.fullmatch(r"20\d{7}", cleaned):
+            continue
+        if investigator and cleaned == investigator:
+            continue
+        if re.fullmatch(r"[\u4e00-\u9fff]{2,4}", cleaned) and not any(
+            term in cleaned for term in INSTITUTION_TERMS
+        ):
+            continue
+        fragments.append(cleaned)
+    return fragments
+
+
+def best_center_name(candidates: list[str]) -> str:
+    institution_candidates = [
+        candidate
+        for candidate in candidates
+        if is_valid_institution_name(candidate)
+    ]
+    if institution_candidates:
+        return max(institution_candidates, key=len)
+    long_candidates = [candidate for candidate in candidates if len(candidate) >= 5]
+    return max(long_candidates, key=len) if long_candidates else ""
+
+
+def fallback_risky_center_name(values: list[str]) -> str:
+    for value in values:
+        cleaned = clean_center_name_candidate(value, investigator=None)
+        if not cleaned:
+            continue
+        if re.fullmatch(r"20\d{7}", cleaned):
+            continue
+        return cleaned
+    return ""
 
 
 def extract_investigator(value: str) -> str | None:
@@ -306,6 +533,100 @@ def extract_investigator(value: str) -> str | None:
     if re.fullmatch(r"[\u4e00-\u9fff]{2,4}", value.strip()):
         return value.strip()
     return None
+
+
+def extract_investigator_from_values(values: list[str]) -> str | None:
+    for value in values:
+        investigator = extract_investigator(value)
+        if investigator:
+            return investigator
+    for value in values:
+        investigator = extract_glued_leading_investigator(value)
+        if investigator:
+            return investigator
+    for value in values:
+        compact = compact_line(value)
+        matches = re.findall(r"[\u4e00-\u9fff]{2,4}", compact)
+        for match in reversed(matches):
+            if not is_valid_institution_name(match) and not any(
+                term in match for term in FIELD_HEADER_TERMS
+            ):
+                return match
+    return None
+
+
+def extract_glued_leading_investigator(value: str) -> str | None:
+    compact = clean_center_name_candidate(value, investigator=None)
+    compact = re.sub(r"^\d{2}", "", compact)
+    if len(compact) < 7 or compact[:2] in INSTITUTION_LEADING_TERMS:
+        return None
+    for name_length in range(2, 5):
+        possible_name = compact[:name_length]
+        possible_institution = compact[name_length:]
+        if possible_name[0] not in COMMON_CHINESE_SURNAMES:
+            continue
+        if possible_name.endswith(tuple(LOCATION_SUFFIX_CHARS)):
+            continue
+        if any(term in possible_name for term in INSTITUTION_TERMS):
+            continue
+        if is_valid_institution_name(possible_institution):
+            return possible_name
+    return None
+
+
+def is_valid_institution_name(value: str) -> bool:
+    return len(value) >= 5 and any(term in value for term in INSTITUTION_TERMS)
+
+
+def center_risk_reasons(
+    code: str,
+    center_name: str,
+    filing_no: str | None,
+    investigator: str | None,
+    mixed_investigator: bool = False,
+) -> list[str]:
+    reasons: list[str] = []
+    if not re.fullmatch(r"\d{2}", code):
+        reasons.append("机构代号格式异常")
+    if not is_valid_institution_name(center_name):
+        reasons.append("机构名称缺少医院/中心等特征")
+    if re.fullmatch(r"[\u4e00-\u9fff]{2,4}", center_name):
+        reasons.append("机构名称疑似人名")
+    if not filing_no or not re.fullmatch(r"20\d{7}", filing_no):
+        reasons.append("备案号缺失或格式异常")
+    if not investigator or not re.fullmatch(r"[\u4e00-\u9fff]{2,4}", investigator):
+        reasons.append("研究者缺失或格式异常")
+    if investigator and investigator in center_name:
+        reasons.append("研究者疑似混入机构名称")
+    if mixed_investigator:
+        reasons.append("OCR行疑似混合机构名称和研究者")
+    return reasons
+
+
+def center_confidence(risk_reasons: list[str], window: list[ProtocolTextLine]) -> float:
+    block_scores = [
+        line.confidence for line in window if isinstance(line.confidence, int | float)
+    ]
+    block_score = sum(block_scores) / len(block_scores) if block_scores else 0.9
+    penalty = min(0.6, len(risk_reasons) * 0.18)
+    return round(max(0.0, min(1.0, block_score - penalty)), 2)
+
+
+def evidence_lines(window: list[ProtocolTextLine]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for line in window:
+        stripped = line.text.strip()
+        if not stripped:
+            continue
+        result.append(
+            {
+                "page_no": line.page_no,
+                "text": stripped[:160],
+                "source": line.source,
+                "confidence": line.confidence,
+            }
+        )
+    return result[:6]
 
 
 def strip_filing_label(value: str) -> str:
@@ -329,6 +650,7 @@ def apply_protocol_draft(
     )
     if trial_parent is None:
         raise TrialProtocolError("TRIAL parent stage was not initialized")
+    ensure_centers_confirmed(draft)
 
     result = {
         "created_stages": 0,
@@ -443,6 +765,14 @@ def apply_protocol_draft(
             center.description = description
             result["updated_centers"] += 1
     return result
+
+
+def ensure_centers_confirmed(draft: dict[str, Any]) -> None:
+    for center_data in draft.get("centers", []):
+        if not center_data.get("enabled", True):
+            continue
+        if center_data.get("requires_confirmation") and not center_data.get("confirmed"):
+            raise TrialProtocolError(CONFIRMATION_ERROR)
 
 
 def center_description(center_data: dict[str, Any]) -> str | None:

@@ -1,5 +1,4 @@
 import {
-  Activity,
   BookOpen,
   Building2,
   ChevronDown,
@@ -22,6 +21,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
+import fortuneLogo from "@/assets/fortune-logo-compact-light.png";
+import systemMark from "@/assets/xunchang-system-mark.png";
 import { Button } from "@/components/ui/button";
 import { authApi } from "@/services/auth";
 import { masterDataApi } from "@/services/master-data";
@@ -107,6 +108,8 @@ type DatasetTreeItem = {
 type SidebarMode = "fixed" | "auto-hide";
 
 const SIDEBAR_MODE_STORAGE_KEY = "clinical-data-sidebar-mode";
+const PRODUCT_NAME = "巡常临床数据智能管理系统";
+const PRODUCT_ENGLISH_NAME = "Xunchang Clinical Data Intelligence Management System";
 
 function buildDatasetPath(projectId?: number, centerId?: number, stage = "STARTUP", view?: string) {
   const params = new URLSearchParams();
@@ -127,7 +130,7 @@ export function AppShell() {
   const isClinicalDataset = location.pathname.startsWith("/clinical-dataset");
   const isImageData = location.pathname.startsWith("/image-data");
   const canReadClinicalDataset = hasAnyPermission(["clinical_data:read"]);
-  const canMaintainDashboard = Boolean(user?.is_admin || user?.roles.includes("project_manager"));
+  const canMaintainDashboard = Boolean(user?.is_admin || user?.roles?.includes("project_manager"));
   const visibleNavItems = navItems.filter(
     (item) =>
       (!item.adminOnly || user?.is_admin) &&
@@ -250,7 +253,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-950">
+    <div className="min-h-screen bg-[#F5F8FB] text-[#10233F]">
       {sidebarMode === "auto-hide" && (
         <div
           className="fixed inset-y-0 left-0 z-30 hidden w-5 lg:block"
@@ -261,7 +264,7 @@ export function AppShell() {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 hidden h-screen flex-col border-r border-slate-200 bg-white py-5 transition-[width] duration-200 lg:flex",
+          "fixed inset-y-0 left-0 z-40 hidden h-screen flex-col border-r border-[#DDE7F0] bg-white py-5 shadow-sm shadow-sky-950/5 transition-[width] duration-200 lg:flex",
           sidebarExpanded ? "w-64 px-4" : "w-20 px-3",
         )}
         onMouseEnter={openAutoSidebarSoon}
@@ -273,13 +276,13 @@ export function AppShell() {
             sidebarExpanded ? "gap-3" : "justify-center",
           )}
         >
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white">
-            <Activity className="size-5" aria-hidden="true" />
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-[#DDE7F0] bg-white shadow-sm">
+            <img src={systemMark} alt="巡常系统图标" className="size-9 rounded-md object-contain" />
           </div>
           {sidebarExpanded && (
             <div className="min-w-0">
-              <p className="text-sm font-semibold leading-5">临床数据收集系统</p>
-              <p className="text-xs text-slate-500">Clinical Data System</p>
+              <p className="text-sm font-semibold leading-5 text-[#10233F]">{PRODUCT_NAME}</p>
+              <p className="truncate text-xs text-[#5D7188]">{PRODUCT_ENGLISH_NAME}</p>
             </div>
           )}
         </div>
@@ -320,7 +323,7 @@ export function AppShell() {
                   cn(
                     "flex items-center rounded-md py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950",
                     sidebarExpanded ? "gap-3 px-3" : "justify-center px-0",
-                    isActive && "bg-slate-900 text-white hover:bg-slate-900 hover:text-white",
+                    isActive && "bg-[#0B2E63] text-white shadow-sm shadow-sky-950/15 hover:bg-[#0B2E63] hover:text-white",
                   )
                 }
                 title={!sidebarExpanded ? item.label : undefined}
@@ -350,7 +353,7 @@ export function AppShell() {
                           type="button"
                           className={cn(
                             "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900",
-                            projectActive && "bg-slate-100 text-slate-900",
+                            projectActive && "bg-[#EDF6FA] text-[#10233F]",
                           )}
                           onClick={() => handleDatasetProject(project, centers)}
                         >
@@ -368,7 +371,7 @@ export function AppShell() {
                                   type="button"
                                   className={cn(
                                     "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-900",
-                                    selectedCenterId === center.id && "bg-emerald-50 text-emerald-700",
+                                    selectedCenterId === center.id && "bg-[#E4F8F4] text-[#087C73]",
                                   )}
                                   onClick={() => handleDatasetCenter(project, center)}
                                 >
@@ -399,7 +402,7 @@ export function AppShell() {
               <p className="truncate text-sm font-medium text-slate-800">
                 {user?.full_name || user?.username}
               </p>
-              <p className="truncate text-xs text-slate-500">{user?.roles.join(", ")}</p>
+              <p className="truncate text-xs text-slate-500">{user?.roles?.join(", ")}</p>
             </>
           ) : (
             <div
@@ -424,12 +427,31 @@ export function AppShell() {
       </aside>
 
       <div className={cn(sidebarMode === "fixed" ? "lg:pl-64" : "lg:pl-20")}>
-        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold">临床数据收集系统</p>
-              <p className="text-xs text-slate-500">P0 工程骨架</p>
+        <header className="sticky top-0 z-20 hidden border-b border-[#DDE7F0] bg-white/90 px-6 py-3 backdrop-blur lg:flex lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs font-medium uppercase text-[#0F78D4]">
+              Clinical Data Intelligence
+            </p>
+            <p className="mt-0.5 text-sm font-semibold text-[#10233F]">{PRODUCT_NAME}</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="rounded-md border border-[#DDE7F0] bg-[#F5F8FB] px-3 py-1.5 text-xs font-medium text-[#39506A]">
+              3.4.2 品牌骨架
             </div>
+            <img src={fortuneLogo} alt="Fortune 势通" className="h-7 w-auto object-contain" />
+          </div>
+        </header>
+
+        <header className="sticky top-0 z-20 border-b border-[#DDE7F0] bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
+          <div className="flex items-center justify-between">
+            <div className="flex min-w-0 items-center gap-2">
+              <img src={systemMark} alt="巡常系统图标" className="size-9 shrink-0 rounded-md object-contain" />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-[#10233F]">{PRODUCT_NAME}</p>
+                <p className="text-xs text-[#5D7188]">Clinical Data Intelligence</p>
+              </div>
+            </div>
+            <img src={fortuneLogo} alt="Fortune 势通" className="h-6 w-auto max-w-28 object-contain" />
           </div>
           <nav className="mt-3 grid grid-cols-4 gap-1 sm:grid-cols-8">
             {visibleNavItems.map((item) => (
@@ -440,7 +462,7 @@ export function AppShell() {
                 className={({ isActive }) =>
                   cn(
                     "flex h-11 items-center justify-center rounded-md text-slate-500",
-                    isActive && "bg-slate-900 text-white",
+                    isActive && "bg-[#0B2E63] text-white",
                   )
                 }
                 aria-label={item.label}
