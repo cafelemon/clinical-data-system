@@ -4,6 +4,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 
 import { RemarkAutosaveCell } from "@/components/clinical-data/RemarkAutosaveCell";
 import { UpdateRecordCell } from "@/components/clinical-data/UpdateRecordCell";
+import { DocumentExtractedFieldsPanel } from "@/components/document-fields/DocumentExtractedFieldsPanel";
 import { FileActions } from "@/components/files/FileActions";
 import { ReviewEntrypoints } from "@/components/files/ReviewEntrypoints";
 import { BatchApproveButton } from "@/components/reviews/BatchApproveButton";
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { clinicalDataApi } from "@/services/clinical-data";
 import { useAuthStore } from "@/stores/auth-store";
 import type { Subject, SubjectItem, SubjectItemRemarkResponse, SubjectSection } from "@/types/clinical-data";
+import type { FileRecord } from "@/types/files";
 
 const uploadStatusLabels: Record<string, string> = {
   not_uploaded: "未上传",
@@ -150,6 +152,7 @@ export function SubjectDetailPage() {
   const [sections, setSections] = useState<SubjectSection[]>([]);
   const [items, setItems] = useState<SubjectItem[]>([]);
   const [detailRefreshKey, setDetailRefreshKey] = useState(0);
+  const [expandedFieldItemId, setExpandedFieldItemId] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const hasPermission = useAuthStore((state) => state.hasPermission);
@@ -263,7 +266,10 @@ export function SubjectDetailPage() {
     saveScrollPosition(`subject-detail:${subjectId}:${itemId}`, itemId);
   }
 
-  const handleDataChanged = useCallback(() => {
+  const handleDataChanged = useCallback((file?: FileRecord) => {
+    if (file?.subject_item_id) {
+      setExpandedFieldItemId(file.subject_item_id);
+    }
     setDetailRefreshKey((current) => current + 1);
     void loadData();
   }, [loadData]);
@@ -448,70 +454,90 @@ export function SubjectDetailPage() {
                     <div
                       key={item.id}
                       id={`subject-item-${item.id}`}
-                      className="grid gap-4 py-4 lg:grid-cols-[minmax(180px,1.1fr)_minmax(150px,0.8fr)_minmax(220px,1fr)_minmax(190px,0.9fr)_minmax(220px,1fr)]"
+                      className="py-3"
                     >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="min-w-0 break-words text-sm font-semibold leading-6 text-slate-950">
-                            {item.item_name}
-                          </p>
-                          <Badge tone={item.required ? "warning" : "neutral"}>
-                            {item.required ? "必填" : "非必填"}
-                          </Badge>
+                      <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
+                        <div className="grid min-h-32 gap-4 xl:grid-cols-[minmax(180px,1fr)_minmax(170px,0.9fr)_minmax(260px,1.25fr)_minmax(180px,0.9fr)_minmax(220px,1fr)]">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="min-w-0 break-words text-sm font-semibold leading-6 text-slate-950">
+                                {item.item_name}
+                              </p>
+                              <Badge tone={item.required ? "warning" : "neutral"}>
+                                {item.required ? "必填" : "非必填"}
+                              </Badge>
+                            </div>
+                            <p className="mt-2 break-all text-xs font-medium text-slate-500">
+                              {item.item_code}
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap gap-1.5">
+                              <Badge tone={statusTone(completeness)}>
+                                {statusLabel(dataStatusLabels, completeness)}
+                              </Badge>
+                              <Badge tone={statusTone(item.upload_status)}>
+                                {statusLabel(uploadStatusLabels, item.upload_status)}
+                              </Badge>
+                              <Badge tone={statusTone(item.review_status)}>
+                                {statusLabel(reviewStatusLabels, item.review_status)}
+                              </Badge>
+                            </div>
+                            <p className="text-xs leading-5 text-slate-500">
+                              上传 {item.uploaded_by_name || "-"} · 审核 {item.reviewer_name || "-"}
+                            </p>
+                          </div>
+
+                          <FileActions
+                            subjectItemId={item.id}
+                            defaultCategory="clinical_document"
+                            canRead={canReadFiles}
+                            canWrite={canWriteFiles}
+                            canDelete={canDeleteFiles}
+                            onChanged={handleDataChanged}
+                          />
+
+                          <div className="space-y-2">
+                            <UpdateRecordCell itemId={item.id} refreshKey={detailRefreshKey} />
+                            <ReviewActions
+                              targetType="subject_item"
+                              targetId={item.id}
+                              uploadStatus={item.upload_status}
+                              reviewStatus={item.review_status}
+                              canSubmit={canSubmitReview}
+                              canReview={canReview}
+                              canReadRecords={canReadReviews}
+                              showLatest={false}
+                              showRecordsButton={false}
+                              onChanged={handleDataChanged}
+                            />
+                            <ReviewEntrypoints
+                              subjectItemId={item.id}
+                              canReadFiles={canReadFiles}
+                              refreshKey={detailRefreshKey}
+                              linkState={reviewOriginForItem(item.id)}
+                              onNavigate={() => handleReviewNavigate(item.id)}
+                            />
+                          </div>
+
+                          <RemarkAutosaveCell
+                            item={item}
+                            canWrite={canWrite}
+                            onSaved={handleRemarkSaved}
+                          />
                         </div>
-                        <p className="mt-1 text-xs text-slate-500">{item.item_code}</p>
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap gap-1.5">
-                          <Badge tone={statusTone(completeness)}>
-                            {statusLabel(dataStatusLabels, completeness)}
-                          </Badge>
-                          <Badge tone={statusTone(item.upload_status)}>
-                            {statusLabel(uploadStatusLabels, item.upload_status)}
-                          </Badge>
-                          <Badge tone={statusTone(item.review_status)}>
-                            {statusLabel(reviewStatusLabels, item.review_status)}
-                          </Badge>
+
+                        <div className="mt-3 border-t border-slate-100 pt-3">
+                          <DocumentExtractedFieldsPanel
+                            subjectItemId={item.id}
+                            canWrite={canWriteFiles}
+                            defaultOpen={expandedFieldItemId === item.id}
+                            refreshKey={detailRefreshKey}
+                            onChanged={handleDataChanged}
+                          />
                         </div>
-                        <p className="text-xs text-slate-500">
-                          上传 {item.uploaded_by_name || "-"} · 审核 {item.reviewer_name || "-"}
-                        </p>
                       </div>
-                      <div className="space-y-3">
-                        <FileActions
-                          subjectItemId={item.id}
-                          defaultCategory="clinical_document"
-                          canRead={canReadFiles}
-                          canWrite={canWriteFiles}
-                          canDelete={canDeleteFiles}
-                          onChanged={handleDataChanged}
-                        />
-                        <ReviewActions
-                          targetType="subject_item"
-                          targetId={item.id}
-                          uploadStatus={item.upload_status}
-                          reviewStatus={item.review_status}
-                          canSubmit={canSubmitReview}
-                          canReview={canReview}
-                          canReadRecords={canReadReviews}
-                          showLatest={false}
-                          showRecordsButton={false}
-                          onChanged={handleDataChanged}
-                        />
-                        <ReviewEntrypoints
-                          subjectItemId={item.id}
-                          canReadFiles={canReadFiles}
-                          refreshKey={detailRefreshKey}
-                          linkState={reviewOriginForItem(item.id)}
-                          onNavigate={() => handleReviewNavigate(item.id)}
-                        />
-                      </div>
-                      <UpdateRecordCell itemId={item.id} refreshKey={detailRefreshKey} />
-                      <RemarkAutosaveCell
-                        item={item}
-                        canWrite={canWrite}
-                        onSaved={handleRemarkSaved}
-                      />
                     </div>
                   );
                 })}

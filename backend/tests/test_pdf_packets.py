@@ -288,7 +288,7 @@ def test_pdf_packet_recognizes_segments_and_uploads_selected_pages(
     assert upload.status_code == 201
     packet = upload.json()
     assert packet["page_count"] == 2
-    assert packet["status"] == "ready"
+    assert packet["status"] == "ready", packet["error_message"]
 
     segments = client.get(f"/api/pdf-packets/{packet['id']}/segments", headers=admin_headers)
     assert segments.status_code == 200

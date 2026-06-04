@@ -30,6 +30,7 @@ from app.schemas.dashboard import (
     DashboardReviewStatusRead,
     DashboardTrendPointRead,
 )
+from app.schemas.document_field import DocumentExtractedFieldRead, DocumentExtractedFieldUpdate
 from app.schemas.excel_io import ExcelImportErrorRead, ExcelImportResultRead
 from app.schemas.file_asset import FileRead, FileVersionRead
 from app.schemas.identity import (
@@ -147,6 +148,8 @@ __all__ = [
     "DictionaryCreate",
     "DictionaryRead",
     "DictionaryUpdate",
+    "DocumentExtractedFieldRead",
+    "DocumentExtractedFieldUpdate",
     "CorrectionTaskCreate",
     "CorrectionTaskRead",
     "CorrectionTaskReturnRequest",

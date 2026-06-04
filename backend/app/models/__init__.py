@@ -12,6 +12,7 @@ from app.models.dashboard_v31 import (
     DashboardSubjectResult,
 )
 from app.models.dictionary import Dictionary
+from app.models.document_field import DocumentExtractedField
 from app.models.file_asset import FileAsset, FileVersion
 from app.models.identity import (
     Permission,
@@ -46,6 +47,7 @@ __all__ = [
     "DashboardSubjectOverview",
     "DashboardSubjectResult",
     "Dictionary",
+    "DocumentExtractedField",
     "FileAsset",
     "FileVersion",
     "OperationLog",

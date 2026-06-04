@@ -1,4 +1,5 @@
 import json
+import tempfile
 from pathlib import Path
 from typing import Annotated, Any, TypeVar
 from uuid import uuid4
@@ -16,6 +17,7 @@ from fastapi import (
 )
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 from starlette.responses import FileResponse
 
 from app.api.deps import AccessContext, require_permission
@@ -25,6 +27,7 @@ from app.core.database import get_db
 from app.core.files import ensure_relative_path
 from app.models import (
     Center,
+    DocumentExtractedField,
     FileAsset,
     FileVersion,
     PdfPacket,
@@ -44,8 +47,15 @@ from app.schemas import (
     PdfPacketSegmentUpload,
     PdfPacketSegmentUploadRead,
 )
+from app.schemas.document_field import DocumentExtractedFieldRead, DocumentExtractedFieldUpdate
 from app.services.audit import record_operation
 from app.services.clinical_status import recalculate_subject_status
+from app.services.document_fields import (
+    analyze_segment_fields,
+    copy_segment_fields_to_file_version,
+    sync_subject_item_after_fields,
+    update_field,
+)
 from app.services.pdf_packets import (
     SEGMENT_STATUS_MANUALLY_CONFIRMED,
     SEGMENT_STATUS_MANUALLY_MODIFIED,
@@ -65,11 +75,22 @@ from app.services.pdf_packets import (
 )
 
 router = APIRouter()
-ModelT = TypeVar("ModelT", Project, Center, Subject, SubjectItem, PdfPacket, PdfPacketSegment)
+ModelT = TypeVar(
+    "ModelT",
+    Project,
+    Center,
+    Subject,
+    SubjectItem,
+    PdfPacket,
+    PdfPacketSegment,
+    DocumentExtractedField,
+)
 DBSession = Annotated[Session, Depends(get_db)]
 PacketReadAccess = Annotated[AccessContext, Depends(require_permission("pdf_packets:read"))]
 PacketWriteAccess = Annotated[AccessContext, Depends(require_permission("pdf_packets:write"))]
 PacketDeleteAccess = Annotated[AccessContext, Depends(require_permission("pdf_packets:delete"))]
+FileReadAccess = Annotated[AccessContext, Depends(require_permission("files:read"))]
+FileWriteAccess = Annotated[AccessContext, Depends(require_permission("files:write"))]
 
 
 def get_or_404(db: Session, model: type[ModelT], item_id: int, label: str) -> ModelT:
@@ -121,6 +142,16 @@ def get_or_404_for_session(subject_item: SubjectItem, packet: PdfPacket) -> Subj
 def response_packet(packet: PdfPacket) -> PdfPacket:
     packet.segment_count = len(packet.segments)
     return packet
+
+
+def ensure_field_read_permission(access: AccessContext) -> None:
+    if not access.has_permission("files:read"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+
+def ensure_field_write_permission(access: AccessContext) -> None:
+    if not access.has_permission("files:write"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
 
 
 def validate_packet_page_range(packet: PdfPacket, page_start: int, page_end: int) -> None:
@@ -455,6 +486,95 @@ def list_pdf_packet_segments(
             .where(PdfPacketSegment.packet_id == packet.id)
             .order_by(PdfPacketSegment.page_start, PdfPacketSegment.id)
         )
+    )
+
+
+@router.get(
+    "/pdf-packet-segments/{segment_id}/extracted-fields",
+    response_model=list[DocumentExtractedFieldRead],
+)
+def list_segment_extracted_fields(
+    segment_id: int,
+    db: DBSession,
+    access: FileReadAccess,
+) -> list[DocumentExtractedField]:
+    segment = get_or_404(db, PdfPacketSegment, segment_id, "pdf packet segment")
+    packet = get_or_404(db, PdfPacket, segment.packet_id, "pdf packet")
+    ensure_packet_scope(access, packet)
+    fields = analyze_segment_fields(db, segment)
+    db.commit()
+    return fields
+
+
+@router.patch(
+    "/pdf-packet-segments/{segment_id}/extracted-fields/{field_id}",
+    response_model=DocumentExtractedFieldRead,
+)
+def update_segment_extracted_field(
+    segment_id: int,
+    field_id: int,
+    payload: DocumentExtractedFieldUpdate,
+    db: DBSession,
+    access: FileWriteAccess,
+    request: Request,
+) -> DocumentExtractedField:
+    segment = get_or_404(db, PdfPacketSegment, segment_id, "pdf packet segment")
+    packet = get_or_404(db, PdfPacket, segment.packet_id, "pdf packet")
+    ensure_packet_scope(access, packet)
+    field = get_or_404(db, DocumentExtractedField, field_id, "extracted field")
+    if field.pdf_packet_segment_id != segment.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="extracted field not found")
+    update_field(
+        db,
+        field,
+        raw_value=payload.raw_value,
+        normalized_value=payload.normalized_value,
+        status_value=payload.status,
+        user_id=access.user.id,
+    )
+    record_operation(
+        db,
+        action="pdf_packet.segment_extracted_field_update",
+        request=request,
+        access=access,
+        target_type="document_extracted_field",
+        target_id=field.id,
+        project_id=packet.project_id,
+        center_id=packet.center_id,
+        detail={"segment_id": segment.id, "field_key": field.field_key, "status": field.status},
+    )
+    db.commit()
+    db.refresh(field)
+    return field
+
+
+@router.get("/pdf-packet-segments/{segment_id}/preview")
+def preview_pdf_packet_segment(
+    segment_id: int,
+    db: DBSession,
+    access: FileReadAccess,
+) -> FileResponse:
+    segment = get_or_404(db, PdfPacketSegment, segment_id, "pdf packet segment")
+    packet = get_or_404(db, PdfPacket, segment.packet_id, "pdf packet")
+    ensure_packet_scope(access, packet)
+    validate_packet_page_range(packet, segment.page_start, segment.page_end)
+    source_path = ensure_relative_path(settings.file_storage_root, packet.storage_path)
+    if not source_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="packet file not found")
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    temp_path = Path(temp_file.name)
+    temp_file.close()
+    try:
+        extract_pdf_pages(source_path, temp_path, segment.page_start, segment.page_end)
+    except PdfPacketError as exc:
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    return FileResponse(
+        temp_path,
+        media_type="application/pdf",
+        filename=f"{packet.screening_no}_p{segment.page_start}-{segment.page_end}.pdf",
+        content_disposition_type="inline",
+        background=BackgroundTask(lambda: temp_path.unlink(missing_ok=True)),
     )
 
 
@@ -895,7 +1015,7 @@ def upload_pdf_packet_segment(
     db.add(file_asset)
     db.flush()
     db.add(
-        FileVersion(
+        file_version := FileVersion(
             file_id=file_asset.id,
             version=1,
             storage_path=file_asset.storage_path,
@@ -911,6 +1031,8 @@ def upload_pdf_packet_segment(
     subject_item.upload_status = UPLOAD_UPLOADED
     subject_item.review_status = DEFAULT_REVIEW_STATUS
     recalculate_subject_status(db, subject)
+    copy_segment_fields_to_file_version(db, segment, file_version)
+    sync_subject_item_after_fields(db, file_asset, user_id=access.user.id, file_version=file_version)
     segment.subject_item_id = subject_item.id
     segment.file_asset_id = file_asset.id
     segment.status = SEGMENT_STATUS_UPLOADED

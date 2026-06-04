@@ -1,4 +1,5 @@
 import { http } from "@/services/http";
+import type { DocumentExtractedField, DocumentExtractedFieldUpdate } from "@/types/document-fields";
 import type {
   PdfPacket,
   PdfPacketAnalysisReport,
@@ -120,6 +121,25 @@ export const pdfPacketsApi = {
     const response = await http.get<Blob>(`/pdf-packets/${id}/preview`, {
       responseType: "blob",
     });
+    return response.data;
+  },
+  previewSegment: async (id: number) => {
+    const response = await http.get<Blob>(`/pdf-packet-segments/${id}/preview`, {
+      responseType: "blob",
+    });
+    return response.data;
+  },
+  listSegmentExtractedFields: (id: number) =>
+    read<DocumentExtractedField[]>(`/pdf-packet-segments/${id}/extracted-fields`),
+  updateSegmentExtractedField: async (
+    segmentId: number,
+    fieldId: number,
+    payload: DocumentExtractedFieldUpdate,
+  ) => {
+    const response = await http.patch<DocumentExtractedField>(
+      `/pdf-packet-segments/${segmentId}/extracted-fields/${fieldId}`,
+      payload,
+    );
     return response.data;
   },
   getAnalysisReport: (packetId: number) =>

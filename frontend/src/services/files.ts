@@ -1,4 +1,5 @@
 import { http } from "@/services/http";
+import type { DocumentExtractedField, DocumentExtractedFieldUpdate } from "@/types/document-fields";
 import type { FileQuery, FileRecord, FileVersion } from "@/types/files";
 
 function filenameFromDisposition(disposition: string | undefined, fallback: string) {
@@ -63,6 +64,27 @@ export const filesApi = {
       responseType: "blob",
       timeout: 600000,
     });
+    return response.data;
+  },
+  listExtractedFields: (id: number, version?: number) =>
+    read<DocumentExtractedField[]>(`/files/${id}/extracted-fields`, { version }),
+  analyzeExtractedFields: async (id: number, version?: number, force = false) => {
+    const response = await http.post<DocumentExtractedField[]>(
+      `/files/${id}/extracted-fields/analyze`,
+      undefined,
+      { params: { version, force } },
+    );
+    return response.data;
+  },
+  updateExtractedField: async (
+    fileId: number,
+    fieldId: number,
+    payload: DocumentExtractedFieldUpdate,
+  ) => {
+    const response = await http.patch<DocumentExtractedField>(
+      `/files/${fileId}/extracted-fields/${fieldId}`,
+      payload,
+    );
     return response.data;
   },
 };

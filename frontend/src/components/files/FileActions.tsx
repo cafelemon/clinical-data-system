@@ -1,9 +1,10 @@
 import { Download, Eye, FileText, History, RefreshCw, Trash2, Upload, X } from "lucide-react";
-import { ChangeEvent, DragEvent, useCallback, useEffect, useState } from "react";
+import { ChangeEvent, DragEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { PdfPreviewDialog } from "@/components/files/PdfPreviewDialog";
 import { cn } from "@/lib/utils";
 import { filesApi } from "@/services/files";
 import type { FileRecord, FileVersion } from "@/types/files";
@@ -15,7 +16,14 @@ type FileActionsProps = {
   canRead: boolean;
   canWrite: boolean;
   canDelete: boolean;
-  onChanged?: () => void;
+  onChanged?: (file?: FileRecord) => void;
+};
+
+type PreviewDialog = {
+  title: string;
+  url: string | null;
+  loading: boolean;
+  error: string | null;
 };
 
 function isPdfFile(file: File) {
@@ -36,18 +44,13 @@ function formatDateTime(value: string) {
   return value.replace("T", " ").slice(0, 16);
 }
 
-function openBlob(blob: Blob, filename?: string) {
+function downloadBlob(blob: Blob, filename: string) {
   const url = window.URL.createObjectURL(blob);
-  if (filename) {
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    link.click();
-    window.setTimeout(() => window.URL.revokeObjectURL(url), 500);
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 500);
 }
 
 export function FileActions({
@@ -65,6 +68,9 @@ export function FileActions({
   const [message, setMessage] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [previewDialog, setPreviewDialog] = useState<PreviewDialog | null>(null);
+  const [previewFrameKey, setPreviewFrameKey] = useState(0);
+  const previewUrlRef = useRef<string | null>(null);
 
   const loadFiles = useCallback(async () => {
     if (!canRead) return;
@@ -80,6 +86,44 @@ export function FileActions({
     void loadFiles();
   }, [loadFiles]);
 
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) {
+        window.URL.revokeObjectURL(previewUrlRef.current);
+      }
+    };
+  }, []);
+
+  function clearPreviewUrl() {
+    if (previewUrlRef.current) {
+      window.URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+  }
+
+  function closePreviewDialog() {
+    clearPreviewUrl();
+    setPreviewDialog(null);
+  }
+
+  function showPreviewLoading(title: string) {
+    clearPreviewUrl();
+    setPreviewDialog({ title, url: null, loading: true, error: null });
+  }
+
+  function showPreviewBlob(title: string, blob: Blob) {
+    clearPreviewUrl();
+    const url = window.URL.createObjectURL(blob);
+    previewUrlRef.current = url;
+    setPreviewFrameKey((current) => current + 1);
+    setPreviewDialog({ title, url, loading: false, error: null });
+  }
+
+  function showPreviewError(title: string, error: string) {
+    clearPreviewUrl();
+    setPreviewDialog({ title, url: null, loading: false, error });
+  }
+
   const uploadSelectedFile = useCallback(
     async (selectedFile: File) => {
       if (!isPdfFile(selectedFile)) {
@@ -88,7 +132,7 @@ export function FileActions({
       }
       setUploading(true);
       try {
-        await filesApi.uploadFile({
+        const uploadedFile = await filesApi.uploadFile({
           file: selectedFile,
           fileCategory: defaultCategory,
           stageFileId,
@@ -96,7 +140,7 @@ export function FileActions({
         });
         setMessage("上传成功");
         await loadFiles();
-        onChanged?.();
+        onChanged?.(uploadedFile);
       } catch {
         setMessage("上传失败");
       } finally {
@@ -148,10 +192,10 @@ export function FileActions({
       return;
     }
     try {
-      await filesApi.replaceFile(file.id, selectedFile, "前端重新上传");
+      const replacedFile = await filesApi.replaceFile(file.id, selectedFile, "前端重新上传");
       setMessage("重新上传成功");
       await loadFiles();
-      onChanged?.();
+      onChanged?.(replacedFile);
     } catch {
       setMessage("重新上传失败");
     }
@@ -160,17 +204,20 @@ export function FileActions({
   async function handleDownload(file: FileRecord, version?: number) {
     try {
       const { blob, filename } = await filesApi.downloadFile(file.id, version);
-      openBlob(blob, filename);
+      downloadBlob(blob, filename);
     } catch {
       setMessage("下载失败");
     }
   }
 
   async function handlePreview(file: FileRecord, version?: number) {
+    const title = version ? `${file.original_name} · v${version}` : file.original_name;
+    showPreviewLoading(title);
     try {
       const blob = await filesApi.previewFile(file.id, version);
-      openBlob(blob);
+      showPreviewBlob(title, blob);
     } catch {
+      showPreviewError(title, "该文件暂不支持查看");
       setMessage("该文件暂不支持查看");
     }
   }
@@ -204,7 +251,7 @@ export function FileActions({
   }
 
   return (
-    <div className="min-w-[220px] space-y-2">
+    <div className="w-full min-w-0 space-y-2">
       {message && (
         <Badge
           tone={
@@ -224,7 +271,7 @@ export function FileActions({
         canWrite ? (
           <div
             className={cn(
-              "flex min-h-10 w-40 max-w-full items-center justify-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 transition",
+              "flex h-10 w-full max-w-48 items-center justify-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 transition",
               dragging && "border-emerald-500 bg-emerald-50 text-emerald-700",
               uploading && "opacity-60",
             )}
@@ -254,7 +301,7 @@ export function FileActions({
         <div className="space-y-2">
           {files.map((file) => (
             <div key={file.id} className="rounded-md border border-slate-200 bg-white p-2">
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex min-h-16 items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-xs font-medium text-slate-900" title={file.original_name}>
                     <FileText className="mr-1 inline size-3" aria-hidden="true" />
@@ -265,6 +312,19 @@ export function FileActions({
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                  {canPreview(file.mime_type) && (
+                    <Tooltip label="在线预览">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void handlePreview(file)}
+                        aria-label="在线预览"
+                        title="在线预览"
+                      >
+                        <Eye className="size-4" aria-hidden="true" />
+                      </Button>
+                    </Tooltip>
+                  )}
                   <Tooltip label="下载当前文件">
                     <Button
                       size="sm"
@@ -418,6 +478,18 @@ export function FileActions({
             </div>
           </div>
         </div>
+      )}
+
+      {previewDialog && (
+        <PdfPreviewDialog
+          title={previewDialog.title}
+          url={previewDialog.url}
+          loading={previewDialog.loading}
+          error={previewDialog.error}
+          frameKey={previewFrameKey}
+          onClose={closePreviewDialog}
+          onReload={() => setPreviewFrameKey((current) => current + 1)}
+        />
       )}
     </div>
   );

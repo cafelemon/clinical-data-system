@@ -12,7 +12,9 @@ import {
 } from "lucide-react";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { PdfPreviewDialog } from "@/components/files/PdfPreviewDialog";
 import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";
+import { DocumentExtractedFieldsPanel } from "@/components/document-fields/DocumentExtractedFieldsPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,6 +40,12 @@ type EditableSegment = {
   subject_item_id: number;
 };
 type BadgeTone = "neutral" | "success" | "warning" | "danger";
+type PreviewDialog = {
+  title: string;
+  url: string | null;
+  loading: boolean;
+  error: string | null;
+};
 
 const emptySegment = {
   page_start: 1,
@@ -89,12 +97,6 @@ function statusTone(status: string): BadgeTone {
   return "neutral";
 }
 
-function openBlob(blob: Blob, page?: number) {
-  const url = window.URL.createObjectURL(blob);
-  window.open(`${url}${page ? `#page=${page}` : ""}`, "_blank", "noopener,noreferrer");
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
-}
-
 function confidenceTone(confidence: number): BadgeTone {
   if (confidence >= 0.85) return "success";
   if (confidence >= 0.6) return "warning";
@@ -106,6 +108,7 @@ export function PdfPacketsPage() {
   const canRead = hasPermission("pdf_packets:read");
   const canWrite = hasPermission("pdf_packets:write");
   const canDelete = hasPermission("pdf_packets:delete");
+  const canWriteFiles = hasPermission("files:write");
   const [projects, setProjects] = useState<Project[]>([]);
   const [centers, setCenters] = useState<Center[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -128,6 +131,9 @@ export function PdfPacketsPage() {
   const [undoSnapshots, setUndoSnapshots] = useState<Record<number, EditableSegment>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [previewDialog, setPreviewDialog] = useState<PreviewDialog | null>(null);
+  const [previewFrameKey, setPreviewFrameKey] = useState(0);
+  const previewUrlRef = useRef<string | null>(null);
 
   const selectedSubject = subjects.find((subject) => subject.id === selectedSubjectId);
   const selectedPacket = packets.find((packet) => packet.id === selectedPacketId);
@@ -150,6 +156,44 @@ export function PdfPacketsPage() {
         (page) => page.page_no >= reasonSegment.page_start && page.page_no <= reasonSegment.page_end,
       )
     : [];
+
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) {
+        window.URL.revokeObjectURL(previewUrlRef.current);
+      }
+    };
+  }, []);
+
+  function clearPreviewUrl() {
+    if (previewUrlRef.current) {
+      window.URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+  }
+
+  function closePreviewDialog() {
+    clearPreviewUrl();
+    setPreviewDialog(null);
+  }
+
+  function showPreviewLoading(title: string) {
+    clearPreviewUrl();
+    setPreviewDialog({ title, url: null, loading: true, error: null });
+  }
+
+  function showPreviewBlob(title: string, blob: Blob, page?: number) {
+    clearPreviewUrl();
+    const url = `${window.URL.createObjectURL(blob)}${page ? `#page=${page}` : ""}`;
+    previewUrlRef.current = url.split("#")[0];
+    setPreviewFrameKey((current) => current + 1);
+    setPreviewDialog({ title, url, loading: false, error: null });
+  }
+
+  function showPreviewError(title: string, error: string) {
+    clearPreviewUrl();
+    setPreviewDialog({ title, url: null, loading: false, error });
+  }
 
   function selectPacketId(packetId: number) {
     selectedPacketIdRef.current = packetId;
@@ -345,11 +389,25 @@ export function PdfPacketsPage() {
 
   async function handlePreview(page?: number) {
     if (!selectedPacketId) return;
+    showPreviewLoading(page ? `原包预览 · 第 ${page} 页` : "原包预览");
     try {
       const blob = await pdfPacketsApi.previewPacket(selectedPacketId);
-      openBlob(blob, page);
+      showPreviewBlob(page ? `原包预览 · 第 ${page} 页` : "原包预览", blob, page);
     } catch {
+      showPreviewError("原包预览", "预览失败，请稍后重试");
       setMessage("预览失败");
+    }
+  }
+
+  async function handleSegmentPreview(segment: PdfPacketSegment) {
+    const title = `片段预览 · p${segment.page_start}-${segment.page_end}`;
+    showPreviewLoading(title);
+    try {
+      const blob = await pdfPacketsApi.previewSegment(segment.id);
+      showPreviewBlob(title, blob);
+    } catch {
+      showPreviewError(title, "片段预览失败，请确认切分页范围和文件是否存在");
+      setMessage("片段预览失败");
     }
   }
 
@@ -1290,6 +1348,43 @@ export function PdfPacketsPage() {
 	                  </p>
 	                </div>
 
+                    <div className="rounded-md border border-slate-200 bg-white p-3">
+                      <div className="mb-3 flex aspect-[4/3] items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50 text-slate-400">
+                        <div className="text-center">
+                          <FileSearch className="mx-auto size-8" aria-hidden="true" />
+                          <p className="mt-2 text-xs">
+                            p{reasonSegment.page_start}-{reasonSegment.page_end}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="font-medium text-slate-900">片段预览</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            仅打开 p{reasonSegment.page_start}-{reasonSegment.page_end} 切分页
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => void handleSegmentPreview(reasonSegment)}
+                        >
+                          <Eye className="size-4" aria-hidden="true" />
+                          放大
+                        </Button>
+                      </div>
+                    </div>
+
+                    <DocumentExtractedFieldsPanel
+                      title="字段核查"
+                      segmentId={reasonSegment.id}
+                      canWrite={canWriteFiles}
+                      defaultOpen
+                      refreshKey={reasonSegment.id}
+                      onChanged={() => void loadSegments()}
+                    />
+
 	                {!analysisReport ? (
 	                  <div className="rounded-md border border-dashed border-slate-200 bg-white px-3 py-3 text-slate-500">
 	                    暂无调试报告
@@ -1369,6 +1464,17 @@ export function PdfPacketsPage() {
 	          </CardContent>
 	        </Card>
 	      </section>
+      {previewDialog && (
+        <PdfPreviewDialog
+          title={previewDialog.title}
+          url={previewDialog.url}
+          loading={previewDialog.loading}
+          error={previewDialog.error}
+          frameKey={previewFrameKey}
+          onClose={closePreviewDialog}
+          onReload={() => setPreviewFrameKey((current) => current + 1)}
+        />
+      )}
     </div>
   );
 }

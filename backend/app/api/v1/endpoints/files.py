@@ -39,6 +39,7 @@ from app.core.files import (
 )
 from app.models import (
     Center,
+    DocumentExtractedField,
     FileAsset,
     FileVersion,
     Project,
@@ -48,14 +49,22 @@ from app.models import (
     SubjectItem,
 )
 from app.schemas import FileRead, FileVersionRead
+from app.schemas.document_field import DocumentExtractedFieldRead, DocumentExtractedFieldUpdate
 from app.services.audit import record_operation
 from app.services.clinical_status import recalculate_subject_status, reset_stage_file_status
+from app.services.document_fields import (
+    analyze_file_version_fields,
+    latest_file_version,
+    sync_subject_item_after_fields,
+    update_field,
+)
 
 router = APIRouter()
 ModelT = TypeVar(
     "ModelT",
     FileAsset,
     FileVersion,
+    DocumentExtractedField,
     Project,
     Center,
     Stage,
@@ -405,7 +414,7 @@ def upload_file(
     db.add(file_asset)
     db.flush()
     db.add(
-        FileVersion(
+        file_version := FileVersion(
             file_id=file_asset.id,
             version=1,
             storage_path=stored.storage_path,
@@ -419,6 +428,8 @@ def upload_file(
         )
     )
     mark_binding_file_changed(db, binding, UPLOAD_UPLOADED)
+    analyze_file_version_fields(db, file_asset, file_version)
+    sync_subject_item_after_fields(db, file_asset, user_id=access.user.id, file_version=file_version)
     record_operation(
         db,
         action="file.upload",
@@ -543,7 +554,7 @@ def replace_file(
     file_asset.uploaded_by = access.user.id
     file_asset.status = "active"
     db.add(
-        FileVersion(
+        file_version := FileVersion(
             file_id=file_asset.id,
             version=next_version,
             storage_path=stored.storage_path,
@@ -557,6 +568,8 @@ def replace_file(
         )
     )
     mark_binding_file_changed(db, binding, UPLOAD_REPLACED)
+    analyze_file_version_fields(db, file_asset, file_version)
+    sync_subject_item_after_fields(db, file_asset, user_id=access.user.id, file_version=file_version)
     record_operation(
         db,
         action="file.replace",
@@ -593,6 +606,99 @@ def list_file_versions(
             .order_by(FileVersion.version)
         )
     )
+
+
+@router.get(
+    "/files/{file_id}/extracted-fields",
+    response_model=list[DocumentExtractedFieldRead],
+)
+def list_file_extracted_fields(
+    file_id: int,
+    db: DBSession,
+    access: FileReadAccess,
+    version: int | None = None,
+) -> list[DocumentExtractedField]:
+    file_asset = get_or_404(db, FileAsset, file_id, "file")
+    ensure_file_scope(access, file_asset)
+    file_version = latest_file_version(db, file_asset, version)
+    fields = analyze_file_version_fields(db, file_asset, file_version)
+    db.commit()
+    return fields
+
+
+@router.post(
+    "/files/{file_id}/extracted-fields/analyze",
+    response_model=list[DocumentExtractedFieldRead],
+)
+def analyze_file_extracted_fields(
+    file_id: int,
+    db: DBSession,
+    access: FileWriteAccess,
+    request: Request,
+    version: int | None = None,
+    force: bool = False,
+) -> list[DocumentExtractedField]:
+    file_asset = get_or_404(db, FileAsset, file_id, "file")
+    ensure_file_scope(access, file_asset)
+    file_version = latest_file_version(db, file_asset, version)
+    fields = analyze_file_version_fields(db, file_asset, file_version, force=force)
+    sync_subject_item_after_fields(db, file_asset, user_id=access.user.id)
+    record_operation(
+        db,
+        action="file.extracted_fields_analyze",
+        request=request,
+        access=access,
+        target_type="file",
+        target_id=file_asset.id,
+        project_id=file_asset.project_id,
+        center_id=file_asset.center_id,
+        detail={"version": file_version.version, "field_count": len(fields), "force": force},
+    )
+    db.commit()
+    return fields
+
+
+@router.patch(
+    "/files/{file_id}/extracted-fields/{field_id}",
+    response_model=DocumentExtractedFieldRead,
+)
+def update_file_extracted_field(
+    file_id: int,
+    field_id: int,
+    payload: DocumentExtractedFieldUpdate,
+    db: DBSession,
+    access: FileWriteAccess,
+    request: Request,
+) -> DocumentExtractedField:
+    file_asset = get_or_404(db, FileAsset, file_id, "file")
+    ensure_file_scope(access, file_asset)
+    field = get_or_404(db, DocumentExtractedField, field_id, "extracted field")
+    version_ids = {version.id for version in file_asset.versions}
+    if field.file_version_id not in version_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="extracted field not found")
+    update_field(
+        db,
+        field,
+        raw_value=payload.raw_value,
+        normalized_value=payload.normalized_value,
+        status_value=payload.status,
+        user_id=access.user.id,
+    )
+    sync_subject_item_after_fields(db, file_asset, user_id=access.user.id)
+    record_operation(
+        db,
+        action="file.extracted_field_update",
+        request=request,
+        access=access,
+        target_type="document_extracted_field",
+        target_id=field.id,
+        project_id=file_asset.project_id,
+        center_id=file_asset.center_id,
+        detail={"file_id": file_asset.id, "field_key": field.field_key, "status": field.status},
+    )
+    db.commit()
+    db.refresh(field)
+    return field
 
 
 @router.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)

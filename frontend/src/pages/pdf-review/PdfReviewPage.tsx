@@ -21,6 +21,7 @@ import {
 import { PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 
+import { DocumentExtractedFieldsPanel } from "@/components/document-fields/DocumentExtractedFieldsPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -223,6 +224,7 @@ export function PdfReviewPage() {
   const requestedFileVersionId = Number(searchParams.get("file_version_id")) || undefined;
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canAnnotate = hasPermission("pdf_review:annotate");
+  const canWriteFiles = hasPermission("files:write");
   const canReadTasks = hasPermission("correction_tasks:read");
   const [reviewFile, setReviewFile] = useState<PdfReviewFile | null>(null);
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
@@ -674,6 +676,16 @@ export function PdfReviewPage() {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {reviewFile && (
+            <DocumentExtractedFieldsPanel
+              fileId={reviewFile.file_id}
+              version={reviewFile.version}
+              canWrite={canWriteFiles}
+              defaultOpen
+              onChanged={() => void loadReviewFile(false)}
+            />
           )}
 
           <Card>
