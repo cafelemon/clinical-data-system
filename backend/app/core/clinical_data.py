@@ -42,11 +42,11 @@ SUBJECT_SECTION_SPECS = (
     ),
     SubjectSectionSpec(
         code="V2_EXPERIMENTAL_FOLLOWUP_VISIT",
-        name="V2试验组随访访视",
-        visit_name="V2试验组随访访视",
+        name="V2随访访视",
+        visit_name="V2随访访视",
         time_window="随方案确定",
         sort_order=2,
-        description="完成试验组随访访视资料收集。",
+        description="完成随访访视资料收集。",
         items=(
             SubjectItemSpec("V2_VITAL_SIGNS", "生命体征记录", 0),
             SubjectItemSpec("V2_BOWEL_PREPARATION", "肠道准备情况", 1),
@@ -58,11 +58,11 @@ SUBJECT_SECTION_SPECS = (
     ),
     SubjectSectionSpec(
         code="V3_CONTROL_FOLLOWUP_VISIT",
-        name="V3对照组随访访视（若有）",
-        visit_name="V3对照组随访访视",
+        name="V3随访访视",
+        visit_name="V3随访访视",
         time_window="随方案确定",
         sort_order=3,
-        description="完成对照组随访访视资料收集。",
+        description="完成随访访视资料收集。",
         items=(
             SubjectItemSpec("V3_VITAL_SIGNS", "生命体征记录", 0),
             SubjectItemSpec("V3_BOWEL_PREPARATION", "肠道准备情况", 1),

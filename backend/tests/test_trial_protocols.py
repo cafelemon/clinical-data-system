@@ -102,6 +102,52 @@ def create_project(client: TestClient, headers: dict[str, str], code: str = "PRO
     return response.json()
 
 
+def create_center(
+    client: TestClient,
+    headers: dict[str, str],
+    project_id: int,
+    code: str = "01",
+) -> dict:
+    response = client.post(
+        "/api/centers",
+        headers=headers,
+        json={
+            "project_id": project_id,
+            "name": f"{code}中心",
+            "code": code,
+            "contact_person": "",
+            "status": "active",
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def create_subject(
+    client: TestClient,
+    headers: dict[str, str],
+    project_id: int,
+    center_id: int,
+    screening_no: str,
+    subject_arm: str = "experimental",
+) -> dict:
+    response = client.post(
+        "/api/subjects",
+        headers=headers,
+        json={
+            "project_id": project_id,
+            "center_id": center_id,
+            "screening_no": screening_no,
+            "subject_arm": subject_arm,
+            "gender": "男",
+            "age": 45,
+            "informed_at": None,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 def create_user(
     client: TestClient,
     admin_headers: dict[str, str],
@@ -163,6 +209,63 @@ def parsed_draft() -> dict[str, Any]:
         ],
         "deactivate_missing": {"visits": False, "items": False, "centers": False},
     }
+
+
+def five_visit_draft() -> dict[str, Any]:
+    draft = parsed_draft()
+    draft["visits"] = [
+        {
+            "ordinal": 1,
+            "source_visit_code": "V1",
+            "name": "筛选期",
+            "window": "-14~ -1 天",
+            "enabled": True,
+            "items": [
+                {"ordinal": 1, "name": "签署知情同意书", "required": True, "enabled": True},
+            ],
+        },
+        {
+            "ordinal": 2,
+            "source_visit_code": "V2",
+            "name": "检查期-胶囊检查日",
+            "window": "第0天",
+            "enabled": True,
+            "items": [
+                {"ordinal": 1, "name": "结肠胶囊检查", "required": True, "enabled": True},
+            ],
+        },
+        {
+            "ordinal": 3,
+            "source_visit_code": "V3",
+            "name": "检查期-结肠镜检查日",
+            "window": "第 0-1 天",
+            "enabled": True,
+            "items": [
+                {"ordinal": 1, "name": "结肠镜检查", "required": True, "enabled": True},
+            ],
+        },
+        {
+            "ordinal": 4,
+            "source_visit_code": "V4.10",
+            "name": "非预期随访-胶囊排出确认",
+            "window": "第 2-14 天",
+            "enabled": True,
+            "items": [
+                {"ordinal": 1, "name": "胶囊排出确认", "required": False, "enabled": True},
+            ],
+        },
+        {
+            "ordinal": 5,
+            "source_visit_code": "V4.11",
+            "name": "非预期随访-胶囊滞留处理",
+            "window": "第 14+1 天",
+            "enabled": True,
+            "items": [
+                {"ordinal": 1, "name": "胶囊滞留处理", "required": False, "enabled": True},
+            ],
+        },
+    ]
+    return draft
 
 
 def test_trial_protocol_parser_extracts_visits_and_centers() -> None:
@@ -349,6 +452,159 @@ def test_trial_protocol_upload_draft_apply_and_versioning(
     versions = client.get(f"/api/projects/{project['id']}/protocol-versions", headers=admin_headers)
     assert versions.status_code == 200
     assert versions.json()[0]["version_number"] == 1
+
+
+def test_protocol_visits_override_default_subject_visits_and_sync_existing_subjects(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+) -> None:
+    from app.api.v1.endpoints import trial_protocols as endpoint
+
+    project = create_project(client, admin_headers, "COLON_SYNC")
+    center = create_center(client, admin_headers, project["id"])
+    existing_subject = create_subject(
+        client,
+        admin_headers,
+        project["id"],
+        center["id"],
+        "COLON-S001",
+        "control",
+    )
+    before_sections = client.get(
+        f"/api/subjects/{existing_subject['id']}/sections",
+        headers=admin_headers,
+    )
+    assert before_sections.status_code == 200
+    assert [section["section_code"] for section in before_sections.json()] == [
+        "V1_SCREENING_VISIT",
+        "V2_EXPERIMENTAL_FOLLOWUP_VISIT",
+        "V3_CONTROL_FOLLOWUP_VISIT",
+        "V4_UNSCHEDULED_VISIT",
+    ]
+
+    monkeypatch.setattr(
+        endpoint,
+        "parse_protocol_file",
+        lambda _: (42, five_visit_draft(), "C200CN", "1.1", "2025 年 4 月 11 日"),
+    )
+    upload = client.post(
+        f"/api/projects/{project['id']}/protocol-versions",
+        headers=admin_headers,
+        files={"file": ("colon-protocol.pdf", b"%PDF-1.4\nsource", "application/pdf")},
+    )
+    assert upload.status_code == 201
+    apply = client.post(
+        f"/api/projects/{project['id']}/protocol-versions/{upload.json()['id']}/apply",
+        headers=admin_headers,
+    )
+    assert apply.status_code == 200
+    result = apply.json()["result"]
+    assert result["synced_subjects"] == 1
+    assert result["created_subject_sections"] == 5
+    assert result["removed_empty_legacy_sections"] == 4
+    assert result["retained_legacy_sections"] == 0
+
+    after_sections = client.get(
+        f"/api/subjects/{existing_subject['id']}/sections",
+        headers=admin_headers,
+    )
+    assert after_sections.status_code == 200
+    assert [section["section_code"] for section in after_sections.json()] == [
+        "PROTOCOL_VISIT_001",
+        "PROTOCOL_VISIT_002",
+        "PROTOCOL_VISIT_003",
+        "PROTOCOL_VISIT_004",
+        "PROTOCOL_VISIT_005",
+    ]
+    existing_items = client.get(
+        f"/api/subjects/{existing_subject['id']}/items",
+        headers=admin_headers,
+    )
+    assert existing_items.status_code == 200
+    existing_item_names = {item["item_name"] for item in existing_items.json()}
+    assert "结肠胶囊检查" in existing_item_names
+    assert "胶囊内镜报告" not in existing_item_names
+    assert "对照组报告" not in existing_item_names
+
+    new_subject = create_subject(
+        client,
+        admin_headers,
+        project["id"],
+        center["id"],
+        "COLON-S002",
+        "experimental",
+    )
+    new_sections = client.get(
+        f"/api/subjects/{new_subject['id']}/sections",
+        headers=admin_headers,
+    )
+    assert new_sections.status_code == 200
+    assert [section["section_code"] for section in new_sections.json()] == [
+        "PROTOCOL_VISIT_001",
+        "PROTOCOL_VISIT_002",
+        "PROTOCOL_VISIT_003",
+        "PROTOCOL_VISIT_004",
+        "PROTOCOL_VISIT_005",
+    ]
+
+
+def test_protocol_sync_retains_legacy_subject_sections_with_files(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from app.api.v1.endpoints import trial_protocols as endpoint
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
+    project = create_project(client, admin_headers, "COLON_RETAIN")
+    center = create_center(client, admin_headers, project["id"])
+    subject = create_subject(client, admin_headers, project["id"], center["id"], "COLON-S003")
+    items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers)
+    assert items.status_code == 200
+    consent_item = next(item for item in items.json() if item["item_code"] == "V1_INFORMED_CONSENT")
+    upload_file = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={"file_category": "clinical_document", "subject_item_id": str(consent_item["id"])},
+        files={"file": ("consent.pdf", b"%PDF-consent", "application/pdf")},
+    )
+    assert upload_file.status_code == 201
+
+    monkeypatch.setattr(
+        endpoint,
+        "parse_protocol_file",
+        lambda _: (42, five_visit_draft(), "C200CN", "1.1", "2025 年 4 月 11 日"),
+    )
+    upload = client.post(
+        f"/api/projects/{project['id']}/protocol-versions",
+        headers=admin_headers,
+        files={"file": ("colon-protocol.pdf", b"%PDF-1.4\nsource", "application/pdf")},
+    )
+    assert upload.status_code == 201
+    apply = client.post(
+        f"/api/projects/{project['id']}/protocol-versions/{upload.json()['id']}/apply",
+        headers=admin_headers,
+    )
+    assert apply.status_code == 200
+    result = apply.json()["result"]
+    assert result["created_subject_sections"] == 5
+    assert result["removed_empty_legacy_sections"] == 3
+    assert result["retained_legacy_sections"] == 1
+
+    sections = client.get(f"/api/subjects/{subject['id']}/sections", headers=admin_headers)
+    assert sections.status_code == 200
+    section_codes = [section["section_code"] for section in sections.json()]
+    assert "V1_SCREENING_VISIT" in section_codes
+    assert section_codes[-5:] == [
+        "PROTOCOL_VISIT_001",
+        "PROTOCOL_VISIT_002",
+        "PROTOCOL_VISIT_003",
+        "PROTOCOL_VISIT_004",
+        "PROTOCOL_VISIT_005",
+    ]
 
 
 def test_trial_protocol_apply_blocks_unconfirmed_risky_center(

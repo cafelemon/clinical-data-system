@@ -15,6 +15,7 @@ from app.models import Center, Project, Stage, StageTemplate, TrialProtocolVersi
 from app.services.pdf_packets import PdfPacketError, pdf_page_count
 from app.services.protocol_text_parser import ProtocolTextLine, compact_line, extract_protocol_text
 from app.services.stage_config import SUBJECT_ITEM_SCOPE, ensure_project_stage_config
+from app.services.subject_setup import sync_project_subject_sections
 
 
 class TrialProtocolError(ValueError):
@@ -659,6 +660,11 @@ def apply_protocol_draft(
         "updated_templates": 0,
         "created_centers": 0,
         "updated_centers": 0,
+        "synced_subjects": 0,
+        "created_subject_sections": 0,
+        "created_subject_items": 0,
+        "removed_empty_legacy_sections": 0,
+        "retained_legacy_sections": 0,
     }
     for visit in draft.get("visits", []):
         if not visit.get("enabled", True):
@@ -764,6 +770,9 @@ def apply_protocol_draft(
             center.contact_person = center_data.get("principal_investigator")
             center.description = description
             result["updated_centers"] += 1
+    db.flush()
+    subject_sync = sync_project_subject_sections(db, project.id)
+    result.update(subject_sync.to_dict())
     return result
 
 

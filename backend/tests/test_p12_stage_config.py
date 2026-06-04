@@ -294,6 +294,7 @@ def test_template_scopes_dataset_groups_and_subject_generation(
     assert section_codes == [
         "V1_SCREENING_VISIT",
         "V2_EXPERIMENTAL_FOLLOWUP_VISIT",
+        "V3_CONTROL_FOLLOWUP_VISIT",
     ]
 
     items = client.get(f"/api/subjects/{subject.json()['id']}/items", headers=admin_headers)

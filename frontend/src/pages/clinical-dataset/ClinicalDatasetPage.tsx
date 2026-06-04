@@ -234,6 +234,34 @@ function statusLabel(labels: Record<string, string>, status: string) {
   return labels[status] ?? status;
 }
 
+function visitLabel(stage: Stage, index: number) {
+  const protocolMatch = stage.code.match(/^PROTOCOL_VISIT_(\d+)$/);
+  if (protocolMatch) {
+    return `V${Number(protocolMatch[1])}`;
+  }
+  const defaultMatch = stage.code.match(/^V(\d+)_/);
+  if (defaultMatch) {
+    return `V${defaultMatch[1]}`;
+  }
+  return `访视${index + 1}`;
+}
+
+function subjectVisitDate(subject: Subject, index: number) {
+  const key = `visit${index + 1}_date` as keyof Pick<
+    Subject,
+    "visit1_date" | "visit2_date" | "visit3_date" | "visit4_date" | "visit5_date"
+  >;
+  return subject[key] || "-";
+}
+
+function subjectVisitStages(stages: Stage[]) {
+  const visitStages = stages
+    .filter((stage) => stage.enabled && stage.code !== "TRIAL_MATERIALS")
+    .sort((first, second) => first.sort_order - second.sort_order || first.id - second.id)
+  const protocolStages = visitStages.filter((stage) => stage.code.startsWith("PROTOCOL_VISIT_"));
+  return (protocolStages.length > 0 ? protocolStages : visitStages).slice(0, 5);
+}
+
 function pad2(value: number) {
   return String(value).padStart(2, "0");
 }
@@ -568,12 +596,14 @@ function StageFileTable({
 
 function SubjectTable({
   subjects,
+  visitStages,
   onEdit,
   onDelete,
   canWrite,
   canDelete,
 }: {
   subjects: Subject[];
+  visitStages: Stage[];
   onEdit: (subject: Subject) => void;
   onDelete: (subject: Subject) => void;
   canWrite: boolean;
@@ -609,18 +639,22 @@ function SubjectTable({
               </td>
               <td className="px-3 py-3 text-slate-600">
                 <div className="space-y-1">
-                  <p>{subject.subject_arm ? subjectArmLabels[subject.subject_arm] : "未分组"}</p>
+                  <p>
+                    记录分组：
+                    {subject.subject_arm ? subjectArmLabels[subject.subject_arm] : "未分组"}
+                  </p>
                   <p className="text-xs text-slate-500">
                     {subject.gender || "-"} · {subject.age ?? "-"} 岁
                   </p>
                 </div>
               </td>
               <td className="px-3 py-3 text-xs text-slate-600">
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                  <span>V1 {subject.visit1_date || "-"}</span>
-                  <span>V2 {subject.visit2_date || "-"}</span>
-                  <span>V3 {subject.visit3_date || "-"}</span>
-                  <span>V4 {subject.visit4_date || "-"}</span>
+                <div className="grid min-w-[116px] grid-cols-2 gap-x-3 gap-y-1">
+                  {visitStages.map((stage, index) => (
+                    <span key={stage.id} title={stage.name}>
+                      {visitLabel(stage, index)} {subjectVisitDate(subject, index)}
+                    </span>
+                  ))}
                 </div>
               </td>
               <td className="px-3 py-3">
@@ -1261,8 +1295,12 @@ export function ClinicalDatasetPage() {
       : activeStage === "TRIAL"
         ? trialView === "materials"
           ? "维护临床试验进行阶段第 27-45 项中心级资料清单"
-          : "按 V1-V4 固定访视跟踪受试者资料完整性"
+          : "按项目方案访视跟踪受试者资料完整性"
       : activeStageModel?.description || activeStageConfig.description;
+  const activeSubjectVisitStages = useMemo(
+    () => subjectVisitStages(dataset?.trial_stages ?? []),
+    [dataset?.trial_stages],
+  );
   const activeStageFiles = stageFilesForCode(dataset, activeStage);
   const activeFileGroups = useMemo(
     () => stageFileGroupsForCode(dataset, activeStage),
@@ -1534,7 +1572,7 @@ export function ClinicalDatasetPage() {
       return;
     }
     if (!editingId && !form.subject_arm) {
-      setMessage("新建受试者必须选择分组");
+      setMessage("新建受试者必须选择记录分组");
       return;
     }
     const payload = {
@@ -1859,6 +1897,7 @@ export function ClinicalDatasetPage() {
                 <>
                   <SubjectTable
                     subjects={dataset?.subjects ?? []}
+                    visitStages={activeSubjectVisitStages}
                     onEdit={handleEdit}
                     onDelete={(subject) => void handleDelete(subject)}
                     canWrite={canWrite}
@@ -1884,7 +1923,7 @@ export function ClinicalDatasetPage() {
                             required
                           />
                         </Field>
-                        <Field label="分组">
+                        <Field label="记录分组">
                           <SelectField
                             value={form.subject_arm}
                             onChange={(event) =>
@@ -1896,7 +1935,7 @@ export function ClinicalDatasetPage() {
                             required={!editingId}
                           >
                             <option value="">
-                              {editingId ? "未分组（保留）" : "请选择分组"}
+                              {editingId ? "未分组（保留）" : "请选择记录分组"}
                             </option>
                             <option value="experimental">实验组</option>
                             <option value="control">对照组</option>

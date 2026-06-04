@@ -383,7 +383,7 @@ export function SubjectDetailPage() {
             <h2 className="text-sm font-semibold text-slate-950">受试者资料页头</h2>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div>
-                <p className="text-xs text-slate-500">分组</p>
+                <p className="text-xs text-slate-500">记录分组</p>
                 <p className="mt-1 font-medium text-slate-900">
                   {subject.subject_arm
                     ? subjectArmLabels[subject.subject_arm] ?? subject.subject_arm

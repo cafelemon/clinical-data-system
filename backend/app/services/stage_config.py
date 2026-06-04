@@ -65,16 +65,16 @@ STAGE_OPTION_SPECS: tuple[StageOptionSpec, ...] = (
     StageOptionSpec(
         "TRIAL",
         "V2_EXPERIMENTAL_FOLLOWUP_VISIT",
-        "V2试验组随访访视",
+        "V2随访访视",
         3,
-        "完成试验组随访访视资料收集。",
+        "完成随访访视资料收集。",
     ),
     StageOptionSpec(
         "TRIAL",
         "V3_CONTROL_FOLLOWUP_VISIT",
-        "V3对照组随访访视（若有）",
+        "V3随访访视",
         4,
-        "完成对照组随访访视资料收集。",
+        "完成随访访视资料收集。",
     ),
     StageOptionSpec(
         "TRIAL",

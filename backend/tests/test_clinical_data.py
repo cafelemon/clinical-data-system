@@ -304,8 +304,8 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
     assert sections.status_code == 200
     assert [section["name"] for section in sections.json()] == [
         "V1筛选访视阶段",
-        "V2试验组随访访视",
-        "V3对照组随访访视（若有）",
+        "V2随访访视",
+        "V3随访访视",
         "V4非预期访视（若有）",
     ]
 
