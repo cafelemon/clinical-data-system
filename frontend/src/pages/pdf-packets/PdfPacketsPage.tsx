@@ -1,6 +1,7 @@
 import {
   CheckCircle2,
   Eye,
+  FileSearch,
   GitMerge,
   Plus,
   RefreshCw,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -569,8 +571,14 @@ export function PdfPacketsPage() {
 
   if (!canRead) {
     return (
-      <div className="space-y-4">
-        <h1 className="text-2xl font-semibold tracking-normal text-slate-950">PDF资料包</h1>
+      <div className="space-y-6">
+        <ManagementPageHeader
+          title="PDF资料包"
+          description="页级识别、片段校正和确认入库"
+          icon={FileSearch}
+          badge="无权限"
+          badgeTone="warning"
+        />
         <Card>
           <CardContent className="py-8 text-sm text-slate-600">
             当前账号没有PDF资料包查看权限
@@ -582,13 +590,21 @@ export function PdfPacketsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">PDF资料包</h1>
-        </div>
-      </div>
+      <ManagementPageHeader
+        title="PDF资料包识别工作台"
+        description="资料包筛选、页级识别、片段人工校正和确认入库"
+        icon={FileSearch}
+        badge="流程工具"
+      />
 
       {message && <Badge tone={message.includes("失败") ? "danger" : "success"}>{message}</Badge>}
+
+      <section className="grid gap-3 sm:grid-cols-4">
+        <ManagementStatCard label="资料包" value={packets.length} detail={selectedSubject?.screening_no ?? "未选择筛选号"} icon={FileSearch} />
+        <ManagementStatCard label="识别片段" value={segments.length} detail={selectedPacket ? statusLabel(selectedPacket.status) : "未选择资料包"} icon={Scissors} tone="teal" />
+        <ManagementStatCard label="待确认" value={segments.filter((segment) => segment.status === "pending_review" || segment.status === "unknown").length} detail="需核对或未识别片段" icon={Eye} tone="amber" />
+        <ManagementStatCard label="已入库" value={segments.filter((segment) => segment.file_asset_id).length} detail={selectedPacket?.analysis_summary ?? "等待识别"} icon={CheckCircle2} tone="slate" />
+      </section>
 
       <Card>
         <CardHeader>
@@ -681,15 +697,16 @@ export function PdfPacketsPage() {
         </CardContent>
       </Card>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="space-y-4">
+      <section className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 space-y-4">
           <Card>
             <CardHeader>
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <CardTitle>识别片段</CardTitle>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid gap-2 sm:flex sm:flex-wrap sm:justify-end">
                   <Button
                     variant="secondary"
+                    className="w-full justify-center sm:w-auto"
                     onClick={() => void handlePreview()}
                     disabled={!selectedPacketId}
                   >
@@ -699,6 +716,7 @@ export function PdfPacketsPage() {
                   {canWrite && (
                     <Button
                       variant="secondary"
+                      className="w-full justify-center sm:w-auto"
                       onClick={() => void handleAnalyze(false)}
                       disabled={!selectedPacketId || busyKey === `analyze:${selectedPacketId}`}
                     >
@@ -709,6 +727,7 @@ export function PdfPacketsPage() {
                   {canWrite && (
                     <Button
                       variant="secondary"
+                      className="w-full justify-center sm:w-auto"
                       onClick={() => void handleAnalyze(true)}
                       disabled={!selectedPacketId || busyKey === `analyze:${selectedPacketId}`}
                     >
@@ -719,7 +738,7 @@ export function PdfPacketsPage() {
                   {canDelete && selectedPacket && (
                     <Button
                       variant="secondary"
-                      className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                      className="w-full justify-center border-rose-200 text-rose-700 hover:bg-rose-50 sm:w-auto"
                       onClick={() => void handleDeletePacket(selectedPacket)}
                       disabled={busyKey === `packet-delete:${selectedPacket.id}`}
                     >
@@ -755,10 +774,10 @@ export function PdfPacketsPage() {
 	              {canWrite && selectedPacket && (
 	                <div className="mb-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
 	                  {segments.length > 0 && (
-	                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-	                      <Field label="合并后资料项">
-	                        <SelectField
-	                          value={mergeSubjectItemId || ""}
+                    <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                      <Field label="合并后资料项">
+                        <SelectField
+                          value={mergeSubjectItemId || ""}
 	                          onChange={(event) => setMergeSubjectItemId(Number(event.target.value))}
 	                        >
 	                          <option value="">沿用首个片段</option>
@@ -769,12 +788,13 @@ export function PdfPacketsPage() {
 	                          ))}
 	                        </SelectField>
 	                      </Field>
-	                      <Button
-	                        type="button"
-	                        variant="secondary"
-	                        onClick={() => void handleMergeSegments()}
-	                        disabled={selectedSegmentIds.length < 2 || busyKey === "merge-segments"}
-	                      >
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="w-full justify-center md:w-auto"
+                        onClick={() => void handleMergeSegments()}
+                        disabled={selectedSegmentIds.length < 2 || busyKey === "merge-segments"}
+                      >
 	                        <GitMerge className="size-4" aria-hidden="true" />
 	                        合并已选{selectedSegmentIds.length > 0 ? ` ${selectedSegmentIds.length} 段` : ""}
 	                      </Button>
@@ -1236,7 +1256,7 @@ export function PdfPacketsPage() {
             </Card>
 	          )}
 	        </div>
-	        <Card className="xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-auto">
+        <Card className="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-auto">
 	          <CardHeader>
 	            <div className="flex items-center justify-between gap-2">
 	              <CardTitle>识别原因</CardTitle>

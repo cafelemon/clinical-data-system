@@ -23,6 +23,7 @@ import { PdfReviewPage } from "@/pages/pdf-review/PdfReviewPage";
 import { ProjectsPage } from "@/pages/projects/ProjectsPage";
 import { RolesPage } from "@/pages/roles/RolesPage";
 import { SettingsPage } from "@/pages/settings/SettingsPage";
+import { StagesPage } from "@/pages/stages/StagesPage";
 import { StageTemplatesPage } from "@/pages/stage-templates/StageTemplatesPage";
 import { UsersPage } from "@/pages/users/UsersPage";
 
@@ -130,6 +131,14 @@ export default function App() {
           element={
             <AdminOnlyRoute title="中心管理">
               <CentersPage />
+            </AdminOnlyRoute>
+          }
+        />
+        <Route
+          path="/stages"
+          element={
+            <AdminOnlyRoute title="二级阶段管理">
+              <StagesPage />
             </AdminOnlyRoute>
           }
         />

@@ -1,7 +1,8 @@
-import { RotateCcw, Save } from "lucide-react";
+import { KeyRound, RotateCcw, Save, ShieldCheck, Users } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { EntityTable } from "@/components/master-data/EntityTable";
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,6 +40,7 @@ export function UsersPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   const roleNameById = useMemo(() => new Map(roles.map((role) => [role.id, role.label])), [roles]);
+  const activeUserCount = users.filter((user) => user.is_active).length;
 
   async function loadData() {
     const [userData, roleData, projectData, centerData] = await Promise.all([
@@ -121,18 +123,26 @@ export function UsersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">用户管理</h1>
-          <p className="mt-1 text-sm text-slate-500">维护账号、角色和项目/中心数据范围</p>
-        </div>
-        <Button variant="secondary" onClick={() => void loadData()}>
-          <RotateCcw className="size-4" aria-hidden="true" />
-          刷新
-        </Button>
-      </div>
+      <ManagementPageHeader
+        title="用户管理"
+        description="维护账号、角色和项目/中心数据范围"
+        icon={Users}
+        badge="权限治理"
+        actions={
+          <Button variant="secondary" onClick={() => void loadData()}>
+            <RotateCcw className="size-4" aria-hidden="true" />
+            刷新
+          </Button>
+        }
+      />
 
       {message && <Badge tone={message.includes("失败") ? "danger" : "success"}>{message}</Badge>}
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="用户总数" value={users.length} detail={`启用 ${activeUserCount}`} icon={Users} />
+        <ManagementStatCard label="角色范围" value={roles.length} detail="多角色绑定" icon={ShieldCheck} tone="teal" />
+        <ManagementStatCard label="授权范围" value={projects.length + centers.length} detail={`项目 ${projects.length} · 中心 ${centers.length}`} icon={KeyRound} tone="slate" />
+      </section>
 
       <section className="grid gap-4 xl:grid-cols-[400px_1fr]">
         <Card>
@@ -282,6 +292,7 @@ export function UsersPage() {
               rows={users}
               getRowKey={(user) => user.id}
               emptyLabel="暂无用户"
+              emptyDescription="新建用户后绑定角色和数据范围"
               onEdit={handleEdit}
               onDelete={(user) => void handleDelete(user)}
               columns={[
@@ -293,7 +304,15 @@ export function UsersPage() {
                   render: (user) =>
                     user.role_ids.map((roleId) => roleNameById.get(roleId) ?? roleId).join(", "),
                 },
-                { key: "status", label: "状态", render: (user) => (user.is_active ? "启用" : "停用") },
+                {
+                  key: "status",
+                  label: "状态",
+                  render: (user) => (
+                    <Badge tone={user.is_active ? "success" : "neutral"}>
+                      {user.is_active ? "启用" : "停用"}
+                    </Badge>
+                  ),
+                },
               ]}
             />
           </CardContent>
@@ -302,4 +321,3 @@ export function UsersPage() {
     </div>
   );
 }
-

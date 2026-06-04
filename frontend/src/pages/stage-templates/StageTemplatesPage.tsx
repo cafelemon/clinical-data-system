@@ -1,7 +1,8 @@
-import { RotateCcw, Save } from "lucide-react";
+import { FileText, Layers3, RotateCcw, Save } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { EntityTable } from "@/components/master-data/EntityTable";
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,6 +76,7 @@ export function StageTemplatesPage() {
   const filteredStageOptions = projectFilter
     ? stages.filter((stage) => stage.project_id === projectFilter && stageMatchesScope(stage, scopeFilter))
     : stages.filter((stage) => stageMatchesScope(stage, scopeFilter));
+  const requiredTemplateCount = templates.filter((template) => template.required).length;
 
   async function loadData(
     nextProjectFilter = projectFilter,
@@ -234,18 +236,26 @@ export function StageTemplatesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">阶段资料模板</h1>
-          <p className="mt-1 text-sm text-slate-500">配置每个阶段的默认资料清单</p>
-        </div>
-        <Button variant="secondary" onClick={() => void loadData()}>
-          <RotateCcw className="size-4" aria-hidden="true" />
-          刷新
-        </Button>
-      </div>
+      <ManagementPageHeader
+        title="阶段资料模板"
+        description="配置中心级与受试者资料项默认清单"
+        icon={FileText}
+        badge="后台配置"
+        actions={
+          <Button variant="secondary" onClick={() => void loadData()}>
+            <RotateCcw className="size-4" aria-hidden="true" />
+            刷新
+          </Button>
+        }
+      />
 
       {message && <Badge tone={message.includes("失败") || message.includes("选择") ? "danger" : "success"}>{message}</Badge>}
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="资料模板" value={templates.length} detail={`必填 ${requiredTemplateCount}`} icon={FileText} />
+        <ManagementStatCard label="模板用途" value={scopeLabel(scopeFilter)} detail={projectFilter ? "单项目筛选" : "全部项目"} icon={Layers3} tone="teal" />
+        <ManagementStatCard label="可选阶段" value={filteredStageOptions.length} detail="随项目和用途联动" icon={RotateCcw} tone="slate" />
+      </section>
 
       <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
         <Card>
@@ -422,6 +432,7 @@ export function StageTemplatesPage() {
               rows={templates}
               getRowKey={(template) => template.id}
               emptyLabel="暂无阶段资料模板"
+              emptyDescription="选择项目、阶段和用途后新增资料项"
               onEdit={handleEdit}
               onDelete={(template) => void handleDelete(template)}
               columns={[
@@ -434,7 +445,15 @@ export function StageTemplatesPage() {
                 { key: "name", label: "资料", render: (template) => template.item_name },
                 { key: "code", label: "编码", render: (template) => template.item_code },
                 { key: "keywords", label: "识别关键词", render: (template) => template.recognition_keywords || "-" },
-                { key: "required", label: "要求", render: (template) => (template.required ? "必填" : "选填") },
+                {
+                  key: "required",
+                  label: "要求",
+                  render: (template) => (
+                    <Badge tone={template.required ? "warning" : "neutral"}>
+                      {template.required ? "必填" : "选填"}
+                    </Badge>
+                  ),
+                },
                 { key: "sort", label: "排序", render: (template) => template.sort_order },
               ]}
             />

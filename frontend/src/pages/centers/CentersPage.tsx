@@ -1,7 +1,8 @@
-import { RotateCcw, Save } from "lucide-react";
+import { Building2, MapPinned, RotateCcw, Save } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { EntityTable } from "@/components/master-data/EntityTable";
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,6 +32,8 @@ export function CentersPage() {
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects],
   );
+  const activeCenterCount = centers.filter((center) => center.status === "active").length;
+  const pausedCenterCount = centers.filter((center) => center.status === "paused").length;
 
   async function loadData(nextProjectFilter = projectFilter) {
     const [projectData, centerData] = await Promise.all([
@@ -122,18 +125,32 @@ export function CentersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">中心管理</h1>
-          <p className="mt-1 text-sm text-slate-500">为项目维护研究中心和联系人</p>
-        </div>
-        <Button variant="secondary" onClick={() => void loadData()}>
-          <RotateCcw className="size-4" aria-hidden="true" />
-          刷新
-        </Button>
-      </div>
+      <ManagementPageHeader
+        title="中心管理"
+        description="为项目维护研究中心、联系人和启用状态"
+        icon={Building2}
+        badge="后台配置"
+        actions={
+          <Button variant="secondary" onClick={() => void loadData()}>
+            <RotateCcw className="size-4" aria-hidden="true" />
+            刷新
+          </Button>
+        }
+      />
 
       {message && <Badge tone={message.includes("失败") || message.includes("选择") ? "danger" : "success"}>{message}</Badge>}
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="中心总数" value={centers.length} detail={`项目 ${projects.length}`} icon={Building2} />
+        <ManagementStatCard label="启用中心" value={activeCenterCount} detail={`暂停 ${pausedCenterCount}`} icon={MapPinned} tone="teal" />
+        <ManagementStatCard
+          label="当前范围"
+          value={projectFilter ? "单项目" : "全部"}
+          detail={projectFilter ? projectNameById.get(projectFilter) ?? "指定项目" : "全部项目"}
+          icon={RotateCcw}
+          tone="slate"
+        />
+      </section>
 
       <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
         <Card>
@@ -246,6 +263,7 @@ export function CentersPage() {
               rows={centers}
               getRowKey={(center) => center.id}
               emptyLabel="暂无中心"
+              emptyDescription="选择项目后可新增研究中心"
               onEdit={handleEdit}
               onDelete={(center) => void handleDelete(center)}
               columns={[
@@ -253,7 +271,15 @@ export function CentersPage() {
                 { key: "name", label: "中心", render: (center) => center.name },
                 { key: "code", label: "编码", render: (center) => center.code },
                 { key: "contact", label: "联系人", render: (center) => center.contact_person || "-" },
-                { key: "status", label: "状态", render: (center) => center.status },
+                {
+                  key: "status",
+                  label: "状态",
+                  render: (center) => (
+                    <Badge tone={center.status === "active" ? "success" : center.status === "paused" ? "warning" : "neutral"}>
+                      {center.status === "active" ? "启用" : center.status === "paused" ? "暂停" : center.status}
+                    </Badge>
+                  ),
+                },
               ]}
             />
           </CardContent>

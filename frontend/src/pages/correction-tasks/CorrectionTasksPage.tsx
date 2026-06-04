@@ -1,4 +1,4 @@
-import { ClipboardList, Eye, RotateCcw } from "lucide-react";
+import { ClipboardList, Eye, RotateCcw, Timer, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 
@@ -44,6 +44,8 @@ export function CorrectionTasksPage() {
     from: `${location.pathname}${location.search}`,
     backLabel: "返回任务",
   };
+  const pendingCount = tasks.filter((task) => task.status === "pending" || task.status === "returned").length;
+  const reviewCount = tasks.filter((task) => task.status === "submitted").length;
 
   const loadTasks = useCallback(async () => {
     if (!canRead) return;
@@ -75,25 +77,44 @@ export function CorrectionTasksPage() {
   }
 
   if (!canRead) {
-    return <p className="text-sm text-slate-500">当前账号没有整改任务权限</p>;
+    return (
+      <div className="space-y-6">
+        <ManagementPageHeader
+          title="整改任务"
+          description="跟踪 PDF 批注生成的整改、重传和复审状态"
+          icon={ClipboardList}
+          badge="无权限"
+          badgeTone="warning"
+        />
+        <Card>
+          <CardContent className="py-8 text-sm text-slate-600">当前账号没有整改任务权限</CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">整改任务</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            跟踪 PDF 批注生成的整改、重传和复审状态
-          </p>
-        </div>
-        <Button variant="secondary" onClick={() => void loadTasks()}>
-          <RotateCcw className="size-4" aria-hidden="true" />
-          刷新
-        </Button>
-      </div>
+      <ManagementPageHeader
+        title="整改任务工作台"
+        description="跟踪 PDF 批注生成的整改、重传和复审状态"
+        icon={ClipboardList}
+        badge="流程工具"
+        actions={
+          <Button variant="secondary" onClick={() => void loadTasks()}>
+            <RotateCcw className="size-4" aria-hidden="true" />
+            刷新
+          </Button>
+        }
+      />
 
       {message && <Badge tone="danger">{message}</Badge>}
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="任务总数" value={tasks.length} detail={fileId ? `文件 #${fileId}` : "当前筛选范围"} icon={ClipboardList} />
+        <ManagementStatCard label="待处理" value={pendingCount} detail="待整改或再次退回" icon={TriangleAlert} tone={pendingCount > 0 ? "amber" : "slate"} />
+        <ManagementStatCard label="待复审" value={reviewCount} detail="已提交等待审核" icon={Timer} tone={reviewCount > 0 ? "amber" : "teal"} />
+      </section>
 
       <div className="flex flex-wrap items-center gap-2">
         <SelectField
@@ -155,3 +176,4 @@ export function CorrectionTasksPage() {
     </div>
   );
 }
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";

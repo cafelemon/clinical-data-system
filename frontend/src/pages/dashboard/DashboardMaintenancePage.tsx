@@ -6,12 +6,14 @@ import {
   Plus,
   RefreshCcw,
   Save,
+  SlidersHorizontal,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -628,13 +630,14 @@ export function DashboardMaintenancePage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 border-b border-slate-200 pb-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">数据看板工作台</h1>
-          <p className="mt-1 text-sm text-slate-500">手工维护看板补充数据，供展示看板汇总使用</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+    <div className="space-y-6">
+      <ManagementPageHeader
+        title="数据看板维护工作台"
+        description="手工维护看板补充数据，供展示看板汇总使用"
+        icon={SlidersHorizontal}
+        badge="维护分离"
+        actions={
+          <>
           <SelectField value={projectId ?? ""} onChange={(event) => setProjectId(Number(event.target.value) || undefined)} className="h-10 w-56">
             <option value="">选择项目</option>
             {projects.map((project) => (
@@ -668,28 +671,17 @@ export function DashboardMaintenancePage() {
             导出
           </Button>
           <input ref={fileInputRef} type="file" accept=".xlsx" className="hidden" onChange={(event) => void importRecords(event)} />
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {message && <Badge tone={message.includes("失败") ? "danger" : "neutral"}>{message}</Badge>}
 
       <div className="grid gap-3 md:grid-cols-4">
-        <div className="rounded-md border border-slate-200 bg-white p-3">
-          <div className="text-xs text-slate-500">合同例数</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-950">{overview?.enrollment.contract_count ?? 0}</div>
-        </div>
-        <div className="rounded-md border border-slate-200 bg-white p-3">
-          <div className="text-xs text-slate-500">系统受试者</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-950">{overview?.enrollment.subject_count ?? 0}</div>
-        </div>
-        <div className="rounded-md border border-slate-200 bg-white p-3">
-          <div className="text-xs text-slate-500">下周计划入组</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-950">{overview?.enrollment.planned_next_week ?? 0}</div>
-        </div>
-        <div className="rounded-md border border-slate-200 bg-white p-3">
-          <div className="text-xs text-slate-500">预期偏离预警</div>
-          <div className="mt-1 text-2xl font-semibold text-rose-700">{overview?.deviation_warnings.length ?? 0}</div>
-        </div>
+        <ManagementStatCard label="合同例数" value={overview?.enrollment.contract_count ?? 0} detail="手工维护入组计划" icon={FileSpreadsheet} />
+        <ManagementStatCard label="系统受试者" value={overview?.enrollment.subject_count ?? 0} detail="来自临床数据集" icon={SlidersHorizontal} tone="teal" />
+        <ManagementStatCard label="下周计划入组" value={overview?.enrollment.planned_next_week ?? 0} detail="计划入组节奏" icon={RefreshCcw} tone="slate" />
+        <ManagementStatCard label="预期偏离预警" value={overview?.deviation_warnings.length ?? 0} detail="逾期或临近里程碑" icon={AlertTriangle} tone={(overview?.deviation_warnings.length ?? 0) > 0 ? "red" : "slate"} />
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-slate-200">

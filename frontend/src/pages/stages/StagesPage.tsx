@@ -1,7 +1,8 @@
-import { Power, RotateCcw, Save } from "lucide-react";
+import { Layers3, Power, RotateCcw, Save, Workflow } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { EntityTable } from "@/components/master-data/EntityTable";
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,6 +52,7 @@ export function StagesPage() {
     [stageOptions],
   );
   const selectedOptions = optionGroupsByCode.get(form.phase_code)?.options ?? [];
+  const enabledStageCount = stages.filter((stage) => stage.enabled).length;
 
   async function loadData(nextProjectFilter = projectFilter, nextPhaseFilter = phaseFilter) {
     const [projectData, optionData, stageData] = await Promise.all([
@@ -179,22 +181,30 @@ export function StagesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">二级阶段管理</h1>
-          <p className="mt-1 text-sm text-slate-500">按项目维护三大阶段下的二级阶段配置</p>
-        </div>
-        <Button variant="secondary" onClick={() => void loadData()}>
-          <RotateCcw className="size-4" aria-hidden="true" />
-          刷新
-        </Button>
-      </div>
+      <ManagementPageHeader
+        title="二级阶段管理"
+        description="按项目维护三大阶段下的二级阶段配置"
+        icon={Workflow}
+        badge="后台配置"
+        actions={
+          <Button variant="secondary" onClick={() => void loadData()}>
+            <RotateCcw className="size-4" aria-hidden="true" />
+            刷新
+          </Button>
+        }
+      />
 
       {message && (
         <Badge tone={message.includes("失败") || message.includes("选择") ? "danger" : "success"}>
           {message}
         </Badge>
       )}
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="二级阶段" value={stages.length} detail={`启用 ${enabledStageCount}`} icon={Workflow} />
+        <ManagementStatCard label="阶段库" value={stageOptions.length} detail="STARTUP / TRIAL / CLOSEOUT" icon={Layers3} tone="teal" />
+        <ManagementStatCard label="当前大阶段" value={phaseNameByCode.get(phaseFilter) ?? phaseFilter} detail={projectFilter ? "单项目筛选" : "全部项目"} icon={Power} tone="slate" />
+      </section>
 
       <section className="grid gap-4 xl:grid-cols-[380px_1fr]">
         <Card>
@@ -341,6 +351,7 @@ export function StagesPage() {
               rows={stages}
               getRowKey={(stage) => stage.id}
               emptyLabel="暂无二级阶段"
+              emptyDescription="从样例库选择二级阶段后启用"
               onEdit={handleEdit}
               columns={[
                 {

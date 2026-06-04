@@ -14,6 +14,7 @@ from app.api.v1.endpoints import (
     pdf_packets,
     pdf_review,
     reviews,
+    system_management,
     trial_protocols,
 )
 
@@ -32,3 +33,4 @@ api_router.include_router(dashboard.router, tags=["dashboard"])
 api_router.include_router(excel_io.router, tags=["excel-io"])
 api_router.include_router(operation_logs.router, tags=["operation-logs"])
 api_router.include_router(trial_protocols.router, tags=["trial-protocols"])
+api_router.include_router(system_management.router, tags=["system-management"])

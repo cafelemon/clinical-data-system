@@ -1,10 +1,12 @@
 import {
   ArrowLeft,
   Check,
+  ClipboardList,
   FileUp,
   LocateFixed,
   RotateCcw,
   Send,
+  Timer,
   X,
 } from "lucide-react";
 import { ChangeEvent, useCallback, useEffect, useState } from "react";
@@ -170,25 +172,26 @@ export function CorrectionTaskDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <Button asChild variant="ghost" className="mb-2 px-0">
-            <Link to={origin.from} state={backState}>
-              <ArrowLeft className="size-4" aria-hidden="true" />
-              {origin.backLabel}
-            </Link>
-          </Button>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">{task.title}</h1>
-          <p className="mt-1 text-sm text-slate-500">{task.task_no}</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Badge tone={statusTone(task.status)}>{statusLabels[task.status] ?? task.status}</Badge>
-            <Badge>批注 {task.annotations.length} 条</Badge>
-          </div>
-        </div>
-        <Button variant="secondary" onClick={() => void loadTask()}>
-          <RotateCcw className="size-4" aria-hidden="true" />
-          刷新
+      <div className="space-y-3">
+        <Button asChild variant="ghost" className="px-0">
+          <Link to={origin.from} state={backState}>
+            <ArrowLeft className="size-4" aria-hidden="true" />
+            {origin.backLabel}
+          </Link>
         </Button>
+        <ManagementPageHeader
+          title={task.title}
+          description={task.task_no}
+          icon={ClipboardList}
+          badge={statusLabels[task.status] ?? task.status}
+          badgeTone={statusTone(task.status)}
+          actions={
+            <Button variant="secondary" onClick={() => void loadTask()}>
+              <RotateCcw className="size-4" aria-hidden="true" />
+              刷新
+            </Button>
+          }
+        />
       </div>
 
       {message && (
@@ -196,6 +199,12 @@ export function CorrectionTaskDetailPage() {
           {message}
         </Badge>
       )}
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="批注问题" value={task.annotations.length} detail={`文件 #${task.file_id}`} icon={LocateFixed} />
+        <ManagementStatCard label="提交状态" value={formatDateTime(task.submitted_at)} detail="整改文件提交时间" icon={FileUp} tone={task.submitted_at ? "teal" : "slate"} />
+        <ManagementStatCard label="复审状态" value={formatDateTime(task.reviewed_at)} detail={task.review_result || "等待复审"} icon={Timer} tone={task.status === "submitted" ? "amber" : "slate"} />
+      </section>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
         <div className="space-y-4">
@@ -346,3 +355,4 @@ export function CorrectionTaskDetailPage() {
     </div>
   );
 }
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";

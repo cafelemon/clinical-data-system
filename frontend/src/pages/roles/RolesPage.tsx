@@ -1,7 +1,8 @@
-import { RotateCcw, Save } from "lucide-react";
+import { KeyRound, RotateCcw, Save, ShieldCheck } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { EntityTable } from "@/components/master-data/EntityTable";
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +28,7 @@ export function RolesPage() {
   const [form, setForm] = useState<RolePayload>(defaultForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const systemRoleCount = roles.filter((role) => role.system).length;
 
   async function loadData() {
     const [roleData, permissionData] = await Promise.all([
@@ -84,18 +86,26 @@ export function RolesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">角色管理</h1>
-          <p className="mt-1 text-sm text-slate-500">维护角色与权限点绑定</p>
-        </div>
-        <Button variant="secondary" onClick={() => void loadData()}>
-          <RotateCcw className="size-4" aria-hidden="true" />
-          刷新
-        </Button>
-      </div>
+      <ManagementPageHeader
+        title="角色管理"
+        description="维护角色与权限点绑定"
+        icon={ShieldCheck}
+        badge="权限治理"
+        actions={
+          <Button variant="secondary" onClick={() => void loadData()}>
+            <RotateCcw className="size-4" aria-hidden="true" />
+            刷新
+          </Button>
+        }
+      />
 
       {message && <Badge tone={message.includes("失败") ? "danger" : "success"}>{message}</Badge>}
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="角色总数" value={roles.length} detail={`内置 ${systemRoleCount}`} icon={ShieldCheck} />
+        <ManagementStatCard label="权限点" value={permissions.length} detail="按模块授权" icon={KeyRound} tone="teal" />
+        <ManagementStatCard label="自定义角色" value={roles.length - systemRoleCount} detail="可维护权限组合" icon={RotateCcw} tone="slate" />
+      </section>
 
       <section className="grid gap-4 xl:grid-cols-[400px_1fr]">
         <Card>
@@ -181,11 +191,12 @@ export function RolesPage() {
               rows={roles}
               getRowKey={(role) => role.id}
               emptyLabel="暂无角色"
+              emptyDescription="新建角色后绑定权限点"
               onEdit={handleEdit}
               columns={[
                 { key: "name", label: "编码", render: (role) => role.name },
                 { key: "label", label: "名称", render: (role) => role.label },
-                { key: "system", label: "内置", render: (role) => (role.system ? "是" : "否") },
+                { key: "system", label: "内置", render: (role) => <Badge tone={role.system ? "success" : "neutral"}>{role.system ? "内置" : "自定义"}</Badge> },
                 { key: "permissions", label: "权限数", render: (role) => role.permission_ids.length },
               ]}
             />

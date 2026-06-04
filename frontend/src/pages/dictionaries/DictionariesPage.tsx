@@ -1,7 +1,8 @@
-import { RotateCcw, Save } from "lucide-react";
+import { BookOpen, Palette, RotateCcw, Save } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { EntityTable } from "@/components/master-data/EntityTable";
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +33,7 @@ export function DictionariesPage() {
   const [form, setForm] = useState<DictionaryPayload>(defaultForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const enabledItemCount = items.filter((item) => item.enabled).length;
 
   async function loadData(nextDictType = dictTypeFilter) {
     const data = await masterDataApi.listDictionaries(nextDictType || undefined);
@@ -102,18 +104,26 @@ export function DictionariesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">状态字典</h1>
-          <p className="mt-1 text-sm text-slate-500">统一维护前端可调用的状态值和标签</p>
-        </div>
-        <Button variant="secondary" onClick={() => void loadData()}>
-          <RotateCcw className="size-4" aria-hidden="true" />
-          刷新
-        </Button>
-      </div>
+      <ManagementPageHeader
+        title="状态字典"
+        description="统一维护前端可调用的状态值、标签和状态色"
+        icon={BookOpen}
+        badge="后台配置"
+        actions={
+          <Button variant="secondary" onClick={() => void loadData()}>
+            <RotateCcw className="size-4" aria-hidden="true" />
+            刷新
+          </Button>
+        }
+      />
 
       {message && <Badge tone={message.includes("失败") ? "danger" : "success"}>{message}</Badge>}
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="字典项" value={items.length} detail={`启用 ${enabledItemCount}`} icon={BookOpen} />
+        <ManagementStatCard label="字典类型" value={dictTypes.length} detail={dictTypeFilter || "全部类型"} icon={Palette} tone="teal" />
+        <ManagementStatCard label="停用项" value={items.length - enabledItemCount} detail="不再参与前端选项" icon={RotateCcw} tone="slate" />
+      </section>
 
       <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
         <Card>
@@ -232,14 +242,15 @@ export function DictionariesPage() {
               rows={items}
               getRowKey={(item) => item.id}
               emptyLabel="暂无字典项"
+              emptyDescription="选择字典类型后新增状态值"
               onEdit={handleEdit}
               onDelete={(item) => void handleDelete(item)}
               columns={[
                 { key: "type", label: "类型", render: (item) => item.dict_type },
                 { key: "value", label: "值", render: (item) => item.value },
                 { key: "label", label: "标签", render: (item) => item.label },
-                { key: "color", label: "颜色", render: (item) => item.color || "-" },
-                { key: "enabled", label: "启用", render: (item) => (item.enabled ? "是" : "否") },
+                { key: "color", label: "颜色", render: (item) => <Badge tone={(item.color as "neutral" | "success" | "warning" | "danger") || "neutral"}>{item.color || "neutral"}</Badge> },
+                { key: "enabled", label: "启用", render: (item) => <Badge tone={item.enabled ? "success" : "neutral"}>{item.enabled ? "启用" : "停用"}</Badge> },
               ]}
             />
           </CardContent>

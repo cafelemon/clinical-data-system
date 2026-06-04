@@ -8,6 +8,7 @@ import {
   FileSearch,
   FolderKanban,
   Images,
+  Layers3,
   LayoutDashboard,
   LogOut,
   ClipboardList,
@@ -81,6 +82,7 @@ const navItems: NavItem[] = [
   },
   { to: "/projects", label: "项目", icon: FolderKanban, permissions: ["master_data:read"], adminOnly: true },
   { to: "/centers", label: "中心", icon: Building2, permissions: ["master_data:read"], adminOnly: true },
+  { to: "/stages", label: "阶段", icon: Layers3, permissions: ["master_data:read"], adminOnly: true },
   { to: "/stage-templates", label: "模板", icon: FileText, permissions: ["master_data:read"], adminOnly: true },
   { to: "/dictionaries", label: "字典", icon: BookOpen, permissions: ["dictionaries:read"], adminOnly: true },
   {
