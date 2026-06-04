@@ -273,6 +273,7 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
             "subject_arm": "control",
             "informed_at": "2026-05-04T10:45:00",
             "visit3_date": "2026-05-10",
+            "review_status": "rejected",
         },
     )
     assert update_subject.status_code == 200
@@ -317,7 +318,7 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
     update_item = client.put(
         f"/api/subject-items/{item_id}",
         headers=admin_headers,
-        json={"upload_status": "uploaded", "review_status": "approved", "remark": "已核对"},
+        json={"upload_status": "uploaded", "review_status": "rejected", "remark": "已核对"},
     )
     assert update_item.status_code == 200
     assert update_item.json()["remark"] == "已核对"
@@ -327,15 +328,37 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
         headers=admin_headers,
     )
     assert dataset.status_code == 200
-    assert dataset.json()["stage_file_count"] == 57
-    assert len(dataset.json()["ssu_progress"]) == 5
-    assert len(dataset.json()["trial_file_groups"]) == 1
-    assert len(dataset.json()["trial_files"]) == 19
-    assert dataset.json()["subject_count"] == 1
-    dataset_subject = dataset.json()["subjects"][0]
+    dataset_body = dataset.json()
+    assert dataset_body["stage_file_count"] == 57
+    assert len(dataset_body["ssu_progress"]) == 5
+    assert len(dataset_body["trial_file_groups"]) == 1
+    assert len(dataset_body["trial_files"]) == 19
+    assert dataset_body["subject_count"] == 1
+    assert dataset_body["summary"]["stage_files"] == {
+        "complete": 0,
+        "checking": 1,
+        "incomplete": 56,
+    }
+    assert dataset_body["summary"]["subjects"] == {
+        "complete": 0,
+        "checking": 0,
+        "incomplete": 1,
+    }
+    assert dataset_body["summary"]["reviews"]["rejected"] == 1
+    assert dataset_body["summary"]["ssu"] == {
+        "total": 5,
+        "completed": 0,
+        "blocked": 0,
+        "active": 0,
+    }
+    assert dataset_body["summary"]["optional_files"]["uploaded"] == 1
+    assert dataset_body["summary"]["optional_files"]["not_applicable"] == 0
+    assert any(group["total"] > 0 for group in dataset_body["summary"]["stage_groups"])
+    dataset_subject = dataset_body["subjects"][0]
     assert dataset_subject["subject_arm"] is None
     assert dataset_subject["informed_at"].startswith("2026-05-04T10:45")
     assert dataset_subject["visit3_date"] == "2026-05-10"
+    assert dataset_subject["review_status"] == "rejected"
 
 
 def test_clinical_data_scope_and_write_permission(

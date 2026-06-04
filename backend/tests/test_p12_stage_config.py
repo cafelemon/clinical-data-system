@@ -190,6 +190,24 @@ def test_template_scopes_dataset_groups_and_subject_generation(
     assert update_ssu.status_code == 200
     assert update_ssu.json()["status"] == "completed"
     assert update_ssu.json()["version_info"] == "v1"
+    second_ssu = dataset.json()["ssu_progress"][1]
+    blocked_ssu = client.patch(
+        f"/api/clinical-datasets/ssu-progress/{second_ssu['id']}",
+        headers=admin_headers,
+        json={"status": "blocked", "notes": "伦理资料待补充"},
+    )
+    assert blocked_ssu.status_code == 200
+    refreshed_dataset = client.get(
+        f"/api/clinical-datasets?project_id={project_id}&center_id={center_id}",
+        headers=admin_headers,
+    )
+    assert refreshed_dataset.status_code == 200
+    assert refreshed_dataset.json()["summary"]["ssu"] == {
+        "total": 5,
+        "completed": 1,
+        "blocked": 1,
+        "active": 0,
+    }
     invalid_ssu = client.post(
         "/api/clinical-datasets/ssu-progress",
         headers=admin_headers,

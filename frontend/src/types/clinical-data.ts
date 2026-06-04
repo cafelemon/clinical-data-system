@@ -185,6 +185,52 @@ export type ClinicalSsuProgressPayload = {
   notes?: string | null;
 };
 
+export type ClinicalStatusCount = {
+  complete: number;
+  checking: number;
+  incomplete: number;
+};
+
+export type ClinicalReviewSummary = {
+  unreviewed: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+};
+
+export type ClinicalSsuSummary = {
+  total: number;
+  completed: number;
+  blocked: number;
+  active: number;
+};
+
+export type ClinicalOptionalFileSummary = {
+  total: number;
+  not_applicable: number;
+  uploaded: number;
+};
+
+export type ClinicalStageGroupSummary = {
+  stage_id: number;
+  stage_code: string;
+  stage_name: string;
+  phase_code: string | null;
+  total: number;
+  complete: number;
+  checking: number;
+  incomplete: number;
+};
+
+export type ClinicalDatasetSummary = {
+  stage_files: ClinicalStatusCount;
+  subjects: ClinicalStatusCount;
+  reviews: ClinicalReviewSummary;
+  ssu: ClinicalSsuSummary;
+  optional_files: ClinicalOptionalFileSummary;
+  stage_groups: ClinicalStageGroupSummary[];
+};
+
 export type ClinicalDataset = {
   project_id: number | null;
   center_id: number | null;
@@ -202,6 +248,7 @@ export type ClinicalDataset = {
   closeout_files: StageFile[];
   stage_file_count: number;
   subject_count: number;
+  summary: ClinicalDatasetSummary;
 };
 
 export type ReviewTargetType = "stage_file" | "subject_item";

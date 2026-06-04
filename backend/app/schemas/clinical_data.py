@@ -227,6 +227,54 @@ class ClinicalSsuProgressRead(ClinicalSsuProgressBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ClinicalStatusCountRead(BaseModel):
+    complete: int = 0
+    checking: int = 0
+    incomplete: int = 0
+
+
+class ClinicalReviewSummaryRead(BaseModel):
+    unreviewed: int = 0
+    pending: int = 0
+    approved: int = 0
+    rejected: int = 0
+
+
+class ClinicalSsuSummaryRead(BaseModel):
+    total: int = 0
+    completed: int = 0
+    blocked: int = 0
+    active: int = 0
+
+
+class ClinicalOptionalFileSummaryRead(BaseModel):
+    total: int = 0
+    not_applicable: int = 0
+    uploaded: int = 0
+
+
+class ClinicalStageGroupSummaryRead(BaseModel):
+    stage_id: int
+    stage_code: str
+    stage_name: str
+    phase_code: str | None = None
+    total: int = 0
+    complete: int = 0
+    checking: int = 0
+    incomplete: int = 0
+
+
+class ClinicalDatasetSummaryRead(BaseModel):
+    stage_files: ClinicalStatusCountRead = Field(default_factory=ClinicalStatusCountRead)
+    subjects: ClinicalStatusCountRead = Field(default_factory=ClinicalStatusCountRead)
+    reviews: ClinicalReviewSummaryRead = Field(default_factory=ClinicalReviewSummaryRead)
+    ssu: ClinicalSsuSummaryRead = Field(default_factory=ClinicalSsuSummaryRead)
+    optional_files: ClinicalOptionalFileSummaryRead = Field(
+        default_factory=ClinicalOptionalFileSummaryRead
+    )
+    stage_groups: list[ClinicalStageGroupSummaryRead] = Field(default_factory=list)
+
+
 class ClinicalDatasetRead(BaseModel):
     project_id: int | None = None
     center_id: int | None = None
@@ -244,3 +292,4 @@ class ClinicalDatasetRead(BaseModel):
     closeout_files: list[StageFileRead] = Field(default_factory=list)
     stage_file_count: int = 0
     subject_count: int = 0
+    summary: ClinicalDatasetSummaryRead = Field(default_factory=ClinicalDatasetSummaryRead)

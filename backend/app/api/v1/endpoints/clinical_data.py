@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Annotated, TypeVar
 
@@ -8,8 +9,12 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AccessContext, require_permission
 from app.core.clinical_data import (
+    DATA_CHECKING,
+    DATA_COMPLETE,
+    DATA_INCOMPLETE,
     DEFAULT_REVIEW_STATUS,
     DEFAULT_UPLOAD_STATUS,
+    UPLOADED_STATUSES,
 )
 from app.core.config import settings
 from app.core.database import get_db
@@ -35,10 +40,16 @@ from app.models import (
 from app.models.clinical_data import SubjectSection
 from app.schemas import (
     ClinicalDatasetRead,
+    ClinicalDatasetSummaryRead,
     ClinicalPhaseRead,
+    ClinicalOptionalFileSummaryRead,
+    ClinicalReviewSummaryRead,
+    ClinicalSsuSummaryRead,
     ClinicalSsuProgressCreate,
     ClinicalSsuProgressRead,
     ClinicalSsuProgressUpdate,
+    ClinicalStageGroupSummaryRead,
+    ClinicalStatusCountRead,
     StageFileApplicabilityUpdate,
     StageFileGroupRead,
     StageFileRead,
@@ -569,6 +580,14 @@ def get_clinical_dataset(
     )
     closeout_groups = stage_file_groups(children_by_phase.get("CLOSEOUT", []), closeout_files)
     ssu_progress = list_ssu_progress_records(db, project_id, center_id)
+    all_stage_files = startup_files + trial_files + closeout_files
+    all_stage_groups = startup_groups + trial_groups + closeout_groups
+    summary = build_clinical_dataset_summary(
+        all_stage_files,
+        subjects,
+        ssu_progress,
+        all_stage_groups,
+    )
     phase_reads = []
     for phase in phases:
         phase_files: list[StageFile] = []
@@ -606,8 +625,9 @@ def get_clinical_dataset(
         subjects=subjects,
         closeout_file_groups=closeout_groups,
         closeout_files=closeout_files,
-        stage_file_count=len(startup_files) + len(trial_files) + len(closeout_files),
+        stage_file_count=len(all_stage_files),
         subject_count=len(subjects),
+        summary=summary,
     )
 
 
@@ -620,6 +640,75 @@ def stage_file_groups(stages: list[Stage], files: list[StageFile]) -> list[Stage
         for stage in stages
         if stage.enabled
     ]
+
+
+def status_count_read(counter: Counter[str]) -> ClinicalStatusCountRead:
+    return ClinicalStatusCountRead(
+        complete=counter[DATA_COMPLETE],
+        checking=counter[DATA_CHECKING],
+        incomplete=counter[DATA_INCOMPLETE],
+    )
+
+
+def build_clinical_dataset_summary(
+    stage_files: list[StageFile],
+    subjects: list[Subject],
+    ssu_progress: list[ClinicalSsuProgress],
+    stage_groups: list[StageFileGroupRead],
+) -> ClinicalDatasetSummaryRead:
+    stage_file_statuses = Counter(
+        stage_file.completeness_status or DATA_INCOMPLETE for stage_file in stage_files
+    )
+    subject_statuses = Counter(subject.data_status for subject in subjects)
+    review_statuses = Counter(stage_file.review_status for stage_file in stage_files)
+    review_statuses.update(subject.review_status for subject in subjects)
+    optional_files = [stage_file for stage_file in stage_files if not stage_file.required]
+    ssu_statuses = Counter(record.status for record in ssu_progress)
+    group_summaries: list[ClinicalStageGroupSummaryRead] = []
+    for group in stage_groups:
+        group_statuses = Counter(
+            stage_file.completeness_status or DATA_INCOMPLETE for stage_file in group.files
+        )
+        group_summaries.append(
+            ClinicalStageGroupSummaryRead(
+                stage_id=group.stage.id,
+                stage_code=group.stage.code,
+                stage_name=group.stage.name,
+                phase_code=group.stage.phase_code,
+                total=len(group.files),
+                complete=group_statuses[DATA_COMPLETE],
+                checking=group_statuses[DATA_CHECKING],
+                incomplete=group_statuses[DATA_INCOMPLETE],
+            )
+        )
+    return ClinicalDatasetSummaryRead(
+        stage_files=status_count_read(stage_file_statuses),
+        subjects=status_count_read(subject_statuses),
+        reviews=ClinicalReviewSummaryRead(
+            unreviewed=review_statuses["unreviewed"],
+            pending=review_statuses["pending"],
+            approved=review_statuses["approved"],
+            rejected=review_statuses["rejected"],
+        ),
+        ssu=ClinicalSsuSummaryRead(
+            total=len(ssu_progress),
+            completed=ssu_statuses["completed"],
+            blocked=ssu_statuses["blocked"],
+            active=sum(
+                count
+                for status, count in ssu_statuses.items()
+                if status not in {"not_started", "completed", "blocked"}
+            ),
+        ),
+        optional_files=ClinicalOptionalFileSummaryRead(
+            total=len(optional_files),
+            not_applicable=sum(1 for stage_file in optional_files if stage_file.not_applicable),
+            uploaded=sum(
+                1 for stage_file in optional_files if stage_file.upload_status in UPLOADED_STATUSES
+            ),
+        ),
+        stage_groups=group_summaries,
+    )
 
 
 def stage_file_has_active_file(db: Session, stage_file_id: int) -> bool:

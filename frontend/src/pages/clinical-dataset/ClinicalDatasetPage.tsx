@@ -1,8 +1,12 @@
 import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
   ClipboardList,
   Database,
   Eye,
   FileText,
+  Gauge,
   Pencil,
   Plus,
   RotateCcw,
@@ -27,6 +31,7 @@ import { masterDataApi } from "@/services/master-data";
 import { useAuthStore } from "@/stores/auth-store";
 import type {
   ClinicalDataset,
+  ClinicalStatusCount,
   ClinicalSsuProgress,
   ClinicalSsuProgressPayload,
   CompletenessSummary,
@@ -242,6 +247,72 @@ function formatDateTimeMinute(value: string | null) {
   )}:${pad2(date.getMinutes())}`;
 }
 
+function percent(numerator: number, denominator: number) {
+  if (denominator <= 0) return 0;
+  return Math.round((numerator / denominator) * 100);
+}
+
+function statusTotal(counts: ClinicalStatusCount) {
+  return counts.complete + counts.checking + counts.incomplete;
+}
+
+function completenessRate(counts: ClinicalStatusCount) {
+  return percent(counts.complete, statusTotal(counts));
+}
+
+function ProgressBar({ value, tone = "blue" }: { value: number; tone?: "blue" | "teal" | "amber" | "red" }) {
+  const colorClass =
+    tone === "teal"
+      ? "bg-[#10BFB3]"
+      : tone === "amber"
+        ? "bg-amber-500"
+        : tone === "red"
+          ? "bg-rose-500"
+          : "bg-[#0F78D4]";
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+      <div className={cn("h-full rounded-full", colorClass)} style={{ width: `${Math.min(value, 100)}%` }} />
+    </div>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  detail,
+  icon: Icon,
+  tone = "blue",
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+  icon: typeof Gauge;
+  tone?: "blue" | "teal" | "amber" | "red";
+}) {
+  const toneClass =
+    tone === "teal"
+      ? "bg-teal-50 text-teal-700"
+      : tone === "amber"
+        ? "bg-amber-50 text-amber-700"
+        : tone === "red"
+          ? "bg-rose-50 text-rose-700"
+          : "bg-blue-50 text-[#0B2E63]";
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-slate-500">{label}</p>
+          <p className="mt-2 text-2xl font-semibold tracking-normal text-slate-950">{value}</p>
+        </div>
+        <div className={cn("flex size-9 shrink-0 items-center justify-center rounded-md", toneClass)}>
+          <Icon className="size-4" aria-hidden="true" />
+        </div>
+      </div>
+      <p className="mt-3 truncate text-xs text-slate-500">{detail}</p>
+    </div>
+  );
+}
+
 function toDateTimeLocalValue(value: string | null) {
   if (!value) return "";
   const date = new Date(value);
@@ -326,14 +397,12 @@ function StageFileTable({
         />
       )}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[980px] text-left text-sm">
+        <table className="w-full min-w-[860px] text-left text-sm">
           <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
             <tr>
-              <th className="w-[34%] px-3 py-2 font-medium">资料名称</th>
-              <th className="px-3 py-2 font-medium">上传/审核</th>
-              <th className="px-3 py-2 font-medium">上传状态</th>
-              <th className="px-3 py-2 font-medium">审核状态</th>
+              <th className="w-[30%] px-3 py-2 font-medium">资料名称</th>
               <th className="px-3 py-2 font-medium">完整性</th>
+              <th className="px-3 py-2 font-medium">上传/审核</th>
               <th className="px-3 py-2 font-medium">材料情况</th>
               <th className="px-3 py-2 font-medium">文件</th>
               <th className="px-3 py-2 font-medium">审核</th>
@@ -370,7 +439,9 @@ function StageFileTable({
                   <td className="px-3 py-3 font-medium text-slate-900">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="whitespace-normal break-words leading-6">{file.file_name}</span>
-                      {!file.required && <Badge tone="neutral">若有</Badge>}
+                      <Badge tone={file.required ? "warning" : "neutral"}>
+                        {file.required ? "必备" : "若有"}
+                      </Badge>
                     </div>
                     {file.not_applicable && (
                       <p className="mt-1 text-xs text-slate-500">
@@ -378,6 +449,21 @@ function StageFileTable({
                         {file.not_applicable_by_name ? ` · ${file.not_applicable_by_name}` : ""}
                       </p>
                     )}
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="space-y-1">
+                      <Badge tone={statusTone(completenessStatus)}>
+                        {statusLabel(dataStatusLabels, completenessStatus)}
+                      </Badge>
+                      <div className="flex flex-wrap gap-1.5">
+                        <Badge tone={statusTone(file.upload_status)}>
+                          {statusLabel(uploadStatusLabels, file.upload_status)}
+                        </Badge>
+                        <Badge tone={statusTone(file.review_status)}>
+                          {statusLabel(reviewStatusLabels, file.review_status)}
+                        </Badge>
+                      </div>
+                    </div>
                   </td>
                   <td className="px-3 py-3 text-xs text-slate-600">
                     <div className="space-y-1">
@@ -390,21 +476,6 @@ function StageFileTable({
                         {file.reviewed_at ? new Date(file.reviewed_at).toLocaleDateString() : "-"}
                       </p>
                     </div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <Badge tone={statusTone(file.upload_status)}>
-                      {statusLabel(uploadStatusLabels, file.upload_status)}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-3">
-                    <Badge tone={statusTone(file.review_status)}>
-                      {statusLabel(reviewStatusLabels, file.review_status)}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-3">
-                    <Badge tone={statusTone(completenessStatus)}>
-                      {statusLabel(dataStatusLabels, completenessStatus)}
-                    </Badge>
                   </td>
                   <td className="min-w-[220px] px-3 py-3">
                     {!file.required ? (
@@ -517,50 +588,57 @@ function SubjectTable({
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1280px] text-left text-sm">
+      <table className="w-full min-w-[760px] text-left text-sm">
         <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
           <tr>
-            <th className="px-3 py-2 font-medium">筛选号</th>
-            <th className="px-3 py-2 font-medium">分组</th>
-            <th className="px-3 py-2 font-medium">性别</th>
-            <th className="px-3 py-2 font-medium">年龄</th>
-            <th className="px-3 py-2 font-medium">知情时间</th>
-            <th className="px-3 py-2 font-medium">访视1日期</th>
-            <th className="px-3 py-2 font-medium">访视2日期</th>
-            <th className="px-3 py-2 font-medium">访视3日期</th>
-            <th className="px-3 py-2 font-medium">访视4日期</th>
+            <th className="w-[24%] px-3 py-2 font-medium">筛选号</th>
+            <th className="px-3 py-2 font-medium">受试者信息</th>
+            <th className="px-3 py-2 font-medium">访视日期</th>
             <th className="px-3 py-2 font-medium">资料状态</th>
-            <th className="px-3 py-2 font-medium">审核状态</th>
-            <th className="px-3 py-2 font-medium">操作</th>
+            <th className="px-3 py-2 font-medium">入口</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {subjects.map((subject) => (
             <tr key={subject.id}>
-              <td className="px-3 py-3 font-medium text-slate-900">{subject.screening_no}</td>
+              <td className="px-3 py-3">
+                <p className="font-semibold text-slate-950">{subject.screening_no}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  知情 {formatDateTimeMinute(subject.informed_at)}
+                </p>
+              </td>
               <td className="px-3 py-3 text-slate-600">
-                {subject.subject_arm ? subjectArmLabels[subject.subject_arm] : "未分组"}
+                <div className="space-y-1">
+                  <p>{subject.subject_arm ? subjectArmLabels[subject.subject_arm] : "未分组"}</p>
+                  <p className="text-xs text-slate-500">
+                    {subject.gender || "-"} · {subject.age ?? "-"} 岁
+                  </p>
+                </div>
               </td>
-              <td className="px-3 py-3 text-slate-600">{subject.gender || "-"}</td>
-              <td className="px-3 py-3 text-slate-600">{subject.age ?? "-"}</td>
-              <td className="px-3 py-3 text-slate-600">{formatDateTimeMinute(subject.informed_at)}</td>
-              <td className="px-3 py-3 text-slate-600">{subject.visit1_date || "-"}</td>
-              <td className="px-3 py-3 text-slate-600">{subject.visit2_date || "-"}</td>
-              <td className="px-3 py-3 text-slate-600">{subject.visit3_date || "-"}</td>
-              <td className="px-3 py-3 text-slate-600">{subject.visit4_date || "-"}</td>
-              <td className="px-3 py-3">
-                <Badge tone={statusTone(subject.data_status)}>
-                  {statusLabel(dataStatusLabels, subject.data_status)}
-                </Badge>
+              <td className="px-3 py-3 text-xs text-slate-600">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                  <span>V1 {subject.visit1_date || "-"}</span>
+                  <span>V2 {subject.visit2_date || "-"}</span>
+                  <span>V3 {subject.visit3_date || "-"}</span>
+                  <span>V4 {subject.visit4_date || "-"}</span>
+                </div>
               </td>
               <td className="px-3 py-3">
-                <Badge tone={statusTone(subject.review_status)}>
-                  {statusLabel(reviewStatusLabels, subject.review_status)}
-                </Badge>
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge tone={statusTone(subject.data_status)}>
+                    {statusLabel(dataStatusLabels, subject.data_status)}
+                  </Badge>
+                  <Badge tone={statusTone(subject.review_status)}>
+                    {statusLabel(reviewStatusLabels, subject.review_status)}
+                  </Badge>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  更新 {new Date(subject.updated_at).toLocaleDateString()}
+                </p>
               </td>
               <td className="px-3 py-3">
                 <div className="flex flex-wrap gap-2">
-                  <Button asChild size="sm" variant="secondary">
+                  <Button asChild size="sm" className="bg-[#0B2E63] hover:bg-[#08234b]">
                     <Link to={`/clinical-dataset/subjects/${subject.id}`}>
                       <Eye className="size-4" aria-hidden="true" />
                       详情
@@ -722,13 +800,14 @@ function SecondaryStageFiles({
               key={group.stage.id}
               type="button"
               className={cn(
-                "flex w-full items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-left text-sm text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50",
-                isActive && "border-emerald-600 bg-emerald-50 text-emerald-800",
+                "flex w-full items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-left text-sm text-slate-600 transition",
+                "hover:border-[#0F78D4] hover:bg-blue-50",
+                isActive && "border-[#0B2E63] bg-blue-50 text-[#0B2E63]",
               )}
               onClick={() => onGroupChange(group.stage.id)}
             >
               <span className="min-w-0 truncate">{group.stage.name}</span>
-              <Badge tone={isActive ? "success" : "neutral"}>{group.files.length}</Badge>
+              <Badge tone={isActive ? "warning" : "neutral"}>{group.files.length}</Badge>
             </button>
           );
         })}
@@ -852,7 +931,7 @@ function SsuProgressPanel({
             <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <ClipboardList className="size-4 text-emerald-700" aria-hidden="true" />
+                  <ClipboardList className="size-4 text-[#0B2E63]" aria-hidden="true" />
                   <h3 className="text-sm font-semibold text-slate-950">
                     {meta?.label ?? record.stage_code}
                   </h3>
@@ -1009,7 +1088,7 @@ function StageNavigation({
               type="button"
               className={cn(
                 "flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950",
-                isActive && "bg-emerald-600 text-white hover:bg-emerald-600 hover:text-white",
+                isActive && "bg-[#0B2E63] text-white hover:bg-[#0B2E63] hover:text-white",
               )}
               onClick={() => onChange(config.code)}
             >
@@ -1023,7 +1102,7 @@ function StageNavigation({
                 <span
                   className={cn(
                     "mt-0.5 block text-xs font-normal",
-                    isActive ? "text-emerald-50" : "text-slate-400",
+                    isActive ? "text-blue-50" : "text-slate-400",
                   )}
                 >
                   {stage
@@ -1047,12 +1126,12 @@ function StageNavigation({
                       type="button"
                       className={cn(
                         "flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-900",
-                        isViewActive && "bg-emerald-50 font-medium text-emerald-800",
+                        isViewActive && "bg-teal-50 font-medium text-teal-800",
                       )}
                       onClick={() => onStartupViewChange(item.value)}
                     >
                       <span>{item.label}</span>
-                      <Badge tone={isViewActive ? "success" : "neutral"}>{item.count}</Badge>
+                      <Badge tone={isViewActive ? "warning" : "neutral"}>{item.count}</Badge>
                     </button>
                   );
                 })}
@@ -1071,12 +1150,12 @@ function StageNavigation({
                       type="button"
                       className={cn(
                         "flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-500 transition hover:bg-slate-100 hover:text-slate-900",
-                        isViewActive && "bg-emerald-50 font-medium text-emerald-800",
+                        isViewActive && "bg-teal-50 font-medium text-teal-800",
                       )}
                       onClick={() => onTrialViewChange(item.value)}
                     >
                       <span>{item.label}</span>
-                      <Badge tone={isViewActive ? "success" : "neutral"}>{item.count}</Badge>
+                      <Badge tone={isViewActive ? "warning" : "neutral"}>{item.count}</Badge>
                     </button>
                   );
                 })}
@@ -1086,11 +1165,11 @@ function StageNavigation({
               <div className="ml-7 space-y-1 border-l border-slate-200 pl-3">
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between gap-2 rounded-md bg-emerald-50 px-3 py-2 text-left text-xs font-medium text-emerald-800 transition hover:bg-emerald-50"
+                  className="flex w-full items-center justify-between gap-2 rounded-md bg-teal-50 px-3 py-2 text-left text-xs font-medium text-teal-800 transition hover:bg-teal-50"
                   onClick={() => onChange("CLOSEOUT")}
                 >
                   <span>资料准备</span>
-                  <Badge tone="success">{count}</Badge>
+                  <Badge tone="warning">{count}</Badge>
                 </button>
               </div>
             )}
@@ -1198,6 +1277,25 @@ export function ClinicalDatasetPage() {
       rejected: subjects.filter((subject) => subject.review_status === "rejected").length,
     };
   }, [dataset?.subjects]);
+  const datasetSummary = dataset?.summary;
+  const visibleStageGroups = useMemo(
+    () => (datasetSummary?.stage_groups ?? []).filter((group) => group.total > 0),
+    [datasetSummary?.stage_groups],
+  );
+  const stageFileRate = datasetSummary ? completenessRate(datasetSummary.stage_files) : 0;
+  const subjectRate = datasetSummary ? completenessRate(datasetSummary.subjects) : 0;
+  const reviewRiskCount = datasetSummary
+    ? datasetSummary.reviews.pending + datasetSummary.reviews.rejected
+    : 0;
+  const optionalHandledCount = datasetSummary
+    ? datasetSummary.optional_files.uploaded + datasetSummary.optional_files.not_applicable
+    : 0;
+  const optionalHandledRate = datasetSummary
+    ? percent(optionalHandledCount, datasetSummary.optional_files.total)
+    : 0;
+  const ssuCompletedRate = datasetSummary
+    ? percent(datasetSummary.ssu.completed, datasetSummary.ssu.total)
+    : 0;
 
   const loadCompleteness = useCallback(async () => {
     if (!projectId || !centerId || !canReadCompleteness) {
@@ -1497,7 +1595,9 @@ export function ClinicalDatasetPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">临床数据集</h1>
+          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">
+            V3.4.4 试验数据资料中枢
+          </h1>
           <p className="mt-1 text-sm text-slate-500">项目中心资料与受试者链路</p>
         </div>
         <Card>
@@ -1513,11 +1613,13 @@ export function ClinicalDatasetPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex items-start gap-3">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-md bg-blue-50 text-[#0B2E63]">
             <Database className="size-6" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-normal text-slate-950">临床数据集</h1>
+            <h1 className="text-2xl font-semibold tracking-normal text-slate-950">
+              V3.4.4 试验数据资料中枢
+            </h1>
             <p className="mt-1 text-sm text-slate-500">
               {selectedProject?.name ?? "未选择项目"} · {selectedCenter?.name ?? "未选择中心"}
             </p>
@@ -1562,6 +1664,114 @@ export function ClinicalDatasetPage() {
           {message}
         </Badge>
       )}
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <MetricTile
+          label="阶段资料完整性"
+          value={`${stageFileRate}%`}
+          detail={`齐全 ${datasetSummary?.stage_files.complete ?? 0} / ${dataset?.stage_file_count ?? 0}`}
+          icon={Gauge}
+          tone="blue"
+        />
+        <MetricTile
+          label="受试者资料"
+          value={`${subjectRate}%`}
+          detail={`齐全 ${datasetSummary?.subjects.complete ?? 0} / ${dataset?.subject_count ?? 0}`}
+          icon={Users}
+          tone="teal"
+        />
+        <MetricTile
+          label="审核风险"
+          value={reviewRiskCount}
+          detail={`待审核 ${datasetSummary?.reviews.pending ?? 0} · 驳回 ${datasetSummary?.reviews.rejected ?? 0}`}
+          icon={AlertTriangle}
+          tone={reviewRiskCount > 0 ? "red" : "blue"}
+        />
+        <MetricTile
+          label="SSU 状态"
+          value={`${datasetSummary?.ssu.completed ?? 0}/${datasetSummary?.ssu.total ?? 0}`}
+          detail={`完成率 ${ssuCompletedRate}% · 受阻 ${datasetSummary?.ssu.blocked ?? 0}`}
+          icon={Activity}
+          tone="amber"
+        />
+        <MetricTile
+          label="若有资料"
+          value={`${optionalHandledRate}%`}
+          detail={`上传 ${datasetSummary?.optional_files.uploaded ?? 0} · 无材料 ${datasetSummary?.optional_files.not_applicable ?? 0}`}
+          icon={CheckCircle2}
+          tone="teal"
+        />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+        <div className="rounded-md border border-slate-200 bg-white p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-950">阶段完整性</h2>
+              <p className="mt-1 text-xs text-slate-500">按二级阶段拆分 complete/checking/incomplete</p>
+            </div>
+            <Badge tone="neutral">{visibleStageGroups.length} 组</Badge>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {visibleStageGroups.slice(0, 6).map((group) => {
+              const groupRate = percent(group.complete, group.total);
+              return (
+                <div key={group.stage_id} className="rounded-md border border-slate-100 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="min-w-0 truncate text-sm font-medium text-slate-800">{group.stage_name}</p>
+                    <Badge tone={statusTone(group.incomplete > 0 ? "incomplete" : group.checking > 0 ? "checking" : "complete")}>
+                      {group.complete}/{group.total}
+                    </Badge>
+                  </div>
+                  <div className="mt-3">
+                    <ProgressBar value={groupRate} tone={group.incomplete > 0 ? "amber" : "teal"} />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    核查 {group.checking} · 不全 {group.incomplete}
+                  </p>
+                </div>
+              );
+            })}
+            {(!datasetSummary || visibleStageGroups.length === 0) && (
+              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500 md:col-span-2">
+                选择项目和中心后显示阶段进度
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="rounded-md border border-slate-200 bg-white p-4">
+          <h2 className="text-sm font-semibold text-slate-950">资料概览</h2>
+          <div className="mt-4 space-y-4">
+            <div>
+              <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
+                <span>中心级资料</span>
+                <span>{stageFileRate}%</span>
+              </div>
+              <ProgressBar value={stageFileRate} tone="blue" />
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
+                <span>受试者资料</span>
+                <span>{subjectRate}%</span>
+              </div>
+              <ProgressBar value={subjectRate} tone="teal" />
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
+                <span>若有资料处理</span>
+                <span>{optionalHandledRate}%</span>
+              </div>
+              <ProgressBar value={optionalHandledRate} tone="amber" />
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+              <Badge tone="success">齐全 {datasetSummary?.stage_files.complete ?? 0}</Badge>
+              <Badge tone="warning">核查 {datasetSummary?.stage_files.checking ?? 0}</Badge>
+              <Badge tone="danger">不全 {datasetSummary?.stage_files.incomplete ?? 0}</Badge>
+              <Badge tone={reviewRiskCount > 0 ? "danger" : "neutral"}>风险 {reviewRiskCount}</Badge>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="space-y-4">
