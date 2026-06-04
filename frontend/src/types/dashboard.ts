@@ -111,6 +111,9 @@ export type DashboardV323Center = {
   completeness_status: string;
   pending_review_count: number;
   rejected_review_count: number;
+  image_required_complete: number;
+  image_required_incomplete: number;
+  image_required_coverage_rate: number;
 };
 
 export type DashboardV323Warning = {
@@ -132,6 +135,12 @@ export type DashboardV323Overview = {
   completeness: { complete: number; checking: number; incomplete: number };
   stage_files: { complete: number; checking: number; incomplete: number };
   subjects: { complete: number; checking: number; incomplete: number };
+  image_data: {
+    raw: DashboardV323ImageMetric;
+    report: DashboardV323ImageMetric;
+    enhanced: DashboardV323ImageMetric;
+    required: { complete: number; checking: number; incomplete: number };
+  };
   reviews: DashboardReviewStatus;
   enrollment: {
     subject_count: number;
@@ -149,4 +158,11 @@ export type DashboardV323Overview = {
     clinical_event_count: number;
     device_issue_count: number;
   };
+};
+
+export type DashboardV323ImageMetric = {
+  total_count: number;
+  uploaded_count: number;
+  not_uploaded_count: number;
+  coverage_rate: number;
 };

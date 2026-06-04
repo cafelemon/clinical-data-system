@@ -408,6 +408,9 @@ class DashboardV323CenterRead(BaseModel):
     completeness_status: str = "incomplete"
     pending_review_count: int = 0
     rejected_review_count: int = 0
+    image_required_complete: int = 0
+    image_required_incomplete: int = 0
+    image_required_coverage_rate: float = 0
 
 
 class DashboardV323TrendRead(BaseModel):
@@ -435,12 +438,27 @@ class DashboardV323ManualSupplementsRead(BaseModel):
     device_issue_count: int = 0
 
 
+class DashboardV323ImageMetricRead(BaseModel):
+    total_count: int = 0
+    uploaded_count: int = 0
+    not_uploaded_count: int = 0
+    coverage_rate: float = 0
+
+
+class DashboardV323ImageDataRead(BaseModel):
+    raw: DashboardV323ImageMetricRead = Field(default_factory=DashboardV323ImageMetricRead)
+    report: DashboardV323ImageMetricRead = Field(default_factory=DashboardV323ImageMetricRead)
+    enhanced: DashboardV323ImageMetricRead = Field(default_factory=DashboardV323ImageMetricRead)
+    required: CompletenessStatusCount = Field(default_factory=CompletenessStatusCount)
+
+
 class DashboardV323OverviewRead(BaseModel):
     scope: DashboardV323ScopeRead
     kpis: DashboardV323KpisRead
     completeness: CompletenessStatusCount
     stage_files: CompletenessStatusCount
     subjects: CompletenessStatusCount
+    image_data: DashboardV323ImageDataRead = Field(default_factory=DashboardV323ImageDataRead)
     reviews: DashboardReviewStatusRead
     enrollment: DashboardV323EnrollmentRead
     centers: list[DashboardV323CenterRead]

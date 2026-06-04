@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 from statistics import median
 from typing import Annotated
@@ -8,9 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import AccessContext, require_permission
-from app.core.clinical_data import DATA_COMPLETE
+from app.core.clinical_data import DATA_CHECKING, DATA_COMPLETE, DATA_INCOMPLETE, UPLOAD_UPLOADED
 from app.core.database import get_db
-from app.models import Center, Project, Subject, SubjectItem
+from app.models import Center, Project, Subject, SubjectImageRecord, SubjectItem
 from app.schemas import (
     CenterCompletenessRead,
     CompletenessStatusCount,
@@ -50,6 +50,8 @@ from app.schemas.dashboard import (
     DashboardV31OverviewRead,
     DashboardV323CenterRead,
     DashboardV323EnrollmentRead,
+    DashboardV323ImageDataRead,
+    DashboardV323ImageMetricRead,
     DashboardV323KpisRead,
     DashboardV323ManualSupplementsRead,
     DashboardV323OverviewRead,
@@ -80,6 +82,8 @@ DBSession = Annotated[Session, Depends(get_db)]
 DashboardReadAccess = Annotated[AccessContext, Depends(require_permission("dashboard:read"))]
 DashboardWriteAccess = Annotated[AccessContext, Depends(require_permission("dashboard:write"))]
 DashboardUploadFile = Annotated[UploadFile, File(...)]
+IMAGE_DATA_TYPES = ("raw", "report", "enhanced")
+REQUIRED_IMAGE_DATA_TYPES = ("raw", "report")
 
 
 def get_project_or_404(db: Session, project_id: int) -> Project:
@@ -300,6 +304,101 @@ def combined_completeness_count(
     )
 
 
+def add_completeness_counts(
+    *counts: CompletenessStatusCount,
+) -> CompletenessStatusCount:
+    return CompletenessStatusCount(
+        complete=sum(count.complete for count in counts),
+        checking=sum(count.checking for count in counts),
+        incomplete=sum(count.incomplete for count in counts),
+    )
+
+
+def completeness_status(count: CompletenessStatusCount) -> str:
+    if count.incomplete:
+        return DATA_INCOMPLETE
+    if count.checking:
+        return DATA_CHECKING
+    if count.complete:
+        return DATA_COMPLETE
+    return DATA_INCOMPLETE
+
+
+def image_metric(total_count: int, uploaded_count: int) -> DashboardV323ImageMetricRead:
+    not_uploaded_count = max(total_count - uploaded_count, 0)
+    return DashboardV323ImageMetricRead(
+        total_count=total_count,
+        uploaded_count=uploaded_count,
+        not_uploaded_count=not_uploaded_count,
+        coverage_rate=completion_rate(uploaded_count, total_count),
+    )
+
+
+def build_image_data_summary(
+    db: Session,
+    subjects: list[Subject],
+) -> tuple[
+    DashboardV323ImageDataRead,
+    dict[int, CompletenessStatusCount],
+]:
+    if not subjects:
+        return DashboardV323ImageDataRead(), {}
+
+    subject_ids = [subject.id for subject in subjects]
+    subject_center_by_id = {subject.id: subject.center_id for subject in subjects}
+    subject_count_by_center: Counter[int] = Counter(subject.center_id for subject in subjects)
+    uploaded_by_type: Counter[str] = Counter()
+    uploaded_by_center_type: defaultdict[int, Counter[str]] = defaultdict(Counter)
+
+    records = db.scalars(
+        select(SubjectImageRecord).where(
+            SubjectImageRecord.subject_id.in_(subject_ids),
+            SubjectImageRecord.image_type.in_(IMAGE_DATA_TYPES),
+        )
+    )
+    for record in records:
+        if record.upload_status != UPLOAD_UPLOADED:
+            continue
+        center_id = subject_center_by_id.get(record.subject_id)
+        if center_id is None:
+            continue
+        uploaded_by_type[record.image_type] += 1
+        uploaded_by_center_type[center_id][record.image_type] += 1
+
+    total_per_type = len(subjects)
+    required_total = total_per_type * len(REQUIRED_IMAGE_DATA_TYPES)
+    required_uploaded = sum(
+        uploaded_by_type[image_type] for image_type in REQUIRED_IMAGE_DATA_TYPES
+    )
+    required_counts = CompletenessStatusCount(
+        complete=required_uploaded,
+        checking=0,
+        incomplete=max(required_total - required_uploaded, 0),
+    )
+    center_required_counts: dict[int, CompletenessStatusCount] = {}
+    for center_id, center_subject_count in subject_count_by_center.items():
+        center_required_total = center_subject_count * len(REQUIRED_IMAGE_DATA_TYPES)
+        center_required_uploaded = sum(
+            uploaded_by_center_type[center_id][image_type]
+            for image_type in REQUIRED_IMAGE_DATA_TYPES
+        )
+        center_required_counts[center_id] = CompletenessStatusCount(
+            complete=center_required_uploaded,
+            checking=0,
+            incomplete=max(center_required_total - center_required_uploaded, 0),
+        )
+
+    return (
+        DashboardV323ImageDataRead(
+            raw=image_metric(total_per_type, uploaded_by_type["raw"]),
+            report=image_metric(total_per_type, uploaded_by_type["report"]),
+            enhanced=image_metric(total_per_type, uploaded_by_type["enhanced"]),
+            required=required_counts,
+        ),
+        center_required_counts,
+    )
+
+
 @router.get("/dashboard/project/{project_id}", response_model=DashboardProjectSummaryRead)
 def dashboard_project_summary(
     project_id: int,
@@ -501,7 +600,6 @@ def dashboard_v323_overview(
     )
     stage_file_counts = status_counter_to_read(summary.stage_files)
     subject_counts = status_counter_to_read(summary.subjects)
-    completeness = combined_completeness_count(stage_file_counts, subject_counts)
 
     all_subjects: list[Subject] = []
     review_counts: Counter[str] = Counter()
@@ -515,10 +613,23 @@ def dashboard_v323_overview(
         review_counts.update(counts)
         pending_rejected.update(center_counts)
 
+    image_data, center_image_counts = build_image_data_summary(db, all_subjects)
+    completeness = add_completeness_counts(
+        combined_completeness_count(stage_file_counts, subject_counts),
+        image_data.required,
+    )
+
     completed_subjects = [
         subject for subject in all_subjects if subject.data_status == DATA_COMPLETE
     ]
     center_status_by_id = {row["center_id"]: row["status"] for row in summary.centers}
+    center_counts_by_id = {
+        row["center_id"]: add_completeness_counts(
+            status_counter_to_read(row["stage_files"]),
+            status_counter_to_read(row["subjects"]),
+        )
+        for row in summary.centers
+    }
     center_rows = []
     for center in centers:
         center_subjects = [subject for subject in all_subjects if subject.center_id == center.id]
@@ -526,6 +637,11 @@ def dashboard_v323_overview(
             subject for subject in center_subjects if subject.data_status == DATA_COMPLETE
         ]
         project = project_by_id[center.project_id]
+        center_image_count = center_image_counts.get(center.id, CompletenessStatusCount())
+        center_combined_count = add_completeness_counts(
+            center_counts_by_id.get(center.id, CompletenessStatusCount()),
+            center_image_count,
+        )
         center_rows.append(
             DashboardV323CenterRead(
                 project_id=project.id,
@@ -535,9 +651,19 @@ def dashboard_v323_overview(
                 subject_count=len(center_subjects),
                 completed_subject_count=len(center_completed),
                 completion_rate=completion_rate(len(center_completed), len(center_subjects)),
-                completeness_status=center_status_by_id.get(center.id, "incomplete"),
+                completeness_status=(
+                    completeness_status(center_combined_count)
+                    if center.id in center_counts_by_id or center.id in center_image_counts
+                    else center_status_by_id.get(center.id, "incomplete")
+                ),
                 pending_review_count=pending_rejected[(center.id, "pending")],
                 rejected_review_count=pending_rejected[(center.id, "rejected")],
+                image_required_complete=center_image_count.complete,
+                image_required_incomplete=center_image_count.incomplete,
+                image_required_coverage_rate=completion_rate(
+                    center_image_count.complete,
+                    center_image_count.complete + center_image_count.incomplete,
+                ),
             )
         )
 
@@ -605,6 +731,7 @@ def dashboard_v323_overview(
         completeness=completeness,
         stage_files=stage_file_counts,
         subjects=subject_counts,
+        image_data=image_data,
         reviews=DashboardReviewStatusRead(
             unreviewed=review_counts["unreviewed"],
             pending=review_counts["pending"],
