@@ -222,6 +222,7 @@ export function PdfReviewPage() {
   const fileId = Number(params.fileId);
   const requestedVersion = Number(searchParams.get("version")) || undefined;
   const requestedFileVersionId = Number(searchParams.get("file_version_id")) || undefined;
+  const requestedReadOnly = searchParams.get("mode") === "readonly";
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canAnnotate = hasPermission("pdf_review:annotate");
   const canWriteFiles = hasPermission("files:write");
@@ -252,6 +253,8 @@ export function PdfReviewPage() {
       backLabel: "返回任务",
     } satisfies NavigationOriginState);
   const pageRotation = pageRotations[pageNo] ?? 0;
+  const isReadOnlyReview = requestedReadOnly || Boolean(reviewFile?.read_only);
+  const canEditAnnotations = canAnnotate && !isReadOnlyReview;
 
   const annotationsForPage = useMemo(
     () => (reviewFile?.annotations ?? []).filter((annotation) => annotation.page_no === pageNo),
@@ -331,7 +334,10 @@ export function PdfReviewPage() {
   }, [pageNo, pageRotation, pdfDoc, scale]);
 
   function handleVersionChange(version: number) {
-    setSearchParams({ version: String(version) });
+    setSearchParams({
+      version: String(version),
+      ...(isReadOnlyReview ? { mode: "readonly" } : {}),
+    });
   }
 
   function rotatePage(delta: number) {
@@ -342,7 +348,7 @@ export function PdfReviewPage() {
   }
 
   function handlePointerDown(event: PointerEvent<SVGSVGElement>) {
-    if (!canAnnotate || tool !== "annotate") return;
+    if (!canEditAnnotations || tool !== "annotate") return;
     const point = pointFromEvent(event);
     const canonicalRect = rotateRectToCanonical(
       { x: point.x, y: point.y, width: 0.001, height: 0.001 },
@@ -375,6 +381,10 @@ export function PdfReviewPage() {
   }
 
   async function saveAnnotation() {
+    if (isReadOnlyReview) {
+      setMessage("SSU 文件仅支持只读在线审阅");
+      return;
+    }
     if (!reviewFile || !draft || !comment.trim()) {
       setMessage("请先画框并填写批注说明");
       return;
@@ -492,7 +502,7 @@ export function PdfReviewPage() {
           <Button
             variant={tool === "annotate" ? "secondary" : "ghost"}
             onClick={() => setTool("annotate")}
-            disabled={!canAnnotate}
+            disabled={!canEditAnnotations}
           >
             <SquarePen className="size-4" aria-hidden="true" />
             画框
@@ -585,7 +595,7 @@ export function PdfReviewPage() {
             <canvas ref={canvasRef} />
             <svg
               className="absolute inset-0"
-              style={{ cursor: tool === "annotate" && canAnnotate ? "crosshair" : "default" }}
+              style={{ cursor: tool === "annotate" && canEditAnnotations ? "crosshair" : "default" }}
               width={pageSize.width}
               height={pageSize.height}
               onPointerDown={handlePointerDown}
@@ -717,7 +727,7 @@ export function PdfReviewPage() {
                       <Button size="sm" variant="ghost" onClick={() => locate(annotation)}>
                         <LocateFixed className="size-4" aria-hidden="true" />
                       </Button>
-                      {canAnnotate && (
+                      {canEditAnnotations && (
                         <>
                           <Button
                             size="sm"
@@ -754,6 +764,7 @@ export function PdfReviewPage() {
             </CardContent>
           </Card>
 
+          {!isReadOnlyReview && (
           <Card>
             <CardContent className="space-y-3 py-4">
               <div className="flex items-center justify-between gap-2">
@@ -792,6 +803,7 @@ export function PdfReviewPage() {
               )}
             </CardContent>
           </Card>
+          )}
         </div>
       </div>
     </div>

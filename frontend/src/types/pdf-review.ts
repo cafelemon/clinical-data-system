@@ -61,6 +61,8 @@ export type PdfReviewFile = {
   center_id: number;
   subject_id: number | null;
   subject_item_id: number | null;
+  ssu_progress_id: number | null;
+  read_only: boolean;
   active_task_id: number | null;
   active_task_status: string | null;
   active_task_annotation_count: number;

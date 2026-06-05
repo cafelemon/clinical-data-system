@@ -352,6 +352,11 @@ def create_active_task(
     file_asset: FileAsset,
     file_version: FileVersion,
 ) -> CorrectionTask:
+    if file_asset.stage_file_id is None and file_asset.subject_item_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="file does not support correction tasks",
+        )
     previous_upload_status, previous_review_status = current_target_status(db, file_asset)
     task = CorrectionTask(
         task_no=f"CORR-{uuid4().hex[:12].upper()}",
@@ -603,6 +608,8 @@ def get_pdf_review_file(
         center_id=file_asset.center_id,
         subject_id=file_asset.subject_id,
         subject_item_id=file_asset.subject_item_id,
+        ssu_progress_id=file_asset.ssu_progress_id,
+        read_only=file_asset.ssu_progress_id is not None,
         active_task_id=active_task.id if active_task is not None else None,
         active_task_status=active_task.status if active_task is not None else None,
         active_task_annotation_count=len(active_annotations),
@@ -646,6 +653,11 @@ def create_pdf_annotation(
 ) -> PdfAnnotation:
     file_asset = get_or_404(db, FileAsset, payload.file_id, "file")
     ensure_file_scope(access, file_asset)
+    if file_asset.ssu_progress_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSU files are read-only in PDF review",
+        )
     file_version = resolve_file_version(
         db,
         file_asset,
@@ -999,7 +1011,13 @@ def submit_correction_task(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only PDF is supported")
     file_asset = get_or_404(db, FileAsset, task.file_id, "file")
     ensure_file_scope(access, file_asset)
-    binding = resolve_binding(db, access, file_asset.stage_file_id, file_asset.subject_item_id)
+    binding = resolve_binding(
+        db,
+        access,
+        file_asset.stage_file_id,
+        file_asset.subject_item_id,
+        file_asset.ssu_progress_id,
+    )
     next_version = file_asset.version + 1
     stored = write_upload(file, relative_directory(binding, file_asset.file_category, next_version))
     file_asset.original_name = stored.original_name

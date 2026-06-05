@@ -95,6 +95,28 @@ def create_stage_file(client: TestClient, headers: dict[str, str], code_suffix: 
     return response.json()[0]
 
 
+def create_ssu_progress(client: TestClient, headers: dict[str, str], code_suffix: str = "A") -> dict:
+    project_id = create_project(
+        client,
+        headers,
+        f"SSU 项目 {code_suffix}",
+        f"SSU_PROJECT_{code_suffix}",
+    )
+    center_id = create_center(client, headers, project_id, f"SSU_CENTER_{code_suffix}")
+    response = client.post(
+        "/api/clinical-datasets/ssu-progress",
+        headers=headers,
+        json={
+            "project_id": project_id,
+            "center_id": center_id,
+            "stage_code": "SSU_PROJECT_APPROVAL",
+            "status": "in_progress",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 def create_subject_item(client: TestClient, headers: dict[str, str]) -> dict:
     project_id = create_project(client, headers, "P4 受试者项目", "P4_SUBJECT_PROJECT")
     center_id = create_center(client, headers, project_id, "P4_SUBJECT_CENTER")
@@ -248,6 +270,162 @@ def test_preview_media_type_falls_back_to_pdf_filename() -> None:
     assert preview_media_type("application/octet-stream", "legacy-upload.pdf") == "application/pdf"
     assert preview_media_type(None, "legacy-upload.pdf") == "application/pdf"
     assert preview_media_type("application/octet-stream", "sheet.xlsx") is None
+
+
+def test_ssu_progress_file_upload_preview_replace_readonly_review_and_delete(
+    client: TestClient,
+    admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    storage_root = tmp_path / "file-storage"
+    monkeypatch.setattr(settings, "file_storage_root", storage_root)
+    progress = create_ssu_progress(client, admin_headers)
+    original = b"%PDF-1.4\nssu-original"
+
+    upload = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={
+            "file_category": "ssu_document",
+            "ssu_progress_id": str(progress["id"]),
+        },
+        files={"file": ("立项递交.pdf", original, "application/pdf")},
+    )
+    assert upload.status_code == 201, upload.text
+    file_record = upload.json()
+    assert file_record["ssu_progress_id"] == progress["id"]
+    assert file_record["stage_file_id"] is None
+    assert file_record["subject_item_id"] is None
+    assert file_record["file_hash"] == sha256(original).hexdigest()
+    assert storage_path(storage_root, file_record["storage_path"]).exists()
+
+    listed = client.get(
+        f"/api/files?ssu_progress_id={progress['id']}&status=active",
+        headers=admin_headers,
+    )
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [file_record["id"]]
+
+    preview = client.get(f"/api/files/{file_record['id']}/preview", headers=admin_headers)
+    assert preview.status_code == 200
+    assert preview.headers["content-type"].startswith("application/pdf")
+    assert preview.content == original
+
+    review_file = client.get(
+        f"/api/pdf-review/files/{file_record['id']}",
+        headers=admin_headers,
+    )
+    assert review_file.status_code == 200
+    assert review_file.json()["read_only"] is True
+    assert review_file.json()["ssu_progress_id"] == progress["id"]
+
+    annotation = client.post(
+        "/api/pdf-review/annotations",
+        headers=admin_headers,
+        json={
+            "file_id": file_record["id"],
+            "file_version_id": review_file.json()["file_version_id"],
+            "page_no": 1,
+            "x": 0.1,
+            "y": 0.1,
+            "width": 0.2,
+            "height": 0.2,
+            "comment": "只读 SSU 不生成整改任务",
+            "issue_type": "other",
+            "severity": "medium",
+        },
+    )
+    assert annotation.status_code == 400
+
+    replacement = b"%PDF-1.4\nssu-replacement"
+    replace = client.post(
+        f"/api/files/{file_record['id']}/replace",
+        headers=admin_headers,
+        files={"file": ("立项递交-v2.pdf", replacement, "application/pdf")},
+    )
+    assert replace.status_code == 200
+    assert replace.json()["version"] == 2
+    assert replace.json()["ssu_progress_id"] == progress["id"]
+
+    progress_list = client.get(
+        f"/api/clinical-datasets/ssu-progress?project_id={progress['project_id']}&center_id={progress['center_id']}",
+        headers=admin_headers,
+    )
+    assert progress_list.status_code == 200
+    refreshed = next(item for item in progress_list.json() if item["id"] == progress["id"])
+    assert refreshed["file_count"] == 1
+    assert refreshed["latest_uploaded_at"] is not None
+
+    delete_progress = client.delete(
+        f"/api/clinical-datasets/ssu-progress/{progress['id']}",
+        headers=admin_headers,
+    )
+    assert delete_progress.status_code == 204
+    after_delete = client.get(
+        f"/api/files?ssu_progress_id={progress['id']}&status=active",
+        headers=admin_headers,
+    )
+    assert after_delete.status_code == 200
+    assert after_delete.json() == []
+    assert not storage_path(storage_root, file_record["storage_path"]).exists()
+    assert not storage_path(storage_root, replace.json()["storage_path"]).exists()
+
+
+def test_file_upload_binding_is_exactly_one_target(
+    client: TestClient,
+    admin_headers: dict[str, str],
+) -> None:
+    stage_file = create_stage_file(client, admin_headers, "BINDING")
+    progress = create_ssu_progress(client, admin_headers, "BINDING")
+
+    missing = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={"file_category": "clinical_document"},
+        files={"file": ("missing.pdf", b"%PDF-1.4\nmissing", "application/pdf")},
+    )
+    assert missing.status_code == 400
+
+    conflict = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={
+            "file_category": "ssu_document",
+            "stage_file_id": str(stage_file["id"]),
+            "ssu_progress_id": str(progress["id"]),
+        },
+        files={"file": ("conflict.pdf", b"%PDF-1.4\nconflict", "application/pdf")},
+    )
+    assert conflict.status_code == 400
+
+    list_conflict = client.get(
+        f"/api/files?stage_file_id={stage_file['id']}&ssu_progress_id={progress['id']}",
+        headers=admin_headers,
+    )
+    assert list_conflict.status_code == 400
+
+    wrong_category = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={
+            "file_category": "clinical_document",
+            "ssu_progress_id": str(progress["id"]),
+        },
+        files={"file": ("wrong-category.pdf", b"%PDF-1.4\nwrong", "application/pdf")},
+    )
+    assert wrong_category.status_code == 400
+
+    non_pdf = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={
+            "file_category": "ssu_document",
+            "ssu_progress_id": str(progress["id"]),
+        },
+        files={"file": ("not-pdf.txt", b"text", "text/plain")},
+    )
+    assert non_pdf.status_code == 400
 
 
 def test_subject_item_file_status_sync_and_size_limit(

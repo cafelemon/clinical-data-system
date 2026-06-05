@@ -169,6 +169,9 @@ export type ClinicalSsuProgress = {
   summary: string | null;
   fee_detail: string | null;
   notes: string | null;
+  file_count: number;
+  latest_uploaded_at: string | null;
+  same_name_stage_file_count: number;
   created_at: string;
   updated_at: string;
 };

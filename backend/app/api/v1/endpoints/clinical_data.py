@@ -1,5 +1,7 @@
 from collections import Counter
 from datetime import UTC, datetime
+from pathlib import Path
+import re
 from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -447,7 +449,58 @@ def list_ssu_progress_records(
             .order_by(ClinicalSsuProgress.id)
         )
     )
+    enrich_ssu_progress_files(db, records)
     return sorted(records, key=lambda record: (ssu_stage_order(record.stage_code), record.id))
+
+
+def normalized_file_name(value: str | None) -> str:
+    stem = Path(value or "").stem
+    cleaned = re.sub(r"(?i)(?:^|[_\\-\\s])(v|version|版本)?\\d+(?:\\.\\d+)*$", "", stem)
+    return "".join(char.lower() for char in cleaned if char.isalnum())
+
+
+def enrich_ssu_progress_files(db: Session, records: list[ClinicalSsuProgress]) -> None:
+    if not records:
+        return
+    progress_ids = [record.id for record in records]
+    project_id = records[0].project_id
+    center_id = records[0].center_id
+    ssu_files = list(
+        db.scalars(
+            select(FileAsset).where(
+                FileAsset.ssu_progress_id.in_(progress_ids),
+                FileAsset.status == "active",
+            )
+        )
+    )
+    stage_files = list(
+        db.scalars(
+            select(FileAsset).where(
+                FileAsset.project_id == project_id,
+                FileAsset.center_id == center_id,
+                FileAsset.stage_file_id.is_not(None),
+                FileAsset.status == "active",
+            )
+        )
+    )
+    stage_file_names = {
+        normalized_file_name(file_asset.original_name)
+        for file_asset in stage_files
+        if normalized_file_name(file_asset.original_name)
+    }
+    files_by_progress: dict[int, list[FileAsset]] = {record.id: [] for record in records}
+    for file_asset in ssu_files:
+        if file_asset.ssu_progress_id is not None:
+            files_by_progress.setdefault(file_asset.ssu_progress_id, []).append(file_asset)
+    for record in records:
+        files = files_by_progress.get(record.id, [])
+        record.file_count = len(files)
+        record.latest_uploaded_at = max((file.uploaded_at for file in files), default=None)
+        record.same_name_stage_file_count = sum(
+            1
+            for file_asset in files
+            if normalized_file_name(file_asset.original_name) in stage_file_names
+        )
 
 
 def ssu_stage_order(stage_code: str) -> int:
@@ -471,6 +524,24 @@ def get_ssu_progress_or_404(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSU progress not found")
     ensure_dataset_scope(db, access, progress.project_id, progress.center_id)
     return progress
+
+
+def remove_file_asset_physical_files(file_asset: FileAsset) -> None:
+    paths = {file_asset.storage_path, *(version.storage_path for version in file_asset.versions)}
+    for storage_path in paths:
+        try:
+            path = ensure_relative_path(settings.file_storage_root, storage_path)
+        except ValueError:
+            continue
+        if path.exists():
+            path.unlink()
+            for parent in path.parents:
+                if parent == settings.file_storage_root.resolve():
+                    break
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
 
 
 def scoped_subject_statement(access: AccessContext):
@@ -780,6 +851,11 @@ def delete_ssu_progress(
     access: ClinicalWrite,
 ) -> None:
     progress = get_ssu_progress_or_404(db, access, progress_id)
+    for file_asset in db.scalars(
+        select(FileAsset).where(FileAsset.ssu_progress_id == progress.id)
+    ):
+        remove_file_asset_physical_files(file_asset)
+        db.delete(file_asset)
     db.delete(progress)
     db.commit()
 

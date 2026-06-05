@@ -1,7 +1,7 @@
 from datetime import date
 
 from sqlalchemy import Date, DateTime, ForeignKey, String, Text, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
@@ -44,4 +44,9 @@ class ClinicalSsuProgress(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+    file_assets = relationship(
+        "FileAsset",
+        back_populates="ssu_progress",
+        cascade="all, delete-orphan",
     )

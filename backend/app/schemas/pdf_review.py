@@ -148,6 +148,8 @@ class PdfReviewFileRead(BaseModel):
     center_id: int
     subject_id: int | None = None
     subject_item_id: int | None = None
+    ssu_progress_id: int | None = None
+    read_only: bool = False
     active_task_id: int | None = None
     active_task_status: str | None = None
     active_task_annotation_count: int = 0

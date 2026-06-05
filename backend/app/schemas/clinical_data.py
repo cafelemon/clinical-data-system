@@ -221,6 +221,9 @@ class ClinicalSsuProgressUpdate(BaseModel):
 
 class ClinicalSsuProgressRead(ClinicalSsuProgressBase):
     id: int
+    file_count: int = 0
+    latest_uploaded_at: datetime | None = None
+    same_name_stage_file_count: int = 0
     created_at: datetime
     updated_at: datetime
 

@@ -48,6 +48,10 @@ class FileAsset(Base):
         ForeignKey("stage_files.id", ondelete="CASCADE"),
         index=True,
     )
+    ssu_progress_id: Mapped[int | None] = mapped_column(
+        ForeignKey("clinical_ssu_progress.id", ondelete="CASCADE"),
+        index=True,
+    )
     subject_item_id: Mapped[int | None] = mapped_column(
         ForeignKey("subject_items.id", ondelete="CASCADE"),
         index=True,
@@ -69,6 +73,7 @@ class FileAsset(Base):
     subject = relationship("Subject", back_populates="file_assets")
     stage = relationship("Stage", back_populates="file_assets")
     stage_file = relationship("StageFile", back_populates="file_assets")
+    ssu_progress = relationship("ClinicalSsuProgress", back_populates="file_assets")
     subject_item = relationship("SubjectItem", back_populates="file_assets")
     source_pdf_packet = relationship("PdfPacket")
     versions = relationship(

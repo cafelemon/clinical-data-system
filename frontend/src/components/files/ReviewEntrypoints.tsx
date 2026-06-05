@@ -35,8 +35,10 @@ function isPdfFile(file: FileRecord) {
 
 type ReviewEntrypointsProps = {
   stageFileId?: number;
+  ssuProgressId?: number;
   subjectItemId?: number;
   canReadFiles: boolean;
+  readOnlyReview?: boolean;
   refreshKey?: number;
   linkState?: { origin: NavigationOriginState };
   onNavigate?: () => void;
@@ -44,8 +46,10 @@ type ReviewEntrypointsProps = {
 
 export function ReviewEntrypoints({
   stageFileId,
+  ssuProgressId,
   subjectItemId,
   canReadFiles,
+  readOnlyReview = false,
   refreshKey = 0,
   linkState,
   onNavigate,
@@ -76,6 +80,7 @@ export function ReviewEntrypoints({
     try {
       const fileData = await filesApi.listFiles({
         stage_file_id: stageFileId,
+        ssu_progress_id: ssuProgressId,
         subject_item_id: subjectItemId,
         status: "active",
       });
@@ -86,7 +91,7 @@ export function ReviewEntrypoints({
       setTasks([]);
       setMessage("审阅入口加载失败");
     }
-  }, [canReadFiles, stageFileId, subjectItemId]);
+  }, [canReadFiles, ssuProgressId, stageFileId, subjectItemId]);
 
   useEffect(() => {
     void loadData();
@@ -105,7 +110,7 @@ export function ReviewEntrypoints({
   useEffect(() => {
     let cancelled = false;
     async function loadTasks() {
-      if (!selectedPdf || !canReadTasks) {
+      if (!selectedPdf || !canReadTasks || readOnlyReview) {
         setTasks([]);
         return;
       }
@@ -125,7 +130,7 @@ export function ReviewEntrypoints({
     return () => {
       cancelled = true;
     };
-  }, [canReadTasks, selectedPdf]);
+  }, [canReadTasks, readOnlyReview, selectedPdf]);
 
   if (!canReadFiles) {
     return <span className="text-xs text-slate-400">无文件权限</span>;
@@ -162,7 +167,9 @@ export function ReviewEntrypoints({
               title="在线审阅 PDF"
             >
               <Link
-                to={`/pdf-review/files/${selectedPdf.id}?version=${selectedPdf.version}`}
+                to={`/pdf-review/files/${selectedPdf.id}?version=${selectedPdf.version}${
+                  readOnlyReview ? "&mode=readonly" : ""
+                }`}
                 state={linkState}
                 onClick={onNavigate}
               >
@@ -184,7 +191,7 @@ export function ReviewEntrypoints({
           </Tooltip>
         )}
 
-        {selectedPdf && canReadTasks && primaryTask ? (
+        {!readOnlyReview && selectedPdf && canReadTasks && primaryTask ? (
           <Tooltip label="查看整改任务单">
             <Button
               asChild
@@ -207,21 +214,23 @@ export function ReviewEntrypoints({
             </Button>
           </Tooltip>
         ) : (
-          <Tooltip label={taskDisabledText}>
+          <Tooltip label={readOnlyReview ? "SSU 文件仅在线审阅，不生成整改任务" : taskDisabledText}>
             <Button
               size="sm"
               variant="ghost"
-              disabled={!selectedPdf || !canReadTasks}
-              onClick={() => setMessage(taskDisabledText)}
-              aria-label={taskDisabledText}
-              title={taskDisabledText}
+              disabled={!selectedPdf || !canReadTasks || readOnlyReview}
+              onClick={() => setMessage(readOnlyReview ? "SSU 文件仅在线审阅" : taskDisabledText)}
+              aria-label={readOnlyReview ? "SSU 文件仅在线审阅" : taskDisabledText}
+              title={readOnlyReview ? "SSU 文件仅在线审阅" : taskDisabledText}
             >
               <ListChecks className="size-4" aria-hidden="true" />
             </Button>
           </Tooltip>
         )}
       </div>
-      {primaryTask ? (
+      {readOnlyReview ? (
+        <Badge tone="neutral">只读审阅</Badge>
+      ) : primaryTask ? (
         <Badge tone={taskStatusTone(primaryTask.status)}>
           任务单 · {taskStatusLabels[primaryTask.status] ?? primaryTask.status}
         </Badge>

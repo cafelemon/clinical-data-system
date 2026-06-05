@@ -19,6 +19,7 @@ erDiagram
   stage_templates ||--o{ stage_files : materializes
   stage_templates ||--o{ subject_items : seeds
   stage_files ||--o{ file_assets : stores
+  clinical_ssu_progress ||--o{ file_assets : stores
   subject_items ||--o{ file_assets : stores
   file_assets ||--o{ file_versions : versions
   file_versions ||--o{ pdf_annotations : annotates
@@ -86,8 +87,8 @@ erDiagram
 | `subjects` | 受试者 | `project_id`, `center_id`, `screening_no`, `subject_arm`, `gender`, `age`, `enrolled_at`, `informed_at`, `visit1_date`-`visit5_date`, `review_status`, `data_status`, `completed_at` | 受试者主记录，看板自动汇总入组、完成率和趋势。 |
 | `subject_sections` | 受试者访视阶段 | `project_id`, `stage_id`, `subject_id`, `section_code`, `name`, `visit_name`, `time_window`, `sort_order` | V1-V4 固定访视展示容器。 |
 | `subject_items` | 受试者资料项 | `subject_id`, `section_id`, `stage_template_id`, `item_name`, `item_code`, `required`, `upload_status`, `review_status`, `remark` | 受试者级资料上传、审核和完整性计算。 |
-| `stage_files` | 中心级阶段资料 | `project_id`, `center_id`, `stage_id`, `stage_template_id`, `file_name`, `file_type`, `required`, `upload_status`, `review_status`, `not_applicable`, `not_applicable_reason`, `remark` | 中心级资料项，支持“若有”资料声明无此材料。 |
-| `clinical_ssu_progress` | SSU 节点进展 | `project_id`, `center_id`, `stage_code`, `status`, `submitted_at`, `approved_at`, `completed_at`, `version_info`, `file_checklist`, `summary`, `fee_detail`, `notes` | 试验准备阶段 SSU 进展人工维护。 |
+| `stage_files` | 中心级阶段资料 | `project_id`, `center_id`, `stage_id`, `stage_template_id`, `file_name`, `file_type`, `required`, `upload_status`, `review_status`, `not_applicable`, `not_applicable_reason`, `remark` | 中心级资料项，支持“若有”资料声明无此材料，可与 SSU 文件显示同名互通提示但不共用归属。 |
+| `clinical_ssu_progress` | SSU 节点进展 | `project_id`, `center_id`, `stage_code`, `status`, `submitted_at`, `approved_at`, `completed_at`, `version_info`, `file_checklist`, `summary`, `fee_detail`, `notes` | 试验准备阶段 SSU 进展人工维护，可独立挂载多份 `ssu_document` PDF 文件。 |
 | `subject_image_records` | 受试者图像数据 | `project_id`, `center_id`, `subject_id`, `image_type`, `screening_no_snapshot`, `upload_status`, `original_name`, `storage_path`, `file_hash`, `file_size`, `version`, `extracted_dir`, `image_count`, `image_total_size`, `image_extensions_json`, `parse_warning`, `source_raw_record_id`, `uploaded_by`, `uploaded_at`, `copied_by`, `copied_at` | 按试验序列号管理原始图像、增强图像和电子报告。 |
 
 状态口径：
@@ -109,7 +110,7 @@ erDiagram
 
 | 表 | 粒度 | 关键字段 | 业务说明 |
 | --- | --- | --- | --- |
-| `file_assets` | 当前文件 | `project_id`, `center_id`, `stage_id`, `stage_file_id`, `subject_id`, `subject_item_id`, `file_category`, `original_name`, `storage_path`, `mime_type`, `version`, `uploaded_by` | 当前有效文件记录，可绑定中心级或受试者资料项。 |
+| `file_assets` | 当前文件 | `project_id`, `center_id`, `stage_id`, `stage_file_id`, `ssu_progress_id`, `subject_id`, `subject_item_id`, `file_category`, `original_name`, `storage_path`, `mime_type`, `version`, `uploaded_by` | 当前有效文件记录，可绑定中心级资料项、SSU 节点或受试者资料项，三种归属互斥。 |
 | `file_versions` | 文件版本 | `file_id`, `version`, `original_name`, `storage_path`, `mime_type`, `file_size`, `uploaded_by`, `change_note` | 文件历史版本；PDF 批注绑定具体版本。 |
 | `review_records` | 审核记录 | `target_type`, `target_id`, `action`, `review_status`, `reviewer_id`, `comment` | 资料提交、通过、驳回记录。 |
 | `pdf_annotations` | PDF 批注 | `file_id`, `file_version_id`, `page_number`, `x`, `y`, `width`, `height`, `comment`, `status`, `created_by` | 在线 PDF 框选批注。 |

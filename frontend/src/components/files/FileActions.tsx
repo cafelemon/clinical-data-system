@@ -11,6 +11,7 @@ import type { FileRecord, FileVersion } from "@/types/files";
 
 type FileActionsProps = {
   stageFileId?: number;
+  ssuProgressId?: number;
   subjectItemId?: number;
   defaultCategory?: string;
   canRead: boolean;
@@ -55,6 +56,7 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export function FileActions({
   stageFileId,
+  ssuProgressId,
   subjectItemId,
   defaultCategory = "clinical_document",
   canRead,
@@ -76,11 +78,12 @@ export function FileActions({
     if (!canRead) return;
     const data = await filesApi.listFiles({
       stage_file_id: stageFileId,
+      ssu_progress_id: ssuProgressId,
       subject_item_id: subjectItemId,
       status: "active",
     });
     setFiles(data);
-  }, [canRead, stageFileId, subjectItemId]);
+  }, [canRead, ssuProgressId, stageFileId, subjectItemId]);
 
   useEffect(() => {
     void loadFiles();
@@ -136,6 +139,7 @@ export function FileActions({
           file: selectedFile,
           fileCategory: defaultCategory,
           stageFileId,
+          ssuProgressId,
           subjectItemId,
         });
         setMessage("上传成功");
@@ -147,7 +151,7 @@ export function FileActions({
         setUploading(false);
       }
     },
-    [defaultCategory, loadFiles, onChanged, stageFileId, subjectItemId],
+    [defaultCategory, loadFiles, onChanged, ssuProgressId, stageFileId, subjectItemId],
   );
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {

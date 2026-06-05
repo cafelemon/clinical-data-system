@@ -18,6 +18,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { FileActions } from "@/components/files/FileActions";
+import { ReviewEntrypoints } from "@/components/files/ReviewEntrypoints";
 import { BatchApproveButton } from "@/components/reviews/BatchApproveButton";
 import { ReviewActions } from "@/components/reviews/ReviewActions";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +28,7 @@ import { Field, SelectField } from "@/components/ui/form";
 import { inputClassName } from "@/lib/form-styles";
 import { cn } from "@/lib/utils";
 import { clinicalDataApi } from "@/services/clinical-data";
+import { filesApi } from "@/services/files";
 import { masterDataApi } from "@/services/master-data";
 import { useAuthStore } from "@/stores/auth-store";
 import type {
@@ -41,6 +43,7 @@ import type {
   SubjectArm,
 } from "@/types/clinical-data";
 import type { Center, Project, Stage } from "@/types/master-data";
+import type { FileRecord } from "@/types/files";
 
 const uploadStatusLabels: Record<string, string> = {
   not_uploaded: "未上传",
@@ -363,8 +366,27 @@ function fileCompletenessStatus(file: StageFile) {
   return "incomplete";
 }
 
+function normalizedFileName(value: string | null | undefined) {
+  const stem = (value ?? "").replace(/\.[^.]+$/, "");
+  return stem
+    .replace(/(?:^|[_\-\s])(v|version|版本)?\d+(?:\.\d+)*$/i, "")
+    .split("")
+    .filter((char) => /[\p{L}\p{N}]/u.test(char))
+    .join("")
+    .toLowerCase();
+}
+
+function hasSameNamedFile(sourceFiles: FileRecord[], targetFiles: FileRecord[]) {
+  const targetNames = new Set(
+    targetFiles.map((file) => normalizedFileName(file.original_name)).filter(Boolean),
+  );
+  return sourceFiles.some((file) => targetNames.has(normalizedFileName(file.original_name)));
+}
+
 function StageFileTable({
   files,
+  ssuFiles,
+  stageFiles,
   canReadFiles,
   canWriteFiles,
   canDeleteFiles,
@@ -375,6 +397,8 @@ function StageFileTable({
   onChanged,
 }: {
   files: StageFile[];
+  ssuFiles: FileRecord[];
+  stageFiles: FileRecord[];
   canReadFiles: boolean;
   canWriteFiles: boolean;
   canDeleteFiles: boolean;
@@ -448,6 +472,8 @@ function StageFileTable({
                 draft.reason !== (file.not_applicable_reason ?? "");
               const hasUploadedFile =
                 file.upload_status === "uploaded" || file.upload_status === "replaced";
+              const boundStageFiles = stageFiles.filter((item) => item.stage_file_id === file.id);
+              const hasSsuSameName = hasSameNamedFile(boundStageFiles, ssuFiles);
 
               async function saveApplicability() {
                 setSavingApplicabilityId(file.id);
@@ -476,6 +502,9 @@ function StageFileTable({
                         已声明无此材料
                         {file.not_applicable_by_name ? ` · ${file.not_applicable_by_name}` : ""}
                       </p>
+                    )}
+                    {hasSsuSameName && (
+                      <p className="mt-1 text-xs text-teal-700">SSU 已有同名文件</p>
                     )}
                   </td>
                   <td className="px-3 py-3">
@@ -563,14 +592,21 @@ function StageFileTable({
                     )}
                   </td>
                   <td className="px-3 py-3">
-                    <FileActions
-                      stageFileId={file.id}
-                      defaultCategory="clinical_document"
-                      canRead={canReadFiles}
-                      canWrite={canWriteFiles}
-                      canDelete={canDeleteFiles}
-                      onChanged={onChanged}
-                    />
+                    <div className="space-y-2">
+                      <FileActions
+                        stageFileId={file.id}
+                        defaultCategory="clinical_document"
+                        canRead={canReadFiles}
+                        canWrite={canWriteFiles}
+                        canDelete={canDeleteFiles}
+                        onChanged={onChanged}
+                      />
+                      <ReviewEntrypoints
+                        stageFileId={file.id}
+                        canReadFiles={canReadFiles}
+                        refreshKey={boundStageFiles.length}
+                      />
+                    </div>
                   </td>
                   <td className="px-3 py-3">
                     <ReviewActions
@@ -794,6 +830,8 @@ function SecondaryStageFiles({
   groups,
   activeGroupId,
   onGroupChange,
+  ssuFiles,
+  stageFiles,
   canReadFiles,
   canWriteFiles,
   canDeleteFiles,
@@ -806,6 +844,8 @@ function SecondaryStageFiles({
   groups: StageFileGroup[];
   activeGroupId: number | null;
   onGroupChange: (stageId: number) => void;
+  ssuFiles: FileRecord[];
+  stageFiles: FileRecord[];
   canReadFiles: boolean;
   canWriteFiles: boolean;
   canDeleteFiles: boolean;
@@ -848,6 +888,8 @@ function SecondaryStageFiles({
       </div>
       <StageFileTable
         files={activeGroup.files}
+        ssuFiles={ssuFiles}
+        stageFiles={stageFiles}
         canReadFiles={canReadFiles}
         canWriteFiles={canWriteFiles}
         canDeleteFiles={canDeleteFiles}
@@ -896,11 +938,21 @@ function cleanSsuDraft(draft: Required<ClinicalSsuProgressPayload>): ClinicalSsu
 function SsuProgressPanel({
   records,
   startupFiles,
+  ssuFiles,
+  stageFiles,
+  canReadFiles,
+  canWriteFiles,
+  canDeleteFiles,
   canWrite,
   onChanged,
 }: {
   records: ClinicalSsuProgress[];
   startupFiles: StageFile[];
+  ssuFiles: FileRecord[];
+  stageFiles: FileRecord[];
+  canReadFiles: boolean;
+  canWriteFiles: boolean;
+  canDeleteFiles: boolean;
   canWrite: boolean;
   onChanged: () => void;
 }) {
@@ -960,6 +1012,8 @@ function SsuProgressPanel({
           meta?.fileTypes
             .map((fileType) => fileByType.get(fileType))
             .filter((file): file is StageFile => Boolean(file)) ?? [];
+        const boundSsuFiles = ssuFiles.filter((file) => file.ssu_progress_id === record.id);
+        const hasStageSameName = hasSameNamedFile(boundSsuFiles, stageFiles);
         return (
           <div key={record.id} className="rounded-md border border-slate-200 p-4">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -981,6 +1035,7 @@ function SsuProgressPanel({
 	                    </Badge>
 	                  ))}
                   {relatedFiles.length === 0 && <Badge tone="neutral">暂无关联资料</Badge>}
+                  {hasStageSameName && <Badge tone="success">资料准备已有同名文件</Badge>}
                 </div>
               </div>
               {canWrite && (
@@ -994,6 +1049,33 @@ function SsuProgressPanel({
                   保存
                 </Button>
               )}
+            </div>
+            <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">SSU材料</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    独立上传，不改变资料准备完整性
+                  </p>
+                </div>
+                <Badge tone="neutral">文件 {boundSsuFiles.length}</Badge>
+              </div>
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_180px]">
+                <FileActions
+                  ssuProgressId={record.id}
+                  defaultCategory="ssu_document"
+                  canRead={canReadFiles}
+                  canWrite={canWriteFiles}
+                  canDelete={canDeleteFiles}
+                  onChanged={onChanged}
+                />
+                <ReviewEntrypoints
+                  ssuProgressId={record.id}
+                  canReadFiles={canReadFiles}
+                  readOnlyReview
+                  refreshKey={boundSsuFiles.length}
+                />
+              </div>
             </div>
             <div className="mt-4 grid gap-3 lg:grid-cols-4">
               <Field label="状态">
@@ -1239,6 +1321,7 @@ export function ClinicalDatasetPage() {
   const [trialView, setTrialView] = useState<TrialView>(normalizeTrialView(requestedView));
   const [activeSubStageId, setActiveSubStageId] = useState<number | null>(null);
   const [dataset, setDataset] = useState<ClinicalDataset | null>(null);
+  const [activeFiles, setActiveFiles] = useState<FileRecord[]>([]);
   const [completeness, setCompleteness] = useState<CompletenessSummary | null>(null);
   const [form, setForm] = useState<SubjectForm>(defaultSubjectForm);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -1302,6 +1385,14 @@ export function ClinicalDatasetPage() {
     [dataset?.trial_stages],
   );
   const activeStageFiles = stageFilesForCode(dataset, activeStage);
+  const ssuFiles = useMemo(
+    () => activeFiles.filter((file) => file.ssu_progress_id !== null),
+    [activeFiles],
+  );
+  const stageBoundFiles = useMemo(
+    () => activeFiles.filter((file) => file.stage_file_id !== null),
+    [activeFiles],
+  );
   const activeFileGroups = useMemo(
     () => stageFileGroupsForCode(dataset, activeStage),
     [activeStage, dataset],
@@ -1347,24 +1438,30 @@ export function ClinicalDatasetPage() {
   const loadDataset = useCallback(async () => {
     if (!canReadClinicalData || !projectId || !centerId) {
       setDataset(null);
+      setActiveFiles([]);
       setCompleteness(null);
       return;
     }
     setLoading(true);
     try {
-      const [data] = await Promise.all([
+      const [data, fileData] = await Promise.all([
         clinicalDataApi.getDataset(projectId, centerId),
+        canReadFiles
+          ? filesApi.listFiles({ project_id: projectId, center_id: centerId, status: "active" })
+          : Promise.resolve([]),
         loadCompleteness(),
       ]);
       setDataset(data);
+      setActiveFiles(fileData);
       setMessage(null);
     } catch {
       setDataset(null);
+      setActiveFiles([]);
       setMessage("临床数据集加载失败");
     } finally {
       setLoading(false);
     }
-  }, [canReadClinicalData, centerId, loadCompleteness, projectId]);
+  }, [canReadClinicalData, canReadFiles, centerId, loadCompleteness, projectId]);
 
   useEffect(() => {
     const nextStage = normalizeStageCode(requestedStage);
@@ -2007,6 +2104,8 @@ export function ClinicalDatasetPage() {
                     groups={dataset?.trial_file_groups ?? []}
                     activeGroupId={activeSubStageId}
                     onGroupChange={setActiveSubStageId}
+                    ssuFiles={ssuFiles}
+                    stageFiles={stageBoundFiles}
                     canReadFiles={canReadFiles}
                     canWriteFiles={canWriteFiles}
                     canDeleteFiles={canDeleteFiles}
@@ -2027,6 +2126,11 @@ export function ClinicalDatasetPage() {
                     <SsuProgressPanel
                       records={dataset?.ssu_progress ?? []}
                       startupFiles={dataset?.startup_files ?? []}
+                      ssuFiles={ssuFiles}
+                      stageFiles={stageBoundFiles}
+                      canReadFiles={canReadFiles}
+                      canWriteFiles={canWriteFiles}
+                      canDeleteFiles={canDeleteFiles}
                       canWrite={canWrite}
                       onChanged={() => void loadDataset()}
                     />
@@ -2039,6 +2143,8 @@ export function ClinicalDatasetPage() {
                     </div>
                     <StageFileTable
                       files={dataset?.startup_files ?? []}
+                      ssuFiles={ssuFiles}
+                      stageFiles={stageBoundFiles}
                       canReadFiles={canReadFiles}
                       canWriteFiles={canWriteFiles}
                       canDeleteFiles={canDeleteFiles}
@@ -2058,6 +2164,8 @@ export function ClinicalDatasetPage() {
                   </div>
                   <StageFileTable
                     files={dataset?.closeout_files ?? []}
+                    ssuFiles={ssuFiles}
+                    stageFiles={stageBoundFiles}
                     canReadFiles={canReadFiles}
                     canWriteFiles={canWriteFiles}
                     canDeleteFiles={canDeleteFiles}
@@ -2073,6 +2181,8 @@ export function ClinicalDatasetPage() {
                   groups={activeFileGroups}
                   activeGroupId={activeSubStageId}
                   onGroupChange={setActiveSubStageId}
+                  ssuFiles={ssuFiles}
+                  stageFiles={stageBoundFiles}
                   canReadFiles={canReadFiles}
                   canWriteFiles={canWriteFiles}
                   canDeleteFiles={canDeleteFiles}

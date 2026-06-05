@@ -39,6 +39,7 @@ from app.core.files import (
 )
 from app.models import (
     Center,
+    ClinicalSsuProgress,
     DocumentExtractedField,
     FileAsset,
     FileVersion,
@@ -69,6 +70,7 @@ ModelT = TypeVar(
     Center,
     Stage,
     StageFile,
+    ClinicalSsuProgress,
     Subject,
     SubjectItem,
 )
@@ -106,11 +108,20 @@ def resolve_binding(
     access: AccessContext,
     stage_file_id: int | None,
     subject_item_id: int | None,
-) -> dict[str, int | None | Project | Center | Stage | StageFile | Subject | SubjectItem]:
-    if bool(stage_file_id) == bool(subject_item_id):
+    ssu_progress_id: int | None = None,
+) -> dict[
+    str,
+    int | None | Project | Center | Stage | StageFile | ClinicalSsuProgress | Subject | SubjectItem,
+]:
+    binding_count = sum(
+        1
+        for value in (stage_file_id, subject_item_id, ssu_progress_id)
+        if value is not None
+    )
+    if binding_count != 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="stage_file_id and subject_item_id are mutually exclusive and one is required",
+            detail="stage_file_id, subject_item_id and ssu_progress_id are mutually exclusive and one is required",
         )
 
     if stage_file_id is not None:
@@ -130,6 +141,29 @@ def resolve_binding(
             "center_id": center.id,
             "stage_id": stage.id,
             "stage_file_id": stage_file.id,
+            "ssu_progress_id": None,
+            "subject_id": None,
+            "subject_item_id": None,
+        }
+
+    if ssu_progress_id is not None:
+        ssu_progress = get_or_404(db, ClinicalSsuProgress, ssu_progress_id, "SSU progress")
+        ensure_project_file_scope(access, ssu_progress.project_id, ssu_progress.center_id)
+        project = get_or_404(db, Project, ssu_progress.project_id, "project")
+        center = get_or_404(db, Center, ssu_progress.center_id, "center")
+        return {
+            "project": project,
+            "center": center,
+            "stage": None,
+            "stage_file": None,
+            "ssu_progress": ssu_progress,
+            "subject": None,
+            "subject_item": None,
+            "project_id": project.id,
+            "center_id": center.id,
+            "stage_id": None,
+            "stage_file_id": None,
+            "ssu_progress_id": ssu_progress.id,
             "subject_id": None,
             "subject_item_id": None,
         }
@@ -144,19 +178,24 @@ def resolve_binding(
         "center": center,
         "stage": None,
         "stage_file": None,
+        "ssu_progress": None,
         "subject": subject,
         "subject_item": subject_item,
         "project_id": project.id,
         "center_id": center.id,
         "stage_id": None,
         "stage_file_id": None,
+        "ssu_progress_id": None,
         "subject_id": subject.id,
         "subject_item_id": subject_item.id,
     }
 
 
 def relative_directory(
-    binding: dict[str, int | None | Project | Center | Stage | StageFile | Subject | SubjectItem],
+    binding: dict[
+        str,
+        int | None | Project | Center | Stage | StageFile | ClinicalSsuProgress | Subject | SubjectItem,
+    ],
     file_category: str,
     version: int,
 ) -> Path:
@@ -182,6 +221,16 @@ def relative_directory(
             / "stage_files"
             / safe_path_part(stage.code)
             / str(stage_file.id)
+            / f"v{version}"
+        )
+
+    ssu_progress = binding.get("ssu_progress")
+    if isinstance(ssu_progress, ClinicalSsuProgress):
+        return (
+            base
+            / "ssu_progress"
+            / safe_path_part(ssu_progress.stage_code)
+            / str(ssu_progress.id)
             / f"v{version}"
         )
 
@@ -248,7 +297,10 @@ def write_upload(upload_file: UploadFile, target_dir: Path) -> StoredUpload:
 
 def mark_binding_file_changed(
     db: Session,
-    binding: dict[str, int | None | Project | Center | Stage | StageFile | Subject | SubjectItem],
+    binding: dict[
+        str,
+        int | None | Project | Center | Stage | StageFile | ClinicalSsuProgress | Subject | SubjectItem,
+    ],
     upload_status: str,
 ) -> None:
     stage_file = binding["stage_file"]
@@ -267,6 +319,17 @@ def mark_binding_file_changed(
         subject_item.upload_status = upload_status
         subject_item.review_status = DEFAULT_REVIEW_STATUS
         recalculate_subject_status(db, subject)
+
+
+def ensure_ssu_pdf_upload(binding: dict[str, object], upload_file: UploadFile) -> None:
+    if not isinstance(binding.get("ssu_progress"), ClinicalSsuProgress):
+        return
+    original_name = Path(upload_file.filename or "").name
+    if Path(original_name).suffix.lower() != ".pdf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSU files only support PDF uploads",
+        )
 
 
 def has_remaining_bound_files(db: Session, file_asset: FileAsset) -> bool:
@@ -338,10 +401,22 @@ def list_files(
     center_id: int | None = None,
     subject_id: int | None = None,
     stage_file_id: int | None = None,
+    ssu_progress_id: int | None = None,
     subject_item_id: int | None = None,
     file_category: str | None = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
 ) -> list[FileAsset]:
+    binding_count = sum(
+        1
+        for value in (stage_file_id, subject_item_id, ssu_progress_id)
+        if value is not None
+    )
+    if binding_count > 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="stage_file_id, subject_item_id and ssu_progress_id are mutually exclusive",
+        )
+
     statement = select(FileAsset).order_by(FileAsset.uploaded_at.desc(), FileAsset.id.desc())
     if not access.is_admin:
         conditions = []
@@ -363,6 +438,8 @@ def list_files(
         statement = statement.where(FileAsset.subject_id == subject_id)
     if stage_file_id is not None:
         statement = statement.where(FileAsset.stage_file_id == stage_file_id)
+    if ssu_progress_id is not None:
+        statement = statement.where(FileAsset.ssu_progress_id == ssu_progress_id)
     if subject_item_id is not None:
         statement = statement.where(FileAsset.subject_item_id == subject_item_id)
     if file_category is not None:
@@ -380,11 +457,18 @@ def upload_file(
     file: Annotated[UploadFile, File()],
     file_category: Annotated[str, Form()],
     stage_file_id: Annotated[int | None, Form()] = None,
+    ssu_progress_id: Annotated[int | None, Form()] = None,
     subject_item_id: Annotated[int | None, Form()] = None,
     change_note: Annotated[str | None, Form()] = None,
 ) -> FileAsset:
     category = ensure_category(file_category)
-    binding = resolve_binding(db, access, stage_file_id, subject_item_id)
+    binding = resolve_binding(db, access, stage_file_id, subject_item_id, ssu_progress_id)
+    if isinstance(binding.get("ssu_progress"), ClinicalSsuProgress) and category != "ssu_document":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSU files must use ssu_document category",
+        )
+    ensure_ssu_pdf_upload(binding, file)
     stored = write_upload(file, relative_directory(binding, category, version=1))
     file_asset = FileAsset(
         file_id=str(uuid4()),
@@ -402,6 +486,9 @@ def upload_file(
         stage_id=binding["stage_id"] if isinstance(binding["stage_id"], int) else None,
         stage_file_id=(
             binding["stage_file_id"] if isinstance(binding["stage_file_id"], int) else None
+        ),
+        ssu_progress_id=(
+            binding["ssu_progress_id"] if isinstance(binding["ssu_progress_id"], int) else None
         ),
         subject_item_id=(
             binding["subject_item_id"] if isinstance(binding["subject_item_id"], int) else None
@@ -444,6 +531,7 @@ def upload_file(
             "file_category": file_asset.file_category,
             "file_size": file_asset.file_size,
             "stage_file_id": file_asset.stage_file_id,
+            "ssu_progress_id": file_asset.ssu_progress_id,
             "subject_item_id": file_asset.subject_item_id,
         },
     )
@@ -540,7 +628,14 @@ def replace_file(
 ) -> FileAsset:
     file_asset = get_or_404(db, FileAsset, file_id, "file")
     ensure_file_scope(access, file_asset)
-    binding = resolve_binding(db, access, file_asset.stage_file_id, file_asset.subject_item_id)
+    binding = resolve_binding(
+        db,
+        access,
+        file_asset.stage_file_id,
+        file_asset.subject_item_id,
+        file_asset.ssu_progress_id,
+    )
+    ensure_ssu_pdf_upload(binding, file)
     next_version = file_asset.version + 1
     stored = write_upload(file, relative_directory(binding, file_asset.file_category, next_version))
     file_asset.original_name = stored.original_name

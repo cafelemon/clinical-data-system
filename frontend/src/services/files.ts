@@ -23,6 +23,7 @@ export const filesApi = {
     file: File;
     fileCategory: string;
     stageFileId?: number;
+    ssuProgressId?: number;
     subjectItemId?: number;
     changeNote?: string;
   }) => {
@@ -30,6 +31,7 @@ export const filesApi = {
     formData.append("file", payload.file);
     formData.append("file_category", payload.fileCategory);
     if (payload.stageFileId) formData.append("stage_file_id", String(payload.stageFileId));
+    if (payload.ssuProgressId) formData.append("ssu_progress_id", String(payload.ssuProgressId));
     if (payload.subjectItemId) formData.append("subject_item_id", String(payload.subjectItemId));
     if (payload.changeNote) formData.append("change_note", payload.changeNote);
     const response = await http.post<FileRecord>("/files/upload", formData);

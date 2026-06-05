@@ -12,6 +12,7 @@ FILE_CATEGORIES = {
     "metadata_json",
     "annotation_json",
     "report",
+    "ssu_document",
 }
 
 CATEGORY_FOLDERS = {
@@ -24,6 +25,7 @@ CATEGORY_FOLDERS = {
     "metadata_json": "annotations",
     "annotation_json": "annotations",
     "report": "documents",
+    "ssu_document": "documents",
 }
 
 PREVIEW_MIME_PREFIXES = ("image/",)
