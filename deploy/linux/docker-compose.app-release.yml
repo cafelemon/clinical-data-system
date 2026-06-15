@@ -1,0 +1,16 @@
+# App-only release override.
+# Use with docker-compose.prod.yml and docker-compose.prod.gpu.yml.
+# This file replaces only backend/frontend images and keeps the frozen GPU OCR
+# service on the existing production image.
+services:
+  paddle-ocr-api:
+    image: ${PADDLE_OCR_IMAGE:-paddle-ocr-api-gpu:latest}
+    pull_policy: never
+
+  backend:
+    image: ${CLINICAL_BACKEND_IMAGE:?Set CLINICAL_BACKEND_IMAGE}
+    pull_policy: never
+
+  frontend:
+    image: ${CLINICAL_FRONTEND_IMAGE:?Set CLINICAL_FRONTEND_IMAGE}
+    pull_policy: never

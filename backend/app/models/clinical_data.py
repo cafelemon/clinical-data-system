@@ -44,6 +44,7 @@ class Subject(Base):
         nullable=False,
     )
     screening_no: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    subject_arm: Mapped[str | None] = mapped_column(String(20))
     gender: Mapped[str | None] = mapped_column(String(30))
     age: Mapped[int | None] = mapped_column(Integer)
     enrolled_at: Mapped[date | None] = mapped_column(Date)
@@ -88,6 +89,11 @@ class Subject(Base):
         order_by="SubjectItem.sort_order",
     )
     file_assets = relationship("FileAsset", back_populates="subject", cascade="all, delete-orphan")
+    image_records = relationship(
+        "SubjectImageRecord",
+        back_populates="subject",
+        cascade="all, delete-orphan",
+    )
     pdf_packets = relationship("PdfPacket", back_populates="subject", cascade="all, delete-orphan")
 
 
@@ -227,6 +233,12 @@ class StageFile(Base):
     )
     added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     added_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    not_applicable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    not_applicable_reason: Mapped[str | None] = mapped_column(Text)
+    not_applicable_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    not_applicable_at = mapped_column(DateTime(timezone=True))
     remark: Mapped[str | None] = mapped_column(Text)
     updated_at = mapped_column(
         DateTime(timezone=True),

@@ -49,6 +49,7 @@ class StageFileStatus:
     upload_status: str
     review_status: str
     required: bool
+    not_applicable: bool = False
 
 
 def required_item_status(
@@ -57,6 +58,25 @@ def required_item_status(
     required: bool = True,
 ) -> str:
     if not required:
+        return DATA_COMPLETE
+    if upload_status == UPLOAD_SUPPLEMENT_REQUIRED or review_status == REVIEW_REJECTED:
+        return DATA_INCOMPLETE
+    if upload_status not in UPLOADED_STATUSES:
+        return DATA_INCOMPLETE
+    if review_status == REVIEW_APPROVED:
+        return DATA_COMPLETE
+    if review_status in CHECKING_REVIEW_STATUSES:
+        return DATA_CHECKING
+    return DATA_INCOMPLETE
+
+
+def stage_file_item_status(
+    upload_status: str,
+    review_status: str,
+    required: bool = True,
+    not_applicable: bool = False,
+) -> str:
+    if not required and not_applicable:
         return DATA_COMPLETE
     if upload_status == UPLOAD_SUPPLEMENT_REQUIRED or review_status == REVIEW_REJECTED:
         return DATA_INCOMPLETE
@@ -174,9 +194,13 @@ def build_completeness_summary(
     )
     subjects = list(db.scalars(subject_statement))
     stage_item_statuses = [
-        required_item_status(status.upload_status, status.review_status, status.required)
+        stage_file_item_status(
+            status.upload_status,
+            status.review_status,
+            status.required,
+            status.not_applicable,
+        )
         for status in stage_file_statuses
-        if status.required
     ]
     subject_statuses = [subject.data_status for subject in subjects]
     center_rows = _build_center_rows(db, stage_file_statuses, subjects)
@@ -223,7 +247,6 @@ def build_stage_file_statuses(
             .where(
                 StageTemplate.project_id.in_(visible_project_ids),
                 StageTemplate.template_scope == CENTER_FILE_SCOPE,
-                StageTemplate.required.is_(True),
             )
             .order_by(StageTemplate.project_id, StageTemplate.stage_id, StageTemplate.sort_order)
         )
@@ -254,6 +277,7 @@ def build_stage_file_statuses(
             key = (center.id, template.id)
             expected_keys.add(key)
             stage_file = stage_files_by_template.get(key)
+            required = bool(template.required)
             statuses.append(
                 StageFileStatus(
                     project_id=center.project_id,
@@ -265,7 +289,8 @@ def build_stage_file_statuses(
                     review_status=(
                         stage_file.review_status if stage_file else DEFAULT_REVIEW_STATUS
                     ),
-                    required=True,
+                    required=required,
+                    not_applicable=bool(stage_file.not_applicable) if stage_file else False,
                 )
             )
 
@@ -283,6 +308,7 @@ def build_stage_file_statuses(
                 upload_status=stage_file.upload_status,
                 review_status=stage_file.review_status,
                 required=stage_file_required(stage_file),
+                not_applicable=bool(stage_file.not_applicable),
             )
         )
     return statuses
@@ -301,9 +327,14 @@ def _build_center_rows(
     rows = []
     for center_id in sorted(center_ids):
         center_stage_statuses = [
-            required_item_status(stage_file.upload_status, stage_file.review_status, True)
+            stage_file_item_status(
+                stage_file.upload_status,
+                stage_file.review_status,
+                stage_file.required,
+                stage_file.not_applicable,
+            )
             for stage_file in stage_file_statuses
-            if stage_file.center_id == center_id and stage_file.required
+            if stage_file.center_id == center_id
         ]
         center_subject_statuses = [
             subject.data_status for subject in subjects if subject.center_id == center_id
@@ -330,16 +361,21 @@ def _build_stage_rows(
     rows = []
     for stage_id in sorted({stage_file.stage_id for stage_file in stage_file_statuses}):
         statuses = [
-            required_item_status(stage_file.upload_status, stage_file.review_status, True)
+            stage_file_item_status(
+                stage_file.upload_status,
+                stage_file.review_status,
+                stage_file.required,
+                stage_file.not_applicable,
+            )
             for stage_file in stage_file_statuses
-            if stage_file.stage_id == stage_id and stage_file.required
+            if stage_file.stage_id == stage_id
         ]
         counts = Counter(statuses)
         stage = stages.get(stage_id)
         rows.append(
             StageCompleteness(
                 stage_id=stage_id,
-                stage_name=stage.name if stage else f"阶段 {stage_id}",
+                stage_name=stage_completeness_name(stage) if stage else f"阶段 {stage_id}",
                 status=aggregate_required_item_statuses(statuses),
                 required_count=len(statuses),
                 complete_count=counts[DATA_COMPLETE],
@@ -348,3 +384,13 @@ def _build_stage_rows(
             )
         )
     return rows
+
+
+def stage_completeness_name(stage: Stage) -> str:
+    if stage.code == "STARTUP_MATERIALS":
+        return "试验准备阶段资料准备"
+    if stage.code == "TRIAL_MATERIALS":
+        return "试验进行阶段资料准备"
+    if stage.code == "CLOSEOUT_MATERIALS":
+        return "试验结束阶段资料准备"
+    return stage.name

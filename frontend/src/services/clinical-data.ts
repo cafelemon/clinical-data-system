@@ -1,16 +1,22 @@
 import { http } from "@/services/http";
 import type {
   ClinicalDataset,
+  ClinicalSsuProgress,
+  ClinicalSsuProgressPayload,
   CompletenessSummary,
   ReviewActionPayload,
   ReviewBatchApprovePayload,
   ReviewBatchApproveResult,
   ReviewRecord,
   ReviewTargetType,
+  StageFileApplicabilityPayload,
   StageFile,
   Subject,
   SubjectItem,
   SubjectItemPayload,
+  SubjectItemRemarkPayload,
+  SubjectItemRemarkResponse,
+  SubjectItemTimelineEntry,
   SubjectPayload,
   SubjectSection,
 } from "@/types/clinical-data";
@@ -42,17 +48,48 @@ export const clinicalDataApi = {
       center_id: centerId,
       stage_id: stageId,
     }),
+  updateStageFileApplicability: async (id: number, payload: StageFileApplicabilityPayload) => {
+    const response = await http.patch<StageFile>(`/stage-files/${id}/applicability`, payload);
+    return response.data;
+  },
+  listSsuProgress: (projectId: number, centerId: number) =>
+    read<ClinicalSsuProgress[]>("/clinical-datasets/ssu-progress", {
+      project_id: projectId,
+      center_id: centerId,
+    }),
+  updateSsuProgress: async (id: number, payload: ClinicalSsuProgressPayload) => {
+    const response = await http.patch<ClinicalSsuProgress>(
+      `/clinical-datasets/ssu-progress/${id}`,
+      payload,
+    );
+    return response.data;
+  },
+  applySsuExtractedFields: async (id: number) => {
+    const response = await http.post<ClinicalSsuProgress>(
+      `/clinical-datasets/ssu-progress/${id}/apply-extracted-fields`,
+    );
+    return response.data;
+  },
   listSubjects: (projectId?: number, centerId?: number) =>
     read<Subject[]>("/subjects", { project_id: projectId, center_id: centerId }),
   createSubject: (payload: SubjectPayload) => create<Subject, SubjectPayload>("/subjects", payload),
   updateSubject: (id: number, payload: Partial<SubjectPayload>) =>
-    update<Subject, SubjectPayload>(`/subjects/${id}`, payload),
+    update<Subject, Partial<SubjectPayload>>(`/subjects/${id}`, payload),
   deleteSubject: (id: number) => http.delete(`/subjects/${id}`),
   getSubject: (id: number) => read<Subject>(`/subjects/${id}`),
   listSubjectSections: (id: number) => read<SubjectSection[]>(`/subjects/${id}/sections`),
   listSubjectItems: (id: number) => read<SubjectItem[]>(`/subjects/${id}/items`),
   updateSubjectItem: (id: number, payload: SubjectItemPayload) =>
     update<SubjectItem, SubjectItemPayload>(`/subject-items/${id}`, payload),
+  updateSubjectItemRemark: async (id: number, payload: SubjectItemRemarkPayload) => {
+    const response = await http.patch<SubjectItemRemarkResponse>(
+      `/subject-items/${id}/remark`,
+      payload,
+    );
+    return response.data;
+  },
+  listSubjectItemTimeline: (id: number, limit = 20) =>
+    read<SubjectItemTimelineEntry[]>(`/subject-items/${id}/timeline`, { limit }),
   submitReview: (payload: ReviewActionPayload) =>
     create<ReviewRecord, ReviewActionPayload>("/reviews/submit", payload),
   approveReview: (payload: ReviewActionPayload) =>

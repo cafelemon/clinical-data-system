@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
+
 
 def create_project(client: TestClient, headers: dict[str, str], code: str) -> int:
     response = client.post(
@@ -54,14 +56,15 @@ def test_stage_options_and_project_level_secondary_stage_controls(
     options = client.get("/api/stage-options", headers=admin_headers)
     assert options.status_code == 200
     assert [group["phase_code"] for group in options.json()] == ["STARTUP", "TRIAL", "CLOSEOUT"]
-    assert options.json()[0]["options"][0]["name"] == "项目调研和确定"
+    assert options.json()[0]["phase_name"] == "试验准备阶段"
+    assert options.json()[0]["options"][0]["name"] == "资料准备"
 
     startup_stages = client.get(
         f"/api/stages?project_id={project_id}&phase_code=STARTUP",
         headers=admin_headers,
     )
     assert startup_stages.status_code == 200
-    assert len(startup_stages.json()) == 10
+    assert len(startup_stages.json()) == 6
     assert all(stage["parent_id"] for stage in startup_stages.json())
     assert {stage["enabled"] for stage in startup_stages.json()} == {True}
 
@@ -99,7 +102,10 @@ def test_stage_options_and_project_level_secondary_stage_controls(
 def test_template_scopes_dataset_groups_and_subject_generation(
     client: TestClient,
     admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path,
 ) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
     project_id = create_project(client, admin_headers, "P12_DATASET")
     center_id = create_center(client, admin_headers, project_id, "P12_CENTER")
 
@@ -155,10 +161,97 @@ def test_template_scopes_dataset_groups_and_subject_generation(
         headers=admin_headers,
     )
     assert dataset.status_code == 200
-    assert len(dataset.json()["startup_file_groups"]) == 10
-    first_file = dataset.json()["startup_file_groups"][0]["files"][0]
+    assert len(dataset.json()["startup_file_groups"]) == 6
+    assert len(dataset.json()["startup_files"]) == 27
+    assert len(dataset.json()["ssu_progress"]) == 5
+    assert [record["stage_code"] for record in dataset.json()["ssu_progress"]] == [
+        "SSU_PROJECT_APPROVAL",
+        "SSU_ETHICS",
+        "SSU_AGREEMENT_SIGNING",
+        "SSU_PROVINCIAL_FILING",
+        "SSU_STARTUP_MEETING",
+    ]
+    first_ssu = dataset.json()["ssu_progress"][0]
+    update_ssu = client.patch(
+        f"/api/clinical-datasets/ssu-progress/{first_ssu['id']}",
+        headers=admin_headers,
+        json={
+            "status": "completed",
+            "submitted_at": "2026-05-01",
+            "approved_at": "2026-05-02",
+            "completed_at": "2026-05-03",
+            "version_info": "v1",
+            "file_checklist": "申请表、方案",
+            "summary": "立项完成",
+            "fee_detail": "无需付款",
+            "notes": "已核对",
+        },
+    )
+    assert update_ssu.status_code == 200
+    assert update_ssu.json()["status"] == "completed"
+    assert update_ssu.json()["version_info"] == "v1"
+    second_ssu = dataset.json()["ssu_progress"][1]
+    blocked_ssu = client.patch(
+        f"/api/clinical-datasets/ssu-progress/{second_ssu['id']}",
+        headers=admin_headers,
+        json={"status": "blocked", "notes": "伦理资料待补充"},
+    )
+    assert blocked_ssu.status_code == 200
+    refreshed_dataset = client.get(
+        f"/api/clinical-datasets?project_id={project_id}&center_id={center_id}",
+        headers=admin_headers,
+    )
+    assert refreshed_dataset.status_code == 200
+    assert refreshed_dataset.json()["summary"]["ssu"] == {
+        "total": 5,
+        "completed": 1,
+        "blocked": 1,
+        "active": 0,
+    }
+    invalid_ssu = client.post(
+        "/api/clinical-datasets/ssu-progress",
+        headers=admin_headers,
+        json={
+            "project_id": project_id,
+            "center_id": center_id,
+            "stage_code": "STARTUP_MATERIALS",
+            "status": "not_started",
+        },
+    )
+    assert invalid_ssu.status_code == 400
+    assert dataset.json()["startup_file_groups"][0]["stage"]["code"] == "STARTUP_MATERIALS"
+    assert len(dataset.json()["startup_file_groups"][0]["files"]) == 27
+    assert dataset.json()["trial_file_groups"][0]["stage"]["code"] == "TRIAL_MATERIALS"
+    assert len(dataset.json()["trial_files"]) == 19
+    first_file = next(
+        file for file in dataset.json()["startup_files"] if file["file_type"] == "ETHICS_APPROVAL"
+    )
+    optional_file = next(
+        file
+        for file in dataset.json()["startup_files"]
+        if file["file_type"] == "STARTUP_005_RECRUITMENT_DOCUMENTS"
+    )
     assert first_file["file_name"] == "伦理批件"
     assert first_file["completeness_status"] == "incomplete"
+    assert optional_file["required"] is False
+    assert optional_file["completeness_status"] == "incomplete"
+
+    optional_applicability = client.patch(
+        f"/api/stage-files/{optional_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": True, "reason": "本中心无招募宣传材料"},
+    )
+    assert optional_applicability.status_code == 200
+    assert optional_applicability.json()["completeness_status"] == "complete"
+
+    completeness = client.get(
+        f"/api/completeness/summary?project_id={project_id}&center_id={center_id}",
+        headers=admin_headers,
+    )
+    assert completeness.status_code == 200
+    assert {
+        stage["stage_name"] for stage in completeness.json()["stages"]
+    } >= {"试验准备阶段资料准备", "试验结束阶段资料准备"}
 
     upload = client.post(
         "/api/files/upload",
@@ -174,7 +267,9 @@ def test_template_scopes_dataset_groups_and_subject_generation(
         f"/api/clinical-datasets?project_id={project_id}&center_id={center_id}",
         headers=admin_headers,
     ).json()
-    refreshed_file = refreshed["startup_file_groups"][0]["files"][0]
+    refreshed_file = next(
+        file for file in refreshed["startup_files"] if file["file_type"] == "ETHICS_APPROVAL"
+    )
     assert refreshed_file["uploaded_by"] is not None
     assert refreshed_file["reviewer_id"] is not None
     assert refreshed_file["completeness_status"] == "complete"
@@ -186,6 +281,7 @@ def test_template_scopes_dataset_groups_and_subject_generation(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": "P12-S001",
+            "subject_arm": "experimental",
         },
     )
     assert subject.status_code == 201
@@ -195,20 +291,19 @@ def test_template_scopes_dataset_groups_and_subject_generation(
     )
     assert sections.status_code == 200
     section_codes = [section["section_code"] for section in sections.json()]
-    assert "COMPLETION" not in section_codes
     assert section_codes == [
-        "SCREENING",
-        "ENROLLMENT_PREP",
-        "EXAM_EXECUTION",
-        "EARLY_FOLLOWUP",
-        "DELAYED_FOLLOWUP",
+        "V1_SCREENING_VISIT",
+        "V2_EXPERIMENTAL_FOLLOWUP_VISIT",
+        "V3_CONTROL_FOLLOWUP_VISIT",
     ]
 
     items = client.get(f"/api/subjects/{subject.json()['id']}/items", headers=admin_headers)
     assert items.status_code == 200
     assert all(item["stage_template_id"] for item in items.json())
     item_codes = {item["item_code"] for item in items.json()}
-    assert "知情同意书" in item_codes
+    item_names = {item["item_name"] for item in items.json()}
+    assert "V1_INFORMED_CONSENT" in item_codes
+    assert "知情同意书" in item_names
     assert "SCREENING_CONSENT" not in item_codes
     assert {"uploaded_by", "reviewer_id", "completeness_status"}.issubset(items.json()[0])
 
@@ -227,7 +322,7 @@ def test_deleted_default_subject_templates_are_not_regenerated(
     target = next(
         template
         for template in templates.json()
-        if template["item_code"] == "随机记录表"
+        if template["item_code"] == "V2_BOWEL_PREPARATION"
     )
 
     delete = client.delete(f"/api/stage-templates/{target['id']}", headers=admin_headers)
@@ -238,7 +333,7 @@ def test_deleted_default_subject_templates_are_not_regenerated(
         headers=admin_headers,
     )
     assert refreshed.status_code == 200
-    assert "随机记录表" not in {template["item_code"] for template in refreshed.json()}
+    assert "V2_BOWEL_PREPARATION" not in {template["item_code"] for template in refreshed.json()}
 
     subject = client.post(
         "/api/subjects",
@@ -247,9 +342,10 @@ def test_deleted_default_subject_templates_are_not_regenerated(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": "P12-DELETE-S001",
+            "subject_arm": "experimental",
         },
     )
     assert subject.status_code == 201
     items = client.get(f"/api/subjects/{subject.json()['id']}/items", headers=admin_headers)
     assert items.status_code == 200
-    assert "随机记录表" not in {item["item_code"] for item in items.json()}
+    assert "V2_BOWEL_PREPARATION" not in {item["item_code"] for item in items.json()}

@@ -55,6 +55,65 @@ export type PdfPacketSegmentPayload = {
   ocr_text?: string | null;
 };
 
+export type PdfPacketSegmentSplitItem = {
+  page_start: number;
+  page_end: number;
+  subject_item_id?: number | null;
+  detected_name?: string | null;
+};
+
+export type PdfPacketSegmentSplitPayload = {
+  splits: PdfPacketSegmentSplitItem[];
+};
+
+export type PdfPacketSegmentMergePayload = {
+  segment_ids: number[];
+  subject_item_id?: number | null;
+  detected_name?: string | null;
+};
+
+export type PdfPacketAnalysisPage = {
+  page_no: number;
+  doc_type: string | null;
+  display_name: string | null;
+  target_code: string | null;
+  confidence: number;
+  matched_title: string[];
+  title_locations?: string[];
+  matched_features: string[];
+  negative_hits: string[];
+  reason: string;
+  raw_text?: string;
+  normalized_text?: string;
+  head_lines?: string[];
+  tail_lines?: string[];
+};
+
+export type PdfPacketAnalysisSegment = {
+  page_start: number;
+  page_end: number;
+  detected_name: string | null;
+  detected_code: string | null;
+  confidence: number;
+  doc_type?: string | null;
+  reason?: string;
+  page_reasons?: string[];
+};
+
+export type PdfPacketAnalysisReport = {
+  generated_at: string;
+  packet: {
+    id: number;
+    packet_id: string;
+    original_name: string;
+    screening_no: string;
+    page_count: number;
+  };
+  text_page_count: number;
+  pages: PdfPacketAnalysisPage[];
+  segments: PdfPacketAnalysisSegment[];
+};
+
 export type PdfPacketSegmentUploadResult = {
   segment: PdfPacketSegment;
   file: FileRecord;

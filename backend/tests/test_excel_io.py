@@ -163,8 +163,10 @@ def test_import_templates_and_four_import_upserts(
     subject_template = client.get("/api/import/templates/subjects", headers=admin_headers)
     assert subject_template.status_code == 200
     subject_template_rows = workbook_rows(subject_template.content)
+    assert "分组" in subject_template_rows[0]
     assert "知情时间" in subject_template_rows[0]
-    assert "访视5日期" in subject_template_rows[0]
+    assert "访视4日期" in subject_template_rows[0]
+    assert "访视5日期" not in subject_template_rows[0]
 
     project_result = upload_xlsx(
         client,
@@ -231,7 +233,7 @@ def test_import_templates_and_four_import_upserts(
         headers=admin_headers,
     )
     assert templates.status_code == 200
-    assert templates.json()[0]["item_code"] == "ETHICS"
+    assert "ETHICS" in {template["item_code"] for template in templates.json()}
 
     subject_result = upload_xlsx(
         client,
@@ -242,6 +244,7 @@ def test_import_templates_and_four_import_upserts(
                 "project_code",
                 "center_code",
                 "screening_no",
+                "subject_arm",
                 "gender",
                 "age",
                 "enrolled_at",
@@ -250,13 +253,13 @@ def test_import_templates_and_four_import_upserts(
                 "visit2_date",
                 "visit3_date",
                 "visit4_date",
-                "visit5_date",
             ],
             [
                 [
                     "P7_IMPORT_PROJECT",
                     "P7_IMPORT_CENTER",
                     "P7-S001",
+                    "experimental",
                     "女",
                     38,
                     "2026-05-01",
@@ -265,7 +268,6 @@ def test_import_templates_and_four_import_upserts(
                     "2026-05-03",
                     "2026-05-04",
                     "2026-05-05",
-                    "2026-05-06",
                 ]
             ],
         ),
@@ -276,14 +278,15 @@ def test_import_templates_and_four_import_upserts(
         headers=admin_headers,
     ).json()[0]
     assert subject["screening_no"] == "P7-S001"
+    assert subject["subject_arm"] == "experimental"
     assert subject["informed_at"].startswith("2026-05-01T09:30")
-    assert subject["visit5_date"] == "2026-05-06"
+    assert subject["visit4_date"] == "2026-05-05"
 
     with db_session(client) as db:
         item_count = db.scalar(
             select(func.count(SubjectItem.id)).where(SubjectItem.subject_id == subject["id"])
         )
-    assert item_count == 19
+    assert item_count == 16
 
 
 def test_import_validation_is_all_or_nothing(
@@ -301,6 +304,7 @@ def test_import_validation_is_all_or_nothing(
                 "project_code",
                 "center_code",
                 "screening_no",
+                "subject_arm",
                 "gender",
                 "age",
                 "enrolled_at",
@@ -311,6 +315,7 @@ def test_import_validation_is_all_or_nothing(
                     "P7_PROJECT_VALIDATION",
                     "P7_CENTER_VALID",
                     "P7-V-001",
+                    "experimental",
                     "男",
                     45,
                     "2026-05-02",
@@ -320,6 +325,7 @@ def test_import_validation_is_all_or_nothing(
                     "P7_PROJECT_VALIDATION",
                     "MISSING_CENTER",
                     "P7-V-002",
+                    "control",
                     "女",
                     "bad",
                     "2026-99-99",
@@ -387,8 +393,8 @@ def test_import_and_export_permissions_and_scope(
             "file": (
                 "subjects.xlsx",
                 xlsx_bytes(
-                    ["project_code", "center_code", "screening_no"],
-                    [["P7_PROJECT_SCOPE", "P7_CENTER_A", "P7-A-001"]],
+                    ["project_code", "center_code", "screening_no", "subject_arm"],
+                    [["P7_PROJECT_SCOPE", "P7_CENTER_A", "P7-A-001", "experimental"]],
                 ),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -404,8 +410,8 @@ def test_import_and_export_permissions_and_scope(
             "file": (
                 "subjects.xlsx",
                 xlsx_bytes(
-                    ["project_code", "center_code", "screening_no"],
-                    [["P7_PROJECT_SCOPE", "P7_CENTER_B", "P7-B-001"]],
+                    ["project_code", "center_code", "screening_no", "subject_arm"],
+                    [["P7_PROJECT_SCOPE", "P7_CENTER_B", "P7-B-001", "experimental"]],
                 ),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -420,8 +426,8 @@ def test_import_and_export_permissions_and_scope(
             "file": (
                 "subjects.xlsx",
                 xlsx_bytes(
-                    ["project_code", "center_code", "screening_no"],
-                    [["P7_PROJECT_SCOPE", "P7_CENTER_A", "P7-A-002"]],
+                    ["project_code", "center_code", "screening_no", "subject_arm"],
+                    [["P7_PROJECT_SCOPE", "P7_CENTER_A", "P7-A-002", "control"]],
                 ),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -498,8 +504,8 @@ def test_exports_include_expected_workbooks_and_missing_unmaterialized_stage_ite
         admin_headers,
         "/api/import/subjects",
         xlsx_bytes(
-            ["project_code", "center_code", "screening_no"],
-            [["P7_PROJECT_EXPORT", "P7_CENTER_EXPORT", "P7-E-001"]],
+            ["project_code", "center_code", "screening_no", "subject_arm"],
+            [["P7_PROJECT_EXPORT", "P7_CENTER_EXPORT", "P7-E-001", "experimental"]],
         ),
     )
 
@@ -532,7 +538,8 @@ def test_exports_include_expected_workbooks_and_missing_unmaterialized_stage_ite
     )
     subject_headers = workbook_rows(subject_completeness.content)[0]
     assert "知情时间" in subject_headers
-    assert "访视5日期" in subject_headers
+    assert "访视4日期" in subject_headers
+    assert "访视5日期" not in subject_headers
 
     missing = client.get(
         f"/api/export/missing-items?project_id={project_id}&center_id={center_id}",

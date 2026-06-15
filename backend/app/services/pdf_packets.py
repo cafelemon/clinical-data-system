@@ -1,4 +1,5 @@
 import hashlib
+import json
 import mimetypes
 import re
 import shlex
@@ -6,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,10 +20,23 @@ from app.core.files import CATEGORY_FOLDERS, StoredUpload, ensure_relative_path,
 from app.models import Center, PdfPacket, PdfPacketSegment, Project, StageTemplate, Subject
 from app.models.clinical_data import SubjectItem
 from app.services.ocr_client import OcrClientError, PaddleOcrClient
+from app.services.pdf_packet_classifier import SegmentBuildResult, build_document_segments
 
 
 class PdfPacketError(RuntimeError):
     pass
+
+
+SEGMENT_STATUS_AUTO_CONFIRMED = "auto_confirmed_candidate"
+SEGMENT_STATUS_PENDING_REVIEW = "pending_review"
+SEGMENT_STATUS_MANUALLY_CONFIRMED = "manually_confirmed"
+SEGMENT_STATUS_MANUALLY_MODIFIED = "manually_modified"
+SEGMENT_STATUS_UNKNOWN = "unknown"
+SEGMENT_STATUS_UPLOADED = "uploaded"
+PRESERVED_REANALYZE_STATUSES = {
+    SEGMENT_STATUS_MANUALLY_CONFIRMED,
+    SEGMENT_STATUS_MANUALLY_MODIFIED,
+}
 
 
 @dataclass(frozen=True)
@@ -359,111 +374,149 @@ def build_detected_segments(
     page_texts: list[str],
     candidates: list[SubjectItemCandidate],
 ) -> list[dict[str, object]]:
-    page_count = len(page_texts)
-    if page_count == 0:
-        return []
-    raw_matches = [best_page_match(text, candidates) for text in page_texts]
-    if not any(match.subject_item_id is not None for match in raw_matches):
-        return [
-            {
-                "page_start": 1,
-                "page_end": page_count,
-                "detected_name": None,
-                "detected_code": None,
-                "confidence": 0,
-                "suggested_subject_item_id": None,
-                "ocr_text": compact_text(page_texts),
-            }
-        ]
-
-    segments: list[dict[str, object]] = []
-    start = 1
-    current = raw_matches[0]
-    for index, match in enumerate(raw_matches[1:], start=2):
-        should_start_new = (
-            match.subject_item_id is not None
-            and match.subject_item_id != current.subject_item_id
-        )
-        if should_start_new:
-            segments.append(
-                {
-                    "page_start": start,
-                    "page_end": index - 1,
-                    "detected_name": current.detected_name,
-                    "detected_code": current.detected_code,
-                    "confidence": current.confidence,
-                    "suggested_subject_item_id": current.subject_item_id,
-                    "ocr_text": compact_text(page_texts[start - 1 : index - 1]),
-                }
-            )
-            start = index
-            current = match
-        elif current.subject_item_id is None and match.subject_item_id is not None:
-            if index > start:
-                segments.append(
-                    {
-                        "page_start": start,
-                        "page_end": index - 1,
-                        "detected_name": None,
-                        "detected_code": None,
-                        "confidence": 0,
-                        "suggested_subject_item_id": None,
-                        "ocr_text": compact_text(page_texts[start - 1 : index - 1]),
-                    }
-                )
-            start = index
-            current = match
-    segments.append(
-        {
-            "page_start": start,
-            "page_end": page_count,
-            "detected_name": current.detected_name,
-            "detected_code": current.detected_code,
-            "confidence": current.confidence,
-            "suggested_subject_item_id": current.subject_item_id,
-            "ocr_text": compact_text(page_texts[start - 1 : page_count]),
-        }
-    )
-    return segments
+    return build_document_segments(page_texts, candidates).segments
 
 
-def analyze_packet(db: Session, packet: PdfPacket) -> PdfPacket:
-    uploaded_segment = db.scalar(
-        select(PdfPacketSegment.id)
-        .where(
-            PdfPacketSegment.packet_id == packet.id,
-            PdfPacketSegment.file_asset_id.is_not(None),
-        )
-        .limit(1)
-    )
-    if uploaded_segment is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="packet has uploaded segments and cannot be re-analyzed",
-        )
+def status_for_confidence(confidence: float) -> str:
+    if confidence >= 0.85:
+        return SEGMENT_STATUS_AUTO_CONFIRMED
+    if confidence >= 0.60:
+        return SEGMENT_STATUS_PENDING_REVIEW
+    return SEGMENT_STATUS_UNKNOWN
 
+
+def ranges_overlap(start_a: int, end_a: int, start_b: int, end_b: int) -> bool:
+    return max(start_a, start_b) <= min(end_a, end_b)
+
+
+def subtract_reserved_ranges(
+    start: int,
+    end: int,
+    reserved_ranges: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    remaining = [(start, end)]
+    for reserved_start, reserved_end in reserved_ranges:
+        next_remaining: list[tuple[int, int]] = []
+        for current_start, current_end in remaining:
+            if not ranges_overlap(current_start, current_end, reserved_start, reserved_end):
+                next_remaining.append((current_start, current_end))
+                continue
+            if current_start < reserved_start:
+                next_remaining.append((current_start, reserved_start - 1))
+            if reserved_end < current_end:
+                next_remaining.append((reserved_end + 1, current_end))
+        remaining = next_remaining
+    return remaining
+
+
+def apply_default_segment_status(payload: dict[str, object]) -> dict[str, object]:
+    if payload.get("suggested_subject_item_id") is None:
+        payload["status"] = SEGMENT_STATUS_UNKNOWN
+        return payload
+    payload["status"] = status_for_confidence(float(payload.get("confidence") or 0))
+    return payload
+
+
+def trim_payloads_around_preserved_segments(
+    segment_payloads: list[dict[str, object]],
+    page_texts: list[str],
+    preserved_segments: list[PdfPacketSegment],
+) -> list[dict[str, object]]:
+    reserved_ranges = [
+        (segment.page_start, segment.page_end)
+        for segment in preserved_segments
+        if segment.page_start <= segment.page_end
+    ]
+    if not reserved_ranges:
+        return segment_payloads
+
+    trimmed_payloads: list[dict[str, object]] = []
+    for payload in segment_payloads:
+        page_start = int(payload["page_start"])
+        page_end = int(payload["page_end"])
+        for next_start, next_end in subtract_reserved_ranges(page_start, page_end, reserved_ranges):
+            next_payload = {**payload, "page_start": next_start, "page_end": next_end}
+            next_payload["ocr_text"] = compact_text(page_texts[next_start - 1 : next_end])
+            trimmed_payloads.append(next_payload)
+    return trimmed_payloads
+
+
+def write_packet_analysis_debug_report(
+    packet: PdfPacket,
+    page_texts: list[str],
+    build_result: SegmentBuildResult,
+) -> None:
+    debug_dir = settings.file_storage_root / "_debug" / "pdf-packet-analysis"
+    report = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "packet": {
+            "id": packet.id,
+            "packet_id": packet.packet_id,
+            "original_name": packet.original_name,
+            "screening_no": packet.screening_no,
+            "page_count": packet.page_count,
+        },
+        "text_page_count": sum(1 for text in page_texts if text.strip()),
+        **build_result.debug_report,
+    }
+    try:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(report, ensure_ascii=False, indent=2)
+        (debug_dir / "latest.json").write_text(payload, encoding="utf-8")
+        (debug_dir / f"packet_{packet.id}.json").write_text(payload, encoding="utf-8")
+    except OSError:
+        # Debug output should never turn a successful packet analysis into a failed upload.
+        return
+
+
+def analyze_packet(db: Session, packet: PdfPacket, force: bool = False) -> PdfPacket:
     source_path = ensure_relative_path(settings.file_storage_root, packet.storage_path)
     if not source_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="packet file not found")
 
     packet.status = "processing"
     packet.error_message = None
-    for segment in list(
-        db.scalars(select(PdfPacketSegment).where(PdfPacketSegment.packet_id == packet.id))
-    ):
-        db.delete(segment)
+    existing_segments = list(
+        db.scalars(
+            select(PdfPacketSegment)
+            .where(PdfPacketSegment.packet_id == packet.id)
+            .order_by(PdfPacketSegment.page_start, PdfPacketSegment.id)
+        )
+    )
+    preserved_segments = [
+        segment
+        for segment in existing_segments
+        if segment.file_asset_id is not None
+        or (not force and segment.status in PRESERVED_REANALYZE_STATUSES)
+    ]
+    preserved_ids = {segment.id for segment in preserved_segments}
+    for segment in existing_segments:
+        if segment.id not in preserved_ids:
+            db.delete(segment)
     db.flush()
 
     try:
         packet.page_count = packet.page_count or pdf_page_count(source_path)
         page_texts = extract_page_texts(source_path, packet.page_count)
         candidates = subject_item_candidates(db, packet.subject_id)
-        segment_payloads = build_detected_segments(page_texts, candidates)
+        build_result = build_document_segments(page_texts, candidates)
+        segment_payloads = trim_payloads_around_preserved_segments(
+            build_result.segments,
+            page_texts,
+            preserved_segments,
+        )
         for payload in segment_payloads:
-            db.add(PdfPacketSegment(packet_id=packet.id, status="pending", **payload))
+            db.add(
+                PdfPacketSegment(
+                    packet_id=packet.id,
+                    **apply_default_segment_status(payload),
+                )
+            )
+        write_packet_analysis_debug_report(packet, page_texts, build_result)
         text_pages = sum(1 for text in page_texts if text.strip())
         packet.status = "ready"
-        packet.analysis_summary = f"{len(segment_payloads)} segments, {text_pages} text/OCR pages"
+        segment_count = len(segment_payloads) + len(preserved_segments)
+        packet.analysis_summary = f"{segment_count} segments, {text_pages} text/OCR pages"
     except Exception as exc:
         packet.status = "failed"
         packet.error_message = str(exc)

@@ -14,6 +14,7 @@ export type FileRecord = {
   subject_id: number | null;
   stage_id: number | null;
   stage_file_id: number | null;
+  ssu_progress_id: number | null;
   subject_item_id: number | null;
   source_pdf_packet_id: number | null;
   source_page_start: number | null;
@@ -45,6 +46,7 @@ export type FileQuery = {
   center_id?: number;
   subject_id?: number;
   stage_file_id?: number;
+  ssu_progress_id?: number;
   subject_item_id?: number;
   file_category?: string;
   status?: string;

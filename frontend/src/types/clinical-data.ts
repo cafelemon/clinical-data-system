@@ -1,10 +1,13 @@
 import type { Stage } from "@/types/master-data";
 
+export type SubjectArm = "experimental" | "control";
+
 export type Subject = {
   id: number;
   project_id: number;
   center_id: number;
   screening_no: string;
+  subject_arm: SubjectArm | null;
   gender: string | null;
   age: number | null;
   enrolled_at: string | null;
@@ -26,6 +29,7 @@ export type SubjectPayload = {
   project_id: number;
   center_id: number;
   screening_no: string;
+  subject_arm: SubjectArm;
   gender?: string | null;
   age?: number | null;
   enrolled_at?: string | null;
@@ -81,6 +85,29 @@ export type SubjectItemPayload = {
   remark?: string | null;
 };
 
+export type SubjectItemRemarkPayload = {
+  remark: string | null;
+};
+
+export type SubjectItemRemarkResponse = {
+  success: boolean;
+  remark: string | null;
+  updated_at: string;
+};
+
+export type SubjectItemTimelineEntry = {
+  id: string;
+  occurred_at: string;
+  actor: string | null;
+  action: string;
+  action_label: string;
+  description: string | null;
+  file_id: number | null;
+  file_version: number | null;
+  task_id: number | null;
+  remark: string | null;
+};
+
 export type StageFile = {
   id: number;
   project_id: number;
@@ -89,6 +116,7 @@ export type StageFile = {
   stage_template_id: number | null;
   file_name: string;
   file_type: string | null;
+  required: boolean;
   upload_status: string;
   review_status: string;
   added_by: number | null;
@@ -99,9 +127,19 @@ export type StageFile = {
   reviewer_id: number | null;
   reviewer_name: string | null;
   reviewed_at: string | null;
+  not_applicable: boolean;
+  not_applicable_reason: string | null;
+  not_applicable_by: number | null;
+  not_applicable_by_name: string | null;
+  not_applicable_at: string | null;
   completeness_status: string | null;
   remark: string | null;
   updated_at: string;
+};
+
+export type StageFileApplicabilityPayload = {
+  not_applicable: boolean;
+  reason?: string | null;
 };
 
 export type StageFileGroup = {
@@ -117,6 +155,85 @@ export type ClinicalPhase = {
   subjects: Subject[];
 };
 
+export type ClinicalSsuProgress = {
+  id: number;
+  project_id: number;
+  center_id: number;
+  stage_code: string;
+  status: string;
+  submitted_at: string | null;
+  approved_at: string | null;
+  completed_at: string | null;
+  version_info: string | null;
+  file_checklist: string | null;
+  summary: string | null;
+  fee_detail: string | null;
+  notes: string | null;
+  file_count: number;
+  latest_uploaded_at: string | null;
+  same_name_stage_file_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClinicalSsuProgressPayload = {
+  status?: string;
+  submitted_at?: string | null;
+  approved_at?: string | null;
+  completed_at?: string | null;
+  version_info?: string | null;
+  file_checklist?: string | null;
+  summary?: string | null;
+  fee_detail?: string | null;
+  notes?: string | null;
+};
+
+export type ClinicalStatusCount = {
+  complete: number;
+  checking: number;
+  incomplete: number;
+};
+
+export type ClinicalReviewSummary = {
+  unreviewed: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+};
+
+export type ClinicalSsuSummary = {
+  total: number;
+  completed: number;
+  blocked: number;
+  active: number;
+};
+
+export type ClinicalOptionalFileSummary = {
+  total: number;
+  not_applicable: number;
+  uploaded: number;
+};
+
+export type ClinicalStageGroupSummary = {
+  stage_id: number;
+  stage_code: string;
+  stage_name: string;
+  phase_code: string | null;
+  total: number;
+  complete: number;
+  checking: number;
+  incomplete: number;
+};
+
+export type ClinicalDatasetSummary = {
+  stage_files: ClinicalStatusCount;
+  subjects: ClinicalStatusCount;
+  reviews: ClinicalReviewSummary;
+  ssu: ClinicalSsuSummary;
+  optional_files: ClinicalOptionalFileSummary;
+  stage_groups: ClinicalStageGroupSummary[];
+};
+
 export type ClinicalDataset = {
   project_id: number | null;
   center_id: number | null;
@@ -125,13 +242,16 @@ export type ClinicalDataset = {
   phases: ClinicalPhase[];
   startup_file_groups: StageFileGroup[];
   startup_files: StageFile[];
+  ssu_progress: ClinicalSsuProgress[];
   trial_stages: Stage[];
+  trial_file_groups: StageFileGroup[];
   trial_files: StageFile[];
   subjects: Subject[];
   closeout_file_groups: StageFileGroup[];
   closeout_files: StageFile[];
   stage_file_count: number;
   subject_count: number;
+  summary: ClinicalDatasetSummary;
 };
 
 export type ReviewTargetType = "stage_file" | "subject_item";

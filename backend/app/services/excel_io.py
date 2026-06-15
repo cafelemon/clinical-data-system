@@ -32,6 +32,7 @@ from app.services.stage_config import (
     ensure_project_stage_config,
     ensure_template_scope,
     phase_template_scope,
+    template_scope_for_option,
     validate_template_stage,
 )
 from app.services.subject_setup import create_default_subject_sections
@@ -79,6 +80,7 @@ TEMPLATE_COLUMNS: dict[str, list[ExcelColumn]] = {
         ExcelColumn("project_code", "项目编码", True),
         ExcelColumn("center_code", "中心编码", True),
         ExcelColumn("screening_no", "筛选号", True),
+        ExcelColumn("subject_arm", "分组", True, "experimental/control 或 实验组/对照组"),
         ExcelColumn("gender", "性别", False),
         ExcelColumn("age", "年龄", False),
         ExcelColumn("enrolled_at", "入组日期", False, "YYYY-MM-DD"),
@@ -87,7 +89,6 @@ TEMPLATE_COLUMNS: dict[str, list[ExcelColumn]] = {
         ExcelColumn("visit2_date", "访视2日期", False, "YYYY-MM-DD"),
         ExcelColumn("visit3_date", "访视3日期", False, "YYYY-MM-DD"),
         ExcelColumn("visit4_date", "访视4日期", False, "YYYY-MM-DD"),
-        ExcelColumn("visit5_date", "访视5日期", False, "YYYY-MM-DD"),
     ],
     "stage-templates": [
         ExcelColumn("project_code", "项目编码", True),
@@ -261,6 +262,9 @@ def import_subjects(
         project = project_by_code(db, row, project_code, errors)
         if project is None:
             continue
+        subject_arm = subject_arm_value(row, errors)
+        if subject_arm is None:
+            continue
         age = optional_int(row, "age", errors)
         enrolled_at = optional_date(row, "enrolled_at", errors)
         informed_at = optional_datetime(row, "informed_at", errors)
@@ -284,6 +288,7 @@ def import_subjects(
                     "project_id": project.id,
                     "center_id": center.id,
                     "screening_no": screening_no,
+                    "subject_arm": subject_arm,
                     "gender": optional_text(row, "gender"),
                     "age": age,
                     "enrolled_at": enrolled_at,
@@ -292,7 +297,6 @@ def import_subjects(
                     "visit2_date": optional_date(row, "visit2_date", errors),
                     "visit3_date": optional_date(row, "visit3_date", errors),
                     "visit4_date": optional_date(row, "visit4_date", errors),
-                    "visit5_date": optional_date(row, "visit5_date", errors),
                 },
             )
         )
@@ -333,7 +337,11 @@ def import_stage_templates(
             continue
         template_scope = optional_text(row, "template_scope")
         if template_scope is None:
-            template_scope = phase_template_scope(stage.phase_code or stage.code)
+            template_scope = (
+                phase_template_scope(stage.code)
+                if stage.parent_id is None
+                else template_scope_for_option(stage.option_code or stage.code)
+            )
         try:
             template_scope = ensure_template_scope(template_scope)
             stage = validate_template_stage(stage, template_scope)
@@ -530,7 +538,6 @@ def build_subject_completeness_export(
             "访视2日期",
             "访视3日期",
             "访视4日期",
-            "访视5日期",
             "资料状态",
             "审核状态",
             "首次完成时间",
@@ -559,7 +566,6 @@ def build_subject_completeness_export(
                 subject.visit2_date.isoformat() if subject.visit2_date else "",
                 subject.visit3_date.isoformat() if subject.visit3_date else "",
                 subject.visit4_date.isoformat() if subject.visit4_date else "",
-                subject.visit5_date.isoformat() if subject.visit5_date else "",
                 subject.data_status,
                 subject.review_status,
                 subject.completed_at.isoformat() if subject.completed_at else "",
@@ -764,6 +770,20 @@ def require_text(row: ParsedRow, key: str, errors: list[RowError]) -> str | None
 def optional_text(row: ParsedRow, key: str) -> str | None:
     value = normalize_text(row.values.get(key))
     return value or None
+
+
+def subject_arm_value(row: ParsedRow, errors: list[RowError]) -> str | None:
+    value = normalize_text(row.values.get("subject_arm"))
+    if value == "":
+        errors.append(RowError(row.row, "subject_arm", "必填"))
+        return None
+    normalized = value.lower()
+    if normalized in {"experimental", "实验组"}:
+        return "experimental"
+    if normalized in {"control", "对照组"}:
+        return "control"
+    errors.append(RowError(row.row, "subject_arm", "需为 experimental/control 或 实验组/对照组"))
+    return None
 
 
 def optional_int(

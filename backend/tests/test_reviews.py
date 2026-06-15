@@ -137,6 +137,7 @@ def create_subject_bundle(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": f"P5-{suffix}-S001",
+            "subject_arm": "experimental",
         },
     )
     assert subject.status_code == 201

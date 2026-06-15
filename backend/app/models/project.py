@@ -35,4 +35,14 @@ class Project(Base):
     subjects = relationship("Subject", back_populates="project", cascade="all, delete-orphan")
     stage_files = relationship("StageFile", back_populates="project", cascade="all, delete-orphan")
     file_assets = relationship("FileAsset", back_populates="project", cascade="all, delete-orphan")
+    image_records = relationship(
+        "SubjectImageRecord",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
     pdf_packets = relationship("PdfPacket", back_populates="project", cascade="all, delete-orphan")
+    trial_protocol_versions = relationship(
+        "TrialProtocolVersion",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )

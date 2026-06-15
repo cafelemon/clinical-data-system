@@ -25,6 +25,7 @@ type ReviewActionsProps = {
   canReview: boolean;
   canReadRecords: boolean;
   showLatest?: boolean;
+  showRecordsButton?: boolean;
   onChanged: () => void;
 };
 
@@ -43,6 +44,7 @@ export function ReviewActions({
   canReview,
   canReadRecords,
   showLatest = true,
+  showRecordsButton = true,
   onChanged,
 }: ReviewActionsProps) {
   const [records, setRecords] = useState<ReviewRecord[]>([]);
@@ -164,7 +166,7 @@ export function ReviewActions({
             </Button>
           </>
         )}
-        {canReadRecords && (
+        {canReadRecords && showRecordsButton && (
           <Button
             size="sm"
             variant="ghost"

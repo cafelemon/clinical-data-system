@@ -1,4 +1,4 @@
-import { Search, ShieldCheck } from "lucide-react";
+import { History, Search, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -174,10 +174,12 @@ export function OperationLogsPage() {
   if (!canReadLogs) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">操作日志</h1>
-          <p className="mt-1 text-sm text-slate-500">业务审计与治理追踪</p>
-        </div>
+        <ManagementPageHeader
+          title="操作日志"
+          description="业务审计与治理追踪"
+          icon={History}
+          badge="审计"
+        />
         <Card>
           <CardContent className="flex items-center gap-3 py-8 text-sm text-slate-600">
             <ShieldCheck className="size-5 text-slate-400" aria-hidden="true" />
@@ -190,16 +192,24 @@ export function OperationLogsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">操作日志</h1>
-          <p className="mt-1 text-sm text-slate-500">业务审计与治理追踪</p>
-        </div>
-        <Button type="button" variant="secondary" onClick={() => void refresh()} disabled={loading}>
-          <Search className="size-4" aria-hidden="true" />
-          查询
-        </Button>
-      </div>
+      <ManagementPageHeader
+        title="操作日志"
+        description="业务审计、数据范围和关键操作追踪"
+        icon={History}
+        badge="审计"
+        actions={
+          <Button type="button" variant="secondary" onClick={() => void refresh()} disabled={loading}>
+            <Search className="size-4" aria-hidden="true" />
+            查询
+          </Button>
+        }
+      />
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="日志总数" value={total} detail={`当前第 ${page} / ${pageCount} 页`} icon={History} />
+        <ManagementStatCard label="当前列表" value={logs.length} detail={loading ? "查询中" : "已加载"} icon={Search} tone="teal" />
+        <ManagementStatCard label="筛选范围" value={filters.projectId ? "单项目" : "全部"} detail={filters.centerId ? "指定中心" : "全部中心"} icon={ShieldCheck} tone="slate" />
+      </section>
 
       <Card>
         <CardHeader>
@@ -342,3 +352,4 @@ export function OperationLogsPage() {
     </div>
   );
 }
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";

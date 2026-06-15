@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="810" viewBox="0 0 1440 810" role="img" aria-label="试验数据资料中枢截图占位">
+  <rect width="1440" height="810" fill="#f5f8fb"/>
+  <rect x="0" y="0" width="240" height="810" fill="#10233f"/>
+  <rect x="28" y="112" width="184" height="44" rx="8" fill="#8ec31f"/>
+  <g fill="#dbe7f6" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="18">
+    <text x="58" y="138">试验数据</text>
+    <text x="58" y="202">图像数据</text>
+    <text x="58" y="266">智能处理</text>
+  </g>
+  <rect x="240" width="1200" height="82" fill="#ffffff"/>
+  <text x="286" y="52" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="28" font-weight="700" fill="#10233f">试验数据资料中枢</text>
+  <text x="286" y="118" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="18" fill="#64748b">截图占位：请替换为实际 /clinical-dataset 页面，避免进入受试者详情和文件预览</text>
+  <g transform="translate(286 156)">
+    <rect width="1008" height="98" rx="8" fill="#ffffff" stroke="#d8e2ee"/>
+    <rect x="24" y="24" width="170" height="18" rx="9" fill="#cbd5e1"/>
+    <rect x="24" y="58" width="320" height="16" rx="8" fill="#e2e8f0"/>
+    <rect x="390" y="24" width="170" height="18" rx="9" fill="#cbd5e1"/>
+    <rect x="390" y="58" width="300" height="16" rx="8" fill="#e2e8f0"/>
+    <rect x="748" y="28" width="180" height="42" rx="21" fill="#e7f4d0"/>
+  </g>
+  <g transform="translate(286 286)">
+    <rect width="1008" height="430" rx="8" fill="#ffffff" stroke="#d8e2ee"/>
+    <text x="24" y="42" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="20" font-weight="700" fill="#10233f">阶段资料状态总览</text>
+    <g fill="#cbd5e1">
+      <rect x="24" y="76" width="168" height="20" rx="10"/>
+      <rect x="230" y="76" width="148" height="20" rx="10"/>
+      <rect x="420" y="76" width="188" height="20" rx="10"/>
+      <rect x="650" y="76" width="228" height="20" rx="10"/>
+    </g>
+    <g fill="#eef2f7">
+      <rect x="24" y="126" width="960" height="56" rx="8"/>
+      <rect x="24" y="198" width="960" height="56" rx="8"/>
+      <rect x="24" y="270" width="960" height="56" rx="8"/>
+      <rect x="24" y="342" width="960" height="56" rx="8"/>
+    </g>
+    <g fill="#94a3b8">
+      <rect x="52" y="146" width="180" height="16" rx="8"/>
+      <rect x="300" y="146" width="210" height="16" rx="8"/>
+      <rect x="600" y="146" width="160" height="16" rx="8"/>
+      <rect x="52" y="218" width="220" height="16" rx="8"/>
+      <rect x="300" y="218" width="180" height="16" rx="8"/>
+      <rect x="600" y="218" width="190" height="16" rx="8"/>
+      <rect x="52" y="290" width="200" height="16" rx="8"/>
+      <rect x="300" y="290" width="240" height="16" rx="8"/>
+      <rect x="600" y="290" width="170" height="16" rx="8"/>
+    </g>
+  </g>
+</svg>

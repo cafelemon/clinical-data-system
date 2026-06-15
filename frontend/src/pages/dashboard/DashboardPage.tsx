@@ -1,19 +1,17 @@
-import { BarChart3, RefreshCcw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  ClipboardCheck,
+  Database,
+  FileWarning,
+  Gauge,
+  Layers3,
+  RefreshCcw,
+  ShieldAlert,
+  Users,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,220 +20,159 @@ import { SelectField } from "@/components/ui/form";
 import { dashboardApi } from "@/services/dashboard";
 import { masterDataApi } from "@/services/master-data";
 import { useAuthStore } from "@/stores/auth-store";
-import type { Project } from "@/types/master-data";
-import type {
-  DashboardCenter,
-  DashboardCompleteness,
-  DashboardProjectSummary,
-  DashboardReviewStatus,
-  DashboardTrendPoint,
-} from "@/types/dashboard";
+import type { DashboardV323ImageMetric, DashboardV323Overview } from "@/types/dashboard";
+import type { Center, Project } from "@/types/master-data";
 
-const dataStatusLabels: Record<string, string> = {
-  complete: "资料齐全",
+const statusLabels: Record<string, string> = {
+  complete: "齐全",
   checking: "核查中",
-  incomplete: "资料不全",
-};
-
-const reviewStatusLabels: Record<string, string> = {
+  incomplete: "不全",
   unreviewed: "未审核",
   pending: "待审核",
   approved: "已通过",
   rejected: "已驳回",
+  open: "未关闭",
+  closed: "已关闭",
+  done: "已完成",
+  in_progress: "进行中",
+  not_started: "未开始",
 };
 
-const chartColors = {
-  complete: "#059669",
-  checking: "#d97706",
-  incomplete: "#e11d48",
-  unreviewed: "#64748b",
-  pending: "#d97706",
-  approved: "#059669",
-  rejected: "#e11d48",
-};
+function pct(value: number) {
+  return `${Number.isFinite(value) ? value.toFixed(1) : "0.0"}%`;
+}
 
-function statusTone(status: string) {
-  if (status === "complete" || status === "approved") return "success";
-  if (status === "checking" || status === "pending" || status === "unreviewed") return "warning";
-  if (status === "incomplete" || status === "rejected") return "danger";
+function statusLabel(value: string) {
+  return statusLabels[value] ?? value;
+}
+
+function statusTone(value: string) {
+  if (["complete", "approved", "done", "closed"].includes(value)) return "success";
+  if (["incomplete", "rejected", "overdue"].includes(value)) return "danger";
+  if (["checking", "pending", "due_soon", "open", "in_progress"].includes(value)) return "warning";
   return "neutral";
 }
 
-function formatPercent(value: number) {
-  return `${value.toFixed(1)}%`;
-}
-
-function metricValue(value: number, suffix = "") {
-  return `${value.toLocaleString()}${suffix}`;
-}
-
-function EmptyChart({ label }: { label: string }) {
+function KpiCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string | number;
+  hint: string;
+  icon: typeof Users;
+  tone?: "neutral" | "success" | "warning" | "danger";
+}) {
+  const colors = {
+    neutral: "border-slate-200 bg-white text-slate-700",
+    success: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    warning: "border-amber-200 bg-amber-50 text-amber-700",
+    danger: "border-rose-200 bg-rose-50 text-rose-700",
+  };
   return (
-    <div className="flex h-64 items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+    <div className={`rounded-md border p-4 ${colors[tone]}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium">{label}</span>
+        <Icon className="size-5" aria-hidden="true" />
+      </div>
+      <div className="mt-3 truncate text-3xl font-semibold tracking-normal text-slate-950">
+        {value}
+      </div>
+      <div className="mt-1 text-xs text-slate-500">{hint}</div>
+    </div>
+  );
+}
+
+function RatioBar({
+  complete,
+  checking,
+  incomplete,
+}: {
+  complete: number;
+  checking: number;
+  incomplete: number;
+}) {
+  const total = complete + checking + incomplete;
+  const safeTotal = total || 1;
+  return (
+    <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+      <div className="flex h-full">
+        <div className="bg-emerald-500" style={{ width: `${(complete / safeTotal) * 100}%` }} />
+        <div className="bg-amber-400" style={{ width: `${(checking / safeTotal) * 100}%` }} />
+        <div className="bg-rose-500" style={{ width: `${(incomplete / safeTotal) * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ label }: { label: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
       {label}
     </div>
   );
 }
 
-function MetricCard({
+function CountStrip({
   label,
-  value,
-  badge,
+  complete,
+  checking,
+  incomplete,
 }: {
   label: string;
-  value: string;
-  badge: string;
+  complete: number;
+  checking: number;
+  incomplete: number;
 }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-slate-500">{label}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-end justify-between">
-          <span className="text-3xl font-semibold text-slate-950">{value}</span>
-          <Badge tone="neutral">{badge}</Badge>
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium text-slate-700">{label}</span>
+        <span className="text-xs text-slate-500">{complete + checking + incomplete} 项</span>
+      </div>
+      <div className="mt-3">
+        <RatioBar complete={complete} checking={checking} incomplete={incomplete} />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Badge tone="success">齐全 {complete}</Badge>
+        {checking > 0 && <Badge tone="warning">核查中 {checking}</Badge>}
+        <Badge tone="danger">不全 {incomplete}</Badge>
+      </div>
+    </div>
+  );
+}
+
+function ImageCoverageRow({
+  label,
+  metric,
+  required = false,
+}: {
+  label: string;
+  metric: DashboardV323ImageMetric;
+  required?: boolean;
+}) {
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-slate-900">{label}</div>
+          <div className="mt-1 text-xs text-slate-500">
+            已上传 {metric.uploaded_count} / 未上传 {metric.not_uploaded_count}
+          </div>
         </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function CenterTable({ centers }: { centers: DashboardCenter[] }) {
-  if (centers.length === 0) {
-    return (
-      <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-        暂无中心数据
+        <Badge tone={required && metric.not_uploaded_count > 0 ? "danger" : "success"}>
+          {pct(metric.coverage_rate)}
+        </Badge>
       </div>
-    );
-  }
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-left text-sm">
-        <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
-          <tr>
-            <th className="px-3 py-2 font-medium">中心</th>
-            <th className="px-3 py-2 font-medium">受试者</th>
-            <th className="px-3 py-2 font-medium">已完成</th>
-            <th className="px-3 py-2 font-medium">完成率</th>
-            <th className="px-3 py-2 font-medium">完整性</th>
-            <th className="px-3 py-2 font-medium">待审核</th>
-            <th className="px-3 py-2 font-medium">驳回</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {centers.map((center) => (
-            <tr key={center.center_id}>
-              <td className="px-3 py-3 font-medium text-slate-900">{center.center_name}</td>
-              <td className="px-3 py-3 text-slate-600">{center.subject_count}</td>
-              <td className="px-3 py-3 text-slate-600">{center.completed_subject_count}</td>
-              <td className="px-3 py-3 text-slate-600">{formatPercent(center.completion_rate)}</td>
-              <td className="px-3 py-3">
-                <Badge tone={statusTone(center.completeness_status)}>
-                  {dataStatusLabels[center.completeness_status] ?? center.completeness_status}
-                </Badge>
-              </td>
-              <td className="px-3 py-3 text-slate-600">{center.pending_review_count}</td>
-              <td className="px-3 py-3 text-slate-600">{center.rejected_review_count}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function TrendChart({ trend }: { trend: DashboardTrendPoint[] }) {
-  if (trend.length === 0) return <EmptyChart label="暂无完成趋势" />;
-  return (
-    <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={trend} margin={{ top: 12, right: 16, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey="period" tick={{ fontSize: 12 }} />
-          <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-          <Tooltip />
-          <Line
-            type="monotone"
-            dataKey="completed_count"
-            name="完成案例"
-            stroke="#2563eb"
-            strokeWidth={2}
-            dot={{ r: 3 }}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-function ReviewChart({ reviewStatus }: { reviewStatus: DashboardReviewStatus | null }) {
-  const data = reviewStatus
-    ? (Object.entries(reviewStatus) as Array<[keyof DashboardReviewStatus, number]>).map(
-        ([status, value]) => ({
-          status,
-          label: reviewStatusLabels[status],
-          value,
-        }),
-      )
-    : [];
-  if (data.every((item) => item.value === 0)) return <EmptyChart label="暂无审核状态" />;
-  return (
-    <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            dataKey="value"
-            nameKey="label"
-            innerRadius={56}
-            outerRadius={88}
-            paddingAngle={2}
-          >
-            {data.map((item) => (
-              <Cell key={item.status} fill={chartColors[item.status]} />
-            ))}
-          </Pie>
-          <Tooltip />
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {data.map((item) => (
-          <Badge key={item.status} tone={statusTone(item.status)}>
-            {item.label} {item.value}
-          </Badge>
-        ))}
+      <div className="mt-3 h-2 rounded-full bg-slate-100">
+        <div
+          className={required ? "h-2 rounded-full bg-sky-500" : "h-2 rounded-full bg-teal-500"}
+          style={{ width: `${metric.coverage_rate}%` }}
+        />
       </div>
-    </div>
-  );
-}
-
-function CompletenessChart({ completeness }: { completeness: DashboardCompleteness | null }) {
-  const data = completeness
-    ? [
-        { name: "阶段资料", ...completeness.stage_files },
-        { name: "受试者", ...completeness.subjects },
-      ]
-    : [];
-  if (
-    data.length === 0 ||
-    data.every((item) => item.complete + item.checking + item.incomplete === 0)
-  ) {
-    return <EmptyChart label="暂无完整性数据" />;
-  }
-  return (
-    <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-          <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-          <Tooltip />
-          <Bar dataKey="complete" name="资料齐全" stackId="a" fill={chartColors.complete} />
-          <Bar dataKey="checking" name="核查中" stackId="a" fill={chartColors.checking} />
-          <Bar dataKey="incomplete" name="资料不全" stackId="a" fill={chartColors.incomplete} />
-        </BarChart>
-      </ResponsiveContainer>
     </div>
   );
 }
@@ -244,110 +181,73 @@ export function DashboardPage() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canReadDashboard = hasPermission("dashboard:read");
   const [projects, setProjects] = useState<Project[]>([]);
+  const [centers, setCenters] = useState<Center[]>([]);
   const [projectId, setProjectId] = useState<number | undefined>();
-  const [summary, setSummary] = useState<DashboardProjectSummary | null>(null);
-  const [centers, setCenters] = useState<DashboardCenter[]>([]);
-  const [trend, setTrend] = useState<DashboardTrendPoint[]>([]);
-  const [reviewStatus, setReviewStatus] = useState<DashboardReviewStatus | null>(null);
-  const [completeness, setCompleteness] = useState<DashboardCompleteness | null>(null);
-  const [granularity, setGranularity] = useState<"week" | "month">("week");
+  const [centerId, setCenterId] = useState<number | undefined>();
+  const [overview, setOverview] = useState<DashboardV323Overview | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
-  const metrics = useMemo(
-    () => [
-      {
-        label: "完成案例数",
-        value: metricValue(summary?.completed_subject_count ?? 0),
-        badge: "案例",
-      },
-      {
-        label: "研究中心",
-        value: metricValue(summary?.visible_center_count ?? 0),
-        badge: "中心",
-      },
-      {
-        label: "项目总用时",
-        value: metricValue(summary?.project_days ?? 0, "天"),
-        badge: "累计",
-      },
-      {
-        label: "平均用时/案例",
-        value: metricValue(summary?.average_days_per_subject ?? 0, "天"),
-        badge: "平均",
-      },
-      {
-        label: "中位数用时",
-        value: metricValue(summary?.median_days_per_subject ?? 0, "天"),
-        badge: "中位",
-      },
-    ],
-    [summary],
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === projectId),
+    [projectId, projects],
+  );
+  const selectedCenter = useMemo(
+    () => centers.find((center) => center.id === centerId),
+    [centerId, centers],
   );
 
-  const refreshDashboard = useCallback(async () => {
-    if (!projectId || !canReadDashboard) return;
+  const refresh = useCallback(async () => {
+    if (!canReadDashboard) return;
     setLoading(true);
-    setError(null);
+    setMessage(null);
     try {
-      const [summaryData, centerData, trendData, reviewData, completenessData] =
-        await Promise.all([
-          dashboardApi.getProjectSummary(projectId),
-          dashboardApi.listProjectCenters(projectId),
-          dashboardApi.getProjectTrend(projectId, granularity),
-          dashboardApi.getReviewStatus(projectId),
-          dashboardApi.getCompleteness(projectId),
-        ]);
-      setSummary(summaryData);
-      setCenters(centerData);
-      setTrend(trendData);
-      setReviewStatus(reviewData);
-      setCompleteness(completenessData);
+      setOverview(await dashboardApi.getV323Overview(projectId, centerId));
     } catch {
-      setError("看板数据加载失败");
-      setSummary(null);
-      setCenters([]);
-      setTrend([]);
-      setReviewStatus(null);
-      setCompleteness(null);
+      setOverview(null);
+      setMessage("看板数据加载失败");
     } finally {
       setLoading(false);
     }
-  }, [canReadDashboard, granularity, projectId]);
+  }, [canReadDashboard, centerId, projectId]);
 
   useEffect(() => {
     if (!canReadDashboard) return;
     async function loadProjects() {
       try {
-        const data = await masterDataApi.listProjects();
-        setProjects(data);
-        setProjectId((current) =>
-          current && data.some((project) => project.id === current)
-            ? current
-            : data[0]?.id,
-        );
+        setProjects(await masterDataApi.listProjects());
       } catch {
-        setProjects([]);
-        setError("项目列表加载失败");
+        setMessage("项目列表加载失败");
       }
     }
     void loadProjects();
   }, [canReadDashboard]);
 
   useEffect(() => {
-    void refreshDashboard();
-  }, [refreshDashboard]);
+    if (!projectId) {
+      setCenters([]);
+      setCenterId(undefined);
+      return;
+    }
+    async function loadCenters() {
+      const data = await masterDataApi.listCenters(projectId);
+      setCenters(data);
+      setCenterId((current) => (current && data.some((center) => center.id === current) ? current : undefined));
+    }
+    void loadCenters();
+  }, [projectId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   if (!canReadDashboard) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">数据看板</h1>
-          <p className="mt-1 text-sm text-slate-500">项目进度、中心差异与审核风险</p>
-        </div>
+      <div className="space-y-4">
+        <h1 className="text-2xl font-semibold tracking-normal text-slate-950">看板</h1>
         <Card>
           <CardContent className="flex items-center gap-3 py-8 text-sm text-slate-600">
-            <BarChart3 className="size-5 text-slate-400" aria-hidden="true" />
+            <AlertTriangle className="size-5 text-slate-400" aria-hidden="true" />
             当前账号没有看板权限
           </CardContent>
         </Card>
@@ -355,20 +255,50 @@ export function DashboardPage() {
     );
   }
 
+  const emptyMetric = {
+    total_count: 0,
+    uploaded_count: 0,
+    not_uploaded_count: 0,
+    coverage_rate: 0,
+  };
+  const completeness = overview?.completeness ?? { complete: 0, checking: 0, incomplete: 0 };
+  const stageFiles = overview?.stage_files ?? { complete: 0, checking: 0, incomplete: 0 };
+  const subjects = overview?.subjects ?? { complete: 0, checking: 0, incomplete: 0 };
+  const imageData = overview?.image_data ?? {
+    raw: emptyMetric,
+    report: emptyMetric,
+    enhanced: emptyMetric,
+    required: { complete: 0, checking: 0, incomplete: 0 },
+  };
+  const reviews = overview?.reviews ?? { approved: 0, pending: 0, rejected: 0, unreviewed: 0 };
+  const trendMax = Math.max(...(overview?.trends.map((point) => point.completed_count) ?? [0]), 1);
+  const reviewRiskCount = reviews.pending + reviews.rejected;
+  const scopeLabel = selectedCenter?.name ?? selectedProject?.name ?? "全部项目";
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">数据看板</h1>
-          <p className="mt-1 text-sm text-slate-500">项目进度、中心差异与审核风险</p>
+          <p className="text-sm font-medium text-slate-500">V3.4.3 数据驾驶舱</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-normal text-slate-950">
+            临床数据运营总览
+          </h1>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Badge tone="neutral">{overview?.kpis.project_count ?? 0} 个项目</Badge>
+            <Badge tone="neutral">{overview?.kpis.center_count ?? 0} 个中心</Badge>
+            <Badge tone="neutral">{overview?.kpis.subject_count ?? 0} 例受试者</Badge>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white p-2">
           <SelectField
             value={projectId ?? ""}
-            onChange={(event) => setProjectId(Number(event.target.value) || undefined)}
-            className="h-10 w-48"
+            onChange={(event) => {
+              setProjectId(Number(event.target.value) || undefined);
+              setCenterId(undefined);
+            }}
+            className="h-10 w-56"
           >
-            <option value="">选择项目</option>
+            <option value="">全部项目</option>
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
@@ -376,72 +306,270 @@ export function DashboardPage() {
             ))}
           </SelectField>
           <SelectField
-            value={granularity}
-            onChange={(event) => setGranularity(event.target.value as "week" | "month")}
-            className="h-10 w-28"
+            value={centerId ?? ""}
+            onChange={(event) => setCenterId(Number(event.target.value) || undefined)}
+            disabled={!projectId}
+            className="h-10 w-48"
           >
-            <option value="week">按周</option>
-            <option value="month">按月</option>
+            <option value="">全部中心</option>
+            {centers.map((center) => (
+              <option key={center.id} value={center.id}>
+                {center.name}
+              </option>
+            ))}
           </SelectField>
-          <Button variant="secondary" onClick={() => void refreshDashboard()} disabled={loading}>
+          <Button variant="secondary" onClick={() => void refresh()} disabled={loading}>
             <RefreshCcw className="size-4" aria-hidden="true" />
             刷新
           </Button>
         </div>
       </div>
 
-      {error && <Badge tone="danger">{error}</Badge>}
-      {!projectId && (
-        <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-          暂无可查看项目
-        </div>
-      )}
+      {message && <Badge tone="danger">{message}</Badge>}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        {metrics.map((metric) => (
-          <MetricCard key={metric.label} {...metric} />
-        ))}
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <KpiCard
+          label="汇总范围"
+          value={scopeLabel}
+          hint={`${overview?.kpis.project_count ?? 0} 个项目 / ${overview?.kpis.center_count ?? 0} 个中心`}
+          icon={Database}
+        />
+        <KpiCard
+          label="受试者完成率"
+          value={pct(overview?.kpis.completion_rate ?? 0)}
+          hint={`${overview?.kpis.completed_subject_count ?? 0}/${overview?.kpis.subject_count ?? 0} 例完成`}
+          icon={Users}
+          tone="success"
+        />
+        <KpiCard
+          label="资料完整率"
+          value={pct(
+            completeness.complete /
+              Math.max(completeness.complete + completeness.checking + completeness.incomplete, 1) *
+              100,
+          )}
+          hint={`齐全 ${completeness.complete} / 不全 ${completeness.incomplete}`}
+          icon={Gauge}
+          tone={completeness.incomplete > 0 ? "warning" : "success"}
+        />
+        <KpiCard
+          label="待处理审核"
+          value={reviewRiskCount}
+          hint={`待审 ${overview?.kpis.pending_review_count ?? 0} / 驳回 ${overview?.kpis.rejected_review_count ?? 0}`}
+          icon={ClipboardCheck}
+          tone={(overview?.kpis.rejected_review_count ?? 0) > 0 ? "danger" : "warning"}
+        />
+        <KpiCard
+          label="计划预警"
+          value={overview?.kpis.active_warning_count ?? 0}
+          hint={`下周计划入组 ${overview?.enrollment.planned_next_week ?? 0}`}
+          icon={FileWarning}
+          tone={(overview?.kpis.active_warning_count ?? 0) > 0 ? "danger" : "neutral"}
+        />
       </div>
 
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+      <div className="grid gap-4 2xl:grid-cols-[1.05fr_0.95fr_0.8fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>资料完整性</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <RatioBar {...completeness} />
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Badge tone="success">齐全 {completeness.complete}</Badge>
+              <Badge tone="warning">核查中 {completeness.checking}</Badge>
+              <Badge tone="danger">不全 {completeness.incomplete}</Badge>
+            </div>
+            <div className="grid gap-3">
+              <CountStrip label="中心级资料" {...stageFiles} />
+              <CountStrip label="受试者资料" {...subjects} />
+              <CountStrip label="必备图像资料" {...imageData.required} />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>图像数据覆盖</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <ImageCoverageRow label="原始图像 raw" metric={imageData.raw} required />
+            <ImageCoverageRow label="电子报告 report" metric={imageData.report} required />
+            <ImageCoverageRow label="增强图像 enhanced" metric={imageData.enhanced} />
+            <div className="rounded-md bg-slate-50 p-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-600">必备缺口</span>
+                <Badge tone={imageData.required.incomplete > 0 ? "danger" : "success"}>
+                  {imageData.required.incomplete}
+                </Badge>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>审核风险</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {(["approved", "pending", "rejected", "unreviewed"] as const).map((key) => (
+              <div
+                key={key}
+                className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2 text-sm"
+              >
+                <span className="text-slate-600">{statusLabel(key)}</span>
+                <Badge tone={statusTone(key)}>{reviews[key]}</Badge>
+              </div>
+            ))}
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-800">
+                <ShieldAlert className="mb-2 size-4" aria-hidden="true" />
+                <div className="text-2xl font-semibold text-slate-950">{reviews.pending}</div>
+                <div className="text-xs">待审核</div>
+              </div>
+              <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-rose-800">
+                <AlertTriangle className="mb-2 size-4" aria-hidden="true" />
+                <div className="text-2xl font-semibold text-slate-950">{reviews.rejected}</div>
+                <div className="text-xs">已驳回</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>中心状态排行</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {overview && overview.centers.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-left text-sm">
+                  <thead className="border-b border-slate-200 text-xs text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">项目</th>
+                      <th className="px-3 py-2 font-medium">中心</th>
+                      <th className="px-3 py-2 font-medium">受试者</th>
+                      <th className="px-3 py-2 font-medium">完成率</th>
+                      <th className="px-3 py-2 font-medium">图像必备</th>
+                      <th className="px-3 py-2 font-medium">完整性</th>
+                      <th className="px-3 py-2 font-medium">待处理</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {overview.centers.slice(0, 12).map((center) => (
+                      <tr key={center.center_id}>
+                        <td className="px-3 py-3 text-slate-600">{center.project_name}</td>
+                        <td className="px-3 py-3 font-medium text-slate-900">{center.center_name}</td>
+                        <td className="px-3 py-3 text-slate-600">{center.completed_subject_count}/{center.subject_count}</td>
+                        <td className="px-3 py-3 text-slate-600">{pct(center.completion_rate)}</td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {pct(center.image_required_coverage_rate)}
+                        </td>
+                        <td className="px-3 py-3">
+                          <Badge tone={statusTone(center.completeness_status)}>
+                            {statusLabel(center.completeness_status)}
+                          </Badge>
+                        </td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {center.pending_review_count + center.rejected_review_count}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState label="当前范围暂无中心数据" />
+            )}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>完成趋势</CardTitle>
           </CardHeader>
           <CardContent>
-            <TrendChart trend={trend} />
+            {overview && overview.trends.length > 0 ? (
+              <div className="space-y-3">
+                {overview.trends.slice(-8).map((point) => (
+                  <div key={point.period} className="grid grid-cols-[88px_1fr_36px] items-center gap-3 text-sm">
+                    <span className="text-xs text-slate-500">{point.period}</span>
+                    <div className="h-3 rounded-full bg-slate-100">
+                      <div
+                        className="h-3 rounded-full bg-teal-500"
+                        style={{ width: `${(point.completed_count / trendMax) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-right font-medium text-slate-900">{point.completed_count}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyState label="暂无完成趋势数据" />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>预警与近期事项</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {overview && overview.warnings.length > 0 ? (
+              <div className="divide-y divide-slate-100">
+                {overview.warnings.slice(0, 8).map((warning) => (
+                  <div key={`${warning.source}-${warning.project_id}-${warning.id}`} className="grid gap-2 py-3 text-sm sm:grid-cols-[80px_1fr_104px] sm:items-center">
+                    <Badge tone={warning.warning_level === "overdue" ? "danger" : "warning"}>
+                      {warning.warning_level === "overdue" ? "预警" : "临近"}
+                    </Badge>
+                    <div>
+                      <div className="font-medium text-slate-900">{warning.title}</div>
+                      <div className="text-xs text-slate-500">
+                        {warning.project_name}{warning.center_name ? ` / ${warning.center_name}` : ""}
+                      </div>
+                    </div>
+                    <span className="text-slate-600">{warning.planned_date}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyState label="当前范围暂无逾期或临近事项" />
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>审核状态分布</CardTitle>
+            <CardTitle>手工补充数据摘要</CardTitle>
           </CardHeader>
-          <CardContent>
-            <ReviewChart reviewStatus={reviewStatus} />
+          <CardContent className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <KpiCard
+                label="合同例数"
+                value={overview?.enrollment.contract_count ?? 0}
+                hint="来自入组计划维护"
+                icon={CheckCircle2}
+              />
+              <KpiCard
+                label="临床事件"
+                value={overview?.manual_supplements.clinical_event_count ?? 0}
+                hint="来自事件维护"
+                icon={Activity}
+              />
+              <KpiCard
+                label="器械问题"
+                value={overview?.manual_supplements.device_issue_count ?? 0}
+                hint="来自器械问题维护"
+                icon={Layers3}
+              />
+            </div>
           </CardContent>
         </Card>
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle>资料完整性分布</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <CompletenessChart completeness={completeness} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>各中心完成情况</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <CenterTable centers={centers} />
-          </CardContent>
-        </Card>
-      </section>
+      </div>
 
       {loading && <p className="text-sm text-slate-500">正在加载</p>}
     </div>

@@ -33,11 +33,14 @@ from app.core.files import (
     FILE_CATEGORIES,
     StoredUpload,
     ensure_relative_path,
-    is_preview_supported,
+    normalize_mime_type,
+    preview_media_type,
     safe_path_part,
 )
 from app.models import (
     Center,
+    ClinicalSsuProgress,
+    DocumentExtractedField,
     FileAsset,
     FileVersion,
     Project,
@@ -47,18 +50,28 @@ from app.models import (
     SubjectItem,
 )
 from app.schemas import FileRead, FileVersionRead
+from app.schemas.document_field import DocumentExtractedFieldRead, DocumentExtractedFieldUpdate
 from app.services.audit import record_operation
 from app.services.clinical_status import recalculate_subject_status, reset_stage_file_status
+from app.services.document_fields import (
+    analyze_file_version_fields,
+    latest_file_version,
+    sync_ssu_progress_after_fields,
+    sync_subject_item_after_fields,
+    update_field,
+)
 
 router = APIRouter()
 ModelT = TypeVar(
     "ModelT",
     FileAsset,
     FileVersion,
+    DocumentExtractedField,
     Project,
     Center,
     Stage,
     StageFile,
+    ClinicalSsuProgress,
     Subject,
     SubjectItem,
 )
@@ -96,11 +109,20 @@ def resolve_binding(
     access: AccessContext,
     stage_file_id: int | None,
     subject_item_id: int | None,
-) -> dict[str, int | None | Project | Center | Stage | StageFile | Subject | SubjectItem]:
-    if bool(stage_file_id) == bool(subject_item_id):
+    ssu_progress_id: int | None = None,
+) -> dict[
+    str,
+    int | None | Project | Center | Stage | StageFile | ClinicalSsuProgress | Subject | SubjectItem,
+]:
+    binding_count = sum(
+        1
+        for value in (stage_file_id, subject_item_id, ssu_progress_id)
+        if value is not None
+    )
+    if binding_count != 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="stage_file_id and subject_item_id are mutually exclusive and one is required",
+            detail="stage_file_id, subject_item_id and ssu_progress_id are mutually exclusive and one is required",
         )
 
     if stage_file_id is not None:
@@ -120,6 +142,29 @@ def resolve_binding(
             "center_id": center.id,
             "stage_id": stage.id,
             "stage_file_id": stage_file.id,
+            "ssu_progress_id": None,
+            "subject_id": None,
+            "subject_item_id": None,
+        }
+
+    if ssu_progress_id is not None:
+        ssu_progress = get_or_404(db, ClinicalSsuProgress, ssu_progress_id, "SSU progress")
+        ensure_project_file_scope(access, ssu_progress.project_id, ssu_progress.center_id)
+        project = get_or_404(db, Project, ssu_progress.project_id, "project")
+        center = get_or_404(db, Center, ssu_progress.center_id, "center")
+        return {
+            "project": project,
+            "center": center,
+            "stage": None,
+            "stage_file": None,
+            "ssu_progress": ssu_progress,
+            "subject": None,
+            "subject_item": None,
+            "project_id": project.id,
+            "center_id": center.id,
+            "stage_id": None,
+            "stage_file_id": None,
+            "ssu_progress_id": ssu_progress.id,
             "subject_id": None,
             "subject_item_id": None,
         }
@@ -134,19 +179,24 @@ def resolve_binding(
         "center": center,
         "stage": None,
         "stage_file": None,
+        "ssu_progress": None,
         "subject": subject,
         "subject_item": subject_item,
         "project_id": project.id,
         "center_id": center.id,
         "stage_id": None,
         "stage_file_id": None,
+        "ssu_progress_id": None,
         "subject_id": subject.id,
         "subject_item_id": subject_item.id,
     }
 
 
 def relative_directory(
-    binding: dict[str, int | None | Project | Center | Stage | StageFile | Subject | SubjectItem],
+    binding: dict[
+        str,
+        int | None | Project | Center | Stage | StageFile | ClinicalSsuProgress | Subject | SubjectItem,
+    ],
     file_category: str,
     version: int,
 ) -> Path:
@@ -172,6 +222,16 @@ def relative_directory(
             / "stage_files"
             / safe_path_part(stage.code)
             / str(stage_file.id)
+            / f"v{version}"
+        )
+
+    ssu_progress = binding.get("ssu_progress")
+    if isinstance(ssu_progress, ClinicalSsuProgress):
+        return (
+            base
+            / "ssu_progress"
+            / safe_path_part(ssu_progress.stage_code)
+            / str(ssu_progress.id)
             / f"v{version}"
         )
 
@@ -221,10 +281,9 @@ def write_upload(upload_file: UploadFile, target_dir: Path) -> StoredUpload:
     finally:
         upload_file.file.close()
 
-    mime_type = (
-        upload_file.content_type
-        or mimetypes.guess_type(original_name)[0]
-        or "application/octet-stream"
+    mime_type = normalize_mime_type(
+        upload_file.content_type or mimetypes.guess_type(original_name)[0],
+        original_name,
     )
     return StoredUpload(
         original_name=original_name,
@@ -239,13 +298,20 @@ def write_upload(upload_file: UploadFile, target_dir: Path) -> StoredUpload:
 
 def mark_binding_file_changed(
     db: Session,
-    binding: dict[str, int | None | Project | Center | Stage | StageFile | Subject | SubjectItem],
+    binding: dict[
+        str,
+        int | None | Project | Center | Stage | StageFile | ClinicalSsuProgress | Subject | SubjectItem,
+    ],
     upload_status: str,
 ) -> None:
     stage_file = binding["stage_file"]
     if isinstance(stage_file, StageFile):
         stage_file.upload_status = upload_status
         stage_file.review_status = DEFAULT_REVIEW_STATUS
+        stage_file.not_applicable = False
+        stage_file.not_applicable_reason = None
+        stage_file.not_applicable_by = None
+        stage_file.not_applicable_at = None
         return
 
     subject_item = binding["subject_item"]
@@ -254,6 +320,17 @@ def mark_binding_file_changed(
         subject_item.upload_status = upload_status
         subject_item.review_status = DEFAULT_REVIEW_STATUS
         recalculate_subject_status(db, subject)
+
+
+def ensure_ssu_pdf_upload(binding: dict[str, object], upload_file: UploadFile) -> None:
+    if not isinstance(binding.get("ssu_progress"), ClinicalSsuProgress):
+        return
+    original_name = Path(upload_file.filename or "").name
+    if Path(original_name).suffix.lower() != ".pdf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSU files only support PDF uploads",
+        )
 
 
 def has_remaining_bound_files(db: Session, file_asset: FileAsset) -> bool:
@@ -325,10 +402,22 @@ def list_files(
     center_id: int | None = None,
     subject_id: int | None = None,
     stage_file_id: int | None = None,
+    ssu_progress_id: int | None = None,
     subject_item_id: int | None = None,
     file_category: str | None = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
 ) -> list[FileAsset]:
+    binding_count = sum(
+        1
+        for value in (stage_file_id, subject_item_id, ssu_progress_id)
+        if value is not None
+    )
+    if binding_count > 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="stage_file_id, subject_item_id and ssu_progress_id are mutually exclusive",
+        )
+
     statement = select(FileAsset).order_by(FileAsset.uploaded_at.desc(), FileAsset.id.desc())
     if not access.is_admin:
         conditions = []
@@ -350,6 +439,8 @@ def list_files(
         statement = statement.where(FileAsset.subject_id == subject_id)
     if stage_file_id is not None:
         statement = statement.where(FileAsset.stage_file_id == stage_file_id)
+    if ssu_progress_id is not None:
+        statement = statement.where(FileAsset.ssu_progress_id == ssu_progress_id)
     if subject_item_id is not None:
         statement = statement.where(FileAsset.subject_item_id == subject_item_id)
     if file_category is not None:
@@ -367,11 +458,18 @@ def upload_file(
     file: Annotated[UploadFile, File()],
     file_category: Annotated[str, Form()],
     stage_file_id: Annotated[int | None, Form()] = None,
+    ssu_progress_id: Annotated[int | None, Form()] = None,
     subject_item_id: Annotated[int | None, Form()] = None,
     change_note: Annotated[str | None, Form()] = None,
 ) -> FileAsset:
     category = ensure_category(file_category)
-    binding = resolve_binding(db, access, stage_file_id, subject_item_id)
+    binding = resolve_binding(db, access, stage_file_id, subject_item_id, ssu_progress_id)
+    if isinstance(binding.get("ssu_progress"), ClinicalSsuProgress) and category != "ssu_document":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSU files must use ssu_document category",
+        )
+    ensure_ssu_pdf_upload(binding, file)
     stored = write_upload(file, relative_directory(binding, category, version=1))
     file_asset = FileAsset(
         file_id=str(uuid4()),
@@ -390,6 +488,9 @@ def upload_file(
         stage_file_id=(
             binding["stage_file_id"] if isinstance(binding["stage_file_id"], int) else None
         ),
+        ssu_progress_id=(
+            binding["ssu_progress_id"] if isinstance(binding["ssu_progress_id"], int) else None
+        ),
         subject_item_id=(
             binding["subject_item_id"] if isinstance(binding["subject_item_id"], int) else None
         ),
@@ -401,7 +502,7 @@ def upload_file(
     db.add(file_asset)
     db.flush()
     db.add(
-        FileVersion(
+        file_version := FileVersion(
             file_id=file_asset.id,
             version=1,
             storage_path=stored.storage_path,
@@ -415,6 +516,11 @@ def upload_file(
         )
     )
     mark_binding_file_changed(db, binding, UPLOAD_UPLOADED)
+    fields = analyze_file_version_fields(db, file_asset, file_version)
+    sync_subject_item_after_fields(
+        db, file_asset, user_id=access.user.id, file_version=file_version
+    )
+    sync_ssu_progress_after_fields(db, file_asset, file_version=file_version, fields=fields)
     record_operation(
         db,
         action="file.upload",
@@ -429,6 +535,7 @@ def upload_file(
             "file_category": file_asset.file_category,
             "file_size": file_asset.file_size,
             "stage_file_id": file_asset.stage_file_id,
+            "ssu_progress_id": file_asset.ssu_progress_id,
             "subject_item_id": file_asset.subject_item_id,
         },
     )
@@ -494,7 +601,8 @@ def preview_file(
     file_asset = get_or_404(db, FileAsset, file_id, "file")
     ensure_file_scope(access, file_asset)
     file_version = resolve_version_path(db, file_asset, version)
-    if not is_preview_supported(file_version.mime_type):
+    media_type = preview_media_type(file_version.mime_type, file_version.original_name)
+    if media_type is None:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="preview unsupported",
@@ -507,7 +615,7 @@ def preview_file(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file not found")
     return FileResponse(
         path,
-        media_type=file_version.mime_type,
+        media_type=media_type,
         filename=file_version.original_name,
         content_disposition_type="inline",
     )
@@ -524,7 +632,14 @@ def replace_file(
 ) -> FileAsset:
     file_asset = get_or_404(db, FileAsset, file_id, "file")
     ensure_file_scope(access, file_asset)
-    binding = resolve_binding(db, access, file_asset.stage_file_id, file_asset.subject_item_id)
+    binding = resolve_binding(
+        db,
+        access,
+        file_asset.stage_file_id,
+        file_asset.subject_item_id,
+        file_asset.ssu_progress_id,
+    )
+    ensure_ssu_pdf_upload(binding, file)
     next_version = file_asset.version + 1
     stored = write_upload(file, relative_directory(binding, file_asset.file_category, next_version))
     file_asset.original_name = stored.original_name
@@ -538,7 +653,7 @@ def replace_file(
     file_asset.uploaded_by = access.user.id
     file_asset.status = "active"
     db.add(
-        FileVersion(
+        file_version := FileVersion(
             file_id=file_asset.id,
             version=next_version,
             storage_path=stored.storage_path,
@@ -552,6 +667,11 @@ def replace_file(
         )
     )
     mark_binding_file_changed(db, binding, UPLOAD_REPLACED)
+    fields = analyze_file_version_fields(db, file_asset, file_version)
+    sync_subject_item_after_fields(
+        db, file_asset, user_id=access.user.id, file_version=file_version
+    )
+    sync_ssu_progress_after_fields(db, file_asset, file_version=file_version, fields=fields)
     record_operation(
         db,
         action="file.replace",
@@ -588,6 +708,101 @@ def list_file_versions(
             .order_by(FileVersion.version)
         )
     )
+
+
+@router.get(
+    "/files/{file_id}/extracted-fields",
+    response_model=list[DocumentExtractedFieldRead],
+)
+def list_file_extracted_fields(
+    file_id: int,
+    db: DBSession,
+    access: FileReadAccess,
+    version: int | None = None,
+) -> list[DocumentExtractedField]:
+    file_asset = get_or_404(db, FileAsset, file_id, "file")
+    ensure_file_scope(access, file_asset)
+    file_version = latest_file_version(db, file_asset, version)
+    fields = analyze_file_version_fields(db, file_asset, file_version)
+    db.commit()
+    return fields
+
+
+@router.post(
+    "/files/{file_id}/extracted-fields/analyze",
+    response_model=list[DocumentExtractedFieldRead],
+)
+def analyze_file_extracted_fields(
+    file_id: int,
+    db: DBSession,
+    access: FileWriteAccess,
+    request: Request,
+    version: int | None = None,
+    force: bool = False,
+) -> list[DocumentExtractedField]:
+    file_asset = get_or_404(db, FileAsset, file_id, "file")
+    ensure_file_scope(access, file_asset)
+    file_version = latest_file_version(db, file_asset, version)
+    fields = analyze_file_version_fields(db, file_asset, file_version, force=force)
+    sync_subject_item_after_fields(db, file_asset, user_id=access.user.id)
+    sync_ssu_progress_after_fields(db, file_asset, file_version=file_version, fields=fields)
+    record_operation(
+        db,
+        action="file.extracted_fields_analyze",
+        request=request,
+        access=access,
+        target_type="file",
+        target_id=file_asset.id,
+        project_id=file_asset.project_id,
+        center_id=file_asset.center_id,
+        detail={"version": file_version.version, "field_count": len(fields), "force": force},
+    )
+    db.commit()
+    return fields
+
+
+@router.patch(
+    "/files/{file_id}/extracted-fields/{field_id}",
+    response_model=DocumentExtractedFieldRead,
+)
+def update_file_extracted_field(
+    file_id: int,
+    field_id: int,
+    payload: DocumentExtractedFieldUpdate,
+    db: DBSession,
+    access: FileWriteAccess,
+    request: Request,
+) -> DocumentExtractedField:
+    file_asset = get_or_404(db, FileAsset, file_id, "file")
+    ensure_file_scope(access, file_asset)
+    field = get_or_404(db, DocumentExtractedField, field_id, "extracted field")
+    version_ids = {version.id for version in file_asset.versions}
+    if field.file_version_id not in version_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="extracted field not found")
+    update_field(
+        db,
+        field,
+        raw_value=payload.raw_value,
+        normalized_value=payload.normalized_value,
+        status_value=payload.status,
+        user_id=access.user.id,
+    )
+    sync_subject_item_after_fields(db, file_asset, user_id=access.user.id)
+    sync_ssu_progress_after_fields(db, file_asset)
+    record_operation(
+        db,
+        action="file.extracted_field_update",
+        request=request,
+        access=access,
+        target_type="document_extracted_field",
+        target_id=field.id,
+        project_id=file_asset.project_id,
+        center_id=file_asset.center_id,
+        detail={"file_id": file_asset.id, "field_key": field.field_key, "status": field.status},
+    )
+    db.commit()
+    db.refresh(field)
+    return field
 
 
 @router.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)

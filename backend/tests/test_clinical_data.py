@@ -1,6 +1,23 @@
+from collections.abc import Generator
+from contextlib import contextmanager
+
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.database import get_db
+from app.models import Subject
+
+
+@contextmanager
+def db_session(client: TestClient) -> Generator[Session, None, None]:
+    override = client.app.dependency_overrides[get_db]
+    session_generator = override()
+    db = next(session_generator)
+    try:
+        yield db
+    finally:
+        session_generator.close()
 
 
 def login_headers(client: TestClient, username: str, password: str) -> dict[str, str]:
@@ -109,6 +126,7 @@ def create_subject(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": screening_no,
+            "subject_arm": "experimental",
             "gender": "女",
             "age": 42,
             "enrolled_at": "2026-05-04",
@@ -117,7 +135,6 @@ def create_subject(
             "visit2_date": "2026-05-06",
             "visit3_date": "2026-05-07",
             "visit4_date": "2026-05-08",
-            "visit5_date": "2026-05-09",
             "review_status": "unreviewed",
             "data_status": "incomplete",
         },
@@ -129,7 +146,10 @@ def create_subject(
 def test_clinical_dataset_flow_materializes_files_and_subject_items(
     client: TestClient,
     admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path,
 ) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
     assert client.get("/api/subjects").status_code == 401
 
     project_id = create_project(client, admin_headers, "P3 项目", "P3_PROJECT")
@@ -159,28 +179,115 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
         headers=admin_headers,
     )
     assert first_stage_files.status_code == 200
-    assert [item["file_name"] for item in first_stage_files.json()] == ["伦理批件"]
+    assert len(first_stage_files.json()) == 27
+    assert "伦理批件" in [item["file_name"] for item in first_stage_files.json()]
+    optional_startup_file = next(
+        item
+        for item in first_stage_files.json()
+        if item["file_type"] == "STARTUP_005_RECRUITMENT_DOCUMENTS"
+    )
+    assert optional_startup_file["required"] is False
+    assert optional_startup_file["not_applicable"] is False
+    assert optional_startup_file["completeness_status"] == "incomplete"
+
+    required_startup_file = next(
+        item for item in first_stage_files.json() if item["file_name"] == "伦理批件"
+    )
+    required_applicability = client.patch(
+        f"/api/stage-files/{required_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": True, "reason": "不适用"},
+    )
+    assert required_applicability.status_code == 400
+
+    mark_not_applicable = client.patch(
+        f"/api/stage-files/{optional_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": True, "reason": "本中心未招募宣传"},
+    )
+    assert mark_not_applicable.status_code == 200
+    assert mark_not_applicable.json()["not_applicable"] is True
+    assert mark_not_applicable.json()["not_applicable_reason"] == "本中心未招募宣传"
+    assert mark_not_applicable.json()["not_applicable_by_name"]
+    assert mark_not_applicable.json()["completeness_status"] == "complete"
+
+    clear_not_applicable = client.patch(
+        f"/api/stage-files/{optional_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": False},
+    )
+    assert clear_not_applicable.status_code == 200
+    assert clear_not_applicable.json()["not_applicable"] is False
+    assert clear_not_applicable.json()["not_applicable_reason"] is None
+    assert clear_not_applicable.json()["completeness_status"] == "incomplete"
+
+    client.patch(
+        f"/api/stage-files/{optional_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": True, "reason": "上传后应自动清除"},
+    )
+    optional_upload = client.post(
+        "/api/files/upload",
+        headers=admin_headers,
+        data={"file_category": "clinical_document", "stage_file_id": str(optional_startup_file["id"])},
+        files={"file": ("optional.pdf", b"%PDF-optional", "application/pdf")},
+    )
+    assert optional_upload.status_code == 201
+    uploaded_optional = client.get(
+        f"/api/stage-files?project_id={project_id}&center_id={center_id}&stage_id={startup_stage_id}",
+        headers=admin_headers,
+    )
+    uploaded_optional_file = next(
+        item
+        for item in uploaded_optional.json()
+        if item["file_type"] == "STARTUP_005_RECRUITMENT_DOCUMENTS"
+    )
+    assert uploaded_optional_file["not_applicable"] is False
+    assert uploaded_optional_file["not_applicable_reason"] is None
+    assert uploaded_optional_file["completeness_status"] == "checking"
+    uploaded_optional_applicability = client.patch(
+        f"/api/stage-files/{optional_startup_file['id']}/applicability",
+        headers=admin_headers,
+        json={"not_applicable": True, "reason": "已有文件"},
+    )
+    assert uploaded_optional_applicability.status_code == 400
 
     second_stage_files = client.get(
         f"/api/stage-files?project_id={project_id}&center_id={center_id}&stage_id={startup_stage_id}",
         headers=admin_headers,
     )
     assert second_stage_files.status_code == 200
+    assert len(second_stage_files.json()) == 27
     assert [item["id"] for item in second_stage_files.json()] == [
         item["id"] for item in first_stage_files.json()
     ]
 
     subject = create_subject(client, admin_headers, project_id, center_id, "P3-S001")
+    assert subject["subject_arm"] == "experimental"
     assert subject["informed_at"].startswith("2026-05-04T09:30")
-    assert subject["visit5_date"] == "2026-05-09"
+    assert subject["visit4_date"] == "2026-05-08"
     update_subject = client.put(
         f"/api/subjects/{subject['id']}",
         headers=admin_headers,
-        json={"informed_at": "2026-05-04T10:45:00", "visit3_date": "2026-05-10"},
+        json={
+            "subject_arm": "control",
+            "informed_at": "2026-05-04T10:45:00",
+            "visit3_date": "2026-05-10",
+            "review_status": "rejected",
+        },
     )
     assert update_subject.status_code == 200
+    assert update_subject.json()["subject_arm"] == "control"
     assert update_subject.json()["informed_at"].startswith("2026-05-04T10:45")
     assert update_subject.json()["visit3_date"] == "2026-05-10"
+    with db_session(client) as db:
+        db_subject = db.get(Subject, subject["id"])
+        assert db_subject is not None
+        db_subject.subject_arm = None
+        db.commit()
+    legacy_subject = client.get(f"/api/subjects/{subject['id']}", headers=admin_headers)
+    assert legacy_subject.status_code == 200
+    assert legacy_subject.json()["subject_arm"] is None
     duplicate = client.post(
         "/api/subjects",
         headers=admin_headers,
@@ -188,6 +295,7 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": "P3-S001",
+            "subject_arm": "experimental",
         },
     )
     assert duplicate.status_code == 409
@@ -195,23 +303,22 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
     sections = client.get(f"/api/subjects/{subject['id']}/sections", headers=admin_headers)
     assert sections.status_code == 200
     assert [section["name"] for section in sections.json()] == [
-        "筛选阶段",
-        "入组与检查准备阶段",
-        "检查执行阶段",
-        "检查后早期随访阶段",
-        "异常或延迟随访阶段",
-        "试验完成阶段",
+        "V1筛选访视阶段",
+        "V2随访访视",
+        "V3随访访视",
+        "V4非预期访视（若有）",
     ]
 
     items = client.get(f"/api/subjects/{subject['id']}/items", headers=admin_headers)
     assert items.status_code == 200
-    assert len(items.json()) == 19
+    assert len(items.json()) == 22
+    assert "V3_CONTROL_REPORT" in {item["item_code"] for item in items.json()}
 
     item_id = items.json()[0]["id"]
     update_item = client.put(
         f"/api/subject-items/{item_id}",
         headers=admin_headers,
-        json={"upload_status": "uploaded", "review_status": "approved", "remark": "已核对"},
+        json={"upload_status": "uploaded", "review_status": "rejected", "remark": "已核对"},
     )
     assert update_item.status_code == 200
     assert update_item.json()["remark"] == "已核对"
@@ -221,11 +328,37 @@ def test_clinical_dataset_flow_materializes_files_and_subject_items(
         headers=admin_headers,
     )
     assert dataset.status_code == 200
-    assert dataset.json()["stage_file_count"] == 2
-    assert dataset.json()["subject_count"] == 1
-    dataset_subject = dataset.json()["subjects"][0]
+    dataset_body = dataset.json()
+    assert dataset_body["stage_file_count"] == 57
+    assert len(dataset_body["ssu_progress"]) == 5
+    assert len(dataset_body["trial_file_groups"]) == 1
+    assert len(dataset_body["trial_files"]) == 19
+    assert dataset_body["subject_count"] == 1
+    assert dataset_body["summary"]["stage_files"] == {
+        "complete": 0,
+        "checking": 1,
+        "incomplete": 56,
+    }
+    assert dataset_body["summary"]["subjects"] == {
+        "complete": 0,
+        "checking": 0,
+        "incomplete": 1,
+    }
+    assert dataset_body["summary"]["reviews"]["rejected"] == 1
+    assert dataset_body["summary"]["ssu"] == {
+        "total": 5,
+        "completed": 0,
+        "blocked": 0,
+        "active": 0,
+    }
+    assert dataset_body["summary"]["optional_files"]["uploaded"] == 1
+    assert dataset_body["summary"]["optional_files"]["not_applicable"] == 0
+    assert any(group["total"] > 0 for group in dataset_body["summary"]["stage_groups"])
+    dataset_subject = dataset_body["subjects"][0]
+    assert dataset_subject["subject_arm"] is None
     assert dataset_subject["informed_at"].startswith("2026-05-04T10:45")
     assert dataset_subject["visit3_date"] == "2026-05-10"
+    assert dataset_subject["review_status"] == "rejected"
 
 
 def test_clinical_data_scope_and_write_permission(
@@ -261,6 +394,25 @@ def test_clinical_data_scope_and_write_permission(
     assert subjects.status_code == 200
     assert [subject["id"] for subject in subjects.json()] == [subject_a["id"]]
 
+    dataset_a = client.get(
+        f"/api/clinical-datasets?project_id={project_a_id}&center_id={center_a_id}",
+        headers=admin_headers,
+    )
+    assert dataset_a.status_code == 200
+    ssu_id = dataset_a.json()["ssu_progress"][0]["id"]
+    readonly_ssu = client.get(
+        f"/api/clinical-datasets/ssu-progress?project_id={project_a_id}&center_id={center_a_id}",
+        headers=readonly_headers,
+    )
+    assert readonly_ssu.status_code == 200
+    assert len(readonly_ssu.json()) == 5
+    denied_ssu_write = client.patch(
+        f"/api/clinical-datasets/ssu-progress/{ssu_id}",
+        headers=readonly_headers,
+        json={"status": "completed"},
+    )
+    assert denied_ssu_write.status_code == 403
+
     denied_detail = client.get(f"/api/subjects/{subject_b['id']}", headers=readonly_headers)
     assert denied_detail.status_code == 403
 
@@ -271,6 +423,7 @@ def test_clinical_data_scope_and_write_permission(
             "project_id": project_a_id,
             "center_id": center_a_id,
             "screening_no": "A-S002",
+            "subject_arm": "experimental",
         },
     )
     assert denied_write.status_code == 403

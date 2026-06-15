@@ -1,8 +1,12 @@
 import { http } from "@/services/http";
+import type { DocumentExtractedField, DocumentExtractedFieldUpdate } from "@/types/document-fields";
 import type {
   PdfPacket,
+  PdfPacketAnalysisReport,
   PdfPacketSegment,
+  PdfPacketSegmentMergePayload,
   PdfPacketSegmentPayload,
+  PdfPacketSegmentSplitPayload,
   PdfPacketSegmentUploadResult,
 } from "@/types/pdf-packets";
 
@@ -41,6 +45,17 @@ export const pdfPacketsApi = {
     });
     return response.data;
   },
+  reanalyzePacket: async (id: number, force = false) => {
+    const response = await http.post<PdfPacket>(
+      `/pdf-packets/${id}/reanalyze`,
+      undefined,
+      {
+        params: { force },
+        timeout: 1800000,
+      },
+    );
+    return response.data;
+  },
   deletePacket: async (id: number) => {
     await http.delete(`/pdf-packets/${id}`);
   },
@@ -55,6 +70,41 @@ export const pdfPacketsApi = {
   },
   updateSegment: async (id: number, payload: PdfPacketSegmentPayload) => {
     const response = await http.put<PdfPacketSegment>(`/pdf-packet-segments/${id}`, payload);
+    return response.data;
+  },
+  splitSegment: async (
+    packetId: number,
+    segmentId: number,
+    payload: PdfPacketSegmentSplitPayload,
+  ) => {
+    const response = await http.post<PdfPacketSegment[]>(
+      `/pdf-packets/${packetId}/segments/${segmentId}/split`,
+      payload,
+    );
+    return response.data;
+  },
+  mergeSegments: async (packetId: number, payload: PdfPacketSegmentMergePayload) => {
+    const response = await http.post<PdfPacketSegment>(
+      `/pdf-packets/${packetId}/segments/merge`,
+      payload,
+    );
+    return response.data;
+  },
+  confirmSegment: async (
+    packetId: number,
+    segmentId: number,
+    payload: { subject_item_id?: number | null; detected_name?: string | null },
+  ) => {
+    const response = await http.post<PdfPacketSegment>(
+      `/pdf-packets/${packetId}/segments/${segmentId}/confirm`,
+      payload,
+    );
+    return response.data;
+  },
+  unlockSegment: async (packetId: number, segmentId: number) => {
+    const response = await http.post<PdfPacketSegment>(
+      `/pdf-packets/${packetId}/segments/${segmentId}/unlock`,
+    );
     return response.data;
   },
   deleteSegment: async (id: number) => {
@@ -73,4 +123,25 @@ export const pdfPacketsApi = {
     });
     return response.data;
   },
+  previewSegment: async (id: number) => {
+    const response = await http.get<Blob>(`/pdf-packet-segments/${id}/preview`, {
+      responseType: "blob",
+    });
+    return response.data;
+  },
+  listSegmentExtractedFields: (id: number) =>
+    read<DocumentExtractedField[]>(`/pdf-packet-segments/${id}/extracted-fields`),
+  updateSegmentExtractedField: async (
+    segmentId: number,
+    fieldId: number,
+    payload: DocumentExtractedFieldUpdate,
+  ) => {
+    const response = await http.patch<DocumentExtractedField>(
+      `/pdf-packet-segments/${segmentId}/extracted-fields/${fieldId}`,
+      payload,
+    );
+    return response.data;
+  },
+  getAnalysisReport: (packetId: number) =>
+    read<PdfPacketAnalysisReport>(`/pdf-packets/${packetId}/analysis-report`),
 };

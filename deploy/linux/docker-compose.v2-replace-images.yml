@@ -1,0 +1,15 @@
+# Use with docker-compose.prod.yml and docker-compose.prod.gpu.yml.
+# This keeps the already healthy GPU OCR image and replaces only V2 app images.
+# Use `up -d --no-build --no-deps backend frontend` for this replace package.
+services:
+  paddle-ocr-api:
+    image: ${PADDLE_OCR_IMAGE:-paddle-ocr-api-gpu:latest}
+    pull_policy: never
+
+  backend:
+    image: clinical-backend:20260513-pdf-preview-fix
+    pull_policy: never
+
+  frontend:
+    image: clinical-frontend:20260513-pdfjs-mjs-fix
+    pull_policy: never

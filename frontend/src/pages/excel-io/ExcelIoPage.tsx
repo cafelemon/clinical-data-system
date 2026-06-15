@@ -1,4 +1,4 @@
-import { Download, FileSpreadsheet, Upload } from "lucide-react";
+import { DatabaseZap, Download, FileSpreadsheet, Upload } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -170,10 +170,12 @@ export function ExcelIoPage() {
   if (!hasAnyExcelPermission) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">导入导出</h1>
-          <p className="mt-1 text-sm text-slate-500">Excel 批量维护</p>
-        </div>
+        <ManagementPageHeader
+          title="导入导出"
+          description="Excel 批量维护"
+          icon={FileSpreadsheet}
+          badge="数据交换"
+        />
         <Card>
           <CardContent className="flex items-center gap-3 py-8 text-sm text-slate-600">
             <FileSpreadsheet className="size-5 text-slate-400" aria-hidden="true" />
@@ -186,27 +188,35 @@ export function ExcelIoPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">导入导出</h1>
-          <p className="mt-1 text-sm text-slate-500">Excel 批量维护</p>
-        </div>
-        {canReadExports && (
-          <Field label="项目" className="w-full sm:w-72">
-            <SelectField
-              value={projectId ?? ""}
-              onChange={(event) => setProjectId(Number(event.target.value) || undefined)}
-            >
-              <option value="">选择项目</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </SelectField>
-          </Field>
-        )}
-      </div>
+      <ManagementPageHeader
+        title="数据交换控制台"
+        description="导入模板、批量导入和项目报表导出"
+        icon={DatabaseZap}
+        badge="V3.4.6"
+        actions={
+          canReadExports && (
+            <Field label="项目" className="w-full sm:w-72">
+              <SelectField
+                value={projectId ?? ""}
+                onChange={(event) => setProjectId(Number(event.target.value) || undefined)}
+              >
+                <option value="">选择项目</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </SelectField>
+            </Field>
+          )
+        }
+      />
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <ManagementStatCard label="导入模板" value={visibleImportTargets.length} detail={canReadImports ? "可下载" : "无权限"} icon={FileSpreadsheet} />
+        <ManagementStatCard label="批量导入" value={Object.keys(results).length} detail={canWriteImports ? "已产生结果数" : "无写入权限"} icon={Upload} tone="teal" />
+        <ManagementStatCard label="报表导出" value={exportTargets.length} detail={selectedProjectName || "未选择项目"} icon={Download} tone="slate" />
+      </section>
 
       {message && <Badge tone={message.includes("失败") || message.includes("未通过") ? "danger" : "success"}>{message}</Badge>}
 
@@ -321,3 +331,4 @@ export function ExcelIoPage() {
     </div>
   );
 }
+import { ManagementPageHeader, ManagementStatCard } from "@/components/management/ManagementPage";

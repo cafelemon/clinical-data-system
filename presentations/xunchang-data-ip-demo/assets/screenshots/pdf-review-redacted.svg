@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="810" viewBox="0 0 1440 810" role="img" aria-label="PDF 在线审阅截图占位">
+  <rect width="1440" height="810" fill="#f5f8fb"/>
+  <rect x="40" y="40" width="1360" height="730" rx="10" fill="#ffffff" stroke="#d8e2ee"/>
+  <text x="80" y="98" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="30" font-weight="700" fill="#10233f">PDF 在线审阅工作台</text>
+  <text x="80" y="134" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="18" fill="#64748b">截图占位：请只截工具栏、批注侧栏和页面框架；PDF 正文必须整块打码</text>
+  <rect x="80" y="174" width="880" height="520" rx="8" fill="#e2e8f0"/>
+  <rect x="132" y="220" width="776" height="428" rx="4" fill="#cbd5e1"/>
+  <text x="388" y="444" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="34" font-weight="700" fill="#64748b">PDF 正文区域打码</text>
+  <rect x="990" y="174" width="330" height="520" rx="8" fill="#f8fafc" stroke="#d8e2ee"/>
+  <rect x="1020" y="214" width="220" height="18" rx="9" fill="#94a3b8"/>
+  <rect x="1020" y="268" width="260" height="86" rx="8" fill="#e2e8f0"/>
+  <rect x="1020" y="386" width="260" height="86" rx="8" fill="#e2e8f0"/>
+  <rect x="1020" y="504" width="260" height="86" rx="8" fill="#e2e8f0"/>
+</svg>

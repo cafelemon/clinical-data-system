@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-label="巡常数据驾驶舱脱敏演示视图">
+  <rect width="1440" height="900" fill="#f4f8fb"/>
+  <rect x="0" y="0" width="244" height="900" fill="#10233f"/>
+  <rect x="28" y="28" width="60" height="60" rx="12" fill="#8ec31f"/>
+  <text x="104" y="52" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="24" font-weight="700" fill="#ffffff">巡常</text>
+  <text x="104" y="80" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="14" fill="#b8c6d8">Clinical Data Intelligence</text>
+  <g font-family="Arial,'Microsoft YaHei',sans-serif" font-size="18" fill="#dbe7f6">
+    <rect x="20" y="130" width="204" height="48" rx="8" fill="#1e3a5f"/>
+    <text x="58" y="161">看板</text>
+    <text x="58" y="219">试验数据</text>
+    <text x="58" y="277">图像数据</text>
+    <text x="58" y="335">智能化处理</text>
+    <text x="58" y="393">系统设置</text>
+  </g>
+  <rect x="244" y="0" width="1196" height="88" fill="#ffffff"/>
+  <text x="284" y="54" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="28" font-weight="700" fill="#10233f">V3.4.3 数据驾驶舱</text>
+  <rect x="1128" y="28" width="248" height="34" rx="17" fill="#e9eef5"/>
+  <rect x="1188" y="36" width="134" height="18" rx="9" fill="#cbd5e1"/>
+  <text x="284" y="128" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="18" fill="#64748b">范围筛选、核心 KPI、资料完整性、图像数据覆盖、审核风险与近期预警</text>
+  <g transform="translate(284 160)">
+    <rect width="248" height="132" rx="8" fill="#ffffff" stroke="#d8e2ee"/>
+    <text x="24" y="38" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="17" fill="#64748b">项目数量</text>
+    <text x="24" y="88" font-family="Arial" font-size="44" font-weight="700" fill="#0f172a">--</text>
+    <rect x="156" y="34" width="52" height="52" rx="26" fill="#e7f4d0"/>
+    <path d="M170 60h24M182 48v24" stroke="#5f8f15" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(552 160)">
+    <rect width="248" height="132" rx="8" fill="#ffffff" stroke="#d8e2ee"/>
+    <text x="24" y="38" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="17" fill="#64748b">资料完整率</text>
+    <text x="24" y="88" font-family="Arial" font-size="44" font-weight="700" fill="#0f172a">--%</text>
+    <rect x="156" y="34" width="52" height="52" rx="26" fill="#e7f4d0"/>
+  </g>
+  <g transform="translate(820 160)">
+    <rect width="248" height="132" rx="8" fill="#ffffff" stroke="#d8e2ee"/>
+    <text x="24" y="38" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="17" fill="#64748b">图像覆盖率</text>
+    <text x="24" y="88" font-family="Arial" font-size="44" font-weight="700" fill="#0f172a">--%</text>
+    <rect x="156" y="34" width="52" height="52" rx="26" fill="#dff3f1"/>
+  </g>
+  <g transform="translate(1088 160)">
+    <rect width="248" height="132" rx="8" fill="#ffffff" stroke="#d8e2ee"/>
+    <text x="24" y="38" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="17" fill="#64748b">风险预警</text>
+    <text x="24" y="88" font-family="Arial" font-size="44" font-weight="700" fill="#0f172a">--</text>
+    <rect x="156" y="34" width="52" height="52" rx="26" fill="#fff3d6"/>
+  </g>
+  <g transform="translate(284 328)">
+    <rect width="512" height="250" rx="8" fill="#ffffff" stroke="#d8e2ee"/>
+    <text x="24" y="38" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="20" font-weight="700" fill="#10233f">资料完整性趋势</text>
+    <polyline points="44,198 122,156 200,170 278,112 356,130 434,78" fill="none" stroke="#8ec31f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#e2e8f0">
+      <rect x="42" y="64" width="424" height="2"/>
+      <rect x="42" y="112" width="424" height="2"/>
+      <rect x="42" y="160" width="424" height="2"/>
+      <rect x="42" y="208" width="424" height="2"/>
+    </g>
+  </g>
+  <g transform="translate(824 328)">
+    <rect width="512" height="250" rx="8" fill="#ffffff" stroke="#d8e2ee"/>
+    <text x="24" y="38" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="20" font-weight="700" fill="#10233f">图像与报告覆盖</text>
+    <g font-family="Arial,'Microsoft YaHei',sans-serif" font-size="16" fill="#475569">
+      <text x="24" y="86">原始图像 raw</text><rect x="160" y="70" width="300" height="18" rx="9" fill="#e2e8f0"/><rect x="160" y="70" width="210" height="18" rx="9" fill="#38bdf8"/>
+      <text x="24" y="136">增强图像 enhanced</text><rect x="160" y="120" width="300" height="18" rx="9" fill="#e2e8f0"/><rect x="160" y="120" width="172" height="18" rx="9" fill="#14b8a6"/>
+      <text x="24" y="186">电子报告 report</text><rect x="160" y="170" width="300" height="18" rx="9" fill="#e2e8f0"/><rect x="160" y="170" width="128" height="18" rx="9" fill="#f9c933"/>
+    </g>
+  </g>
+  <g transform="translate(284 614)">
+    <rect width="1052" height="170" rx="8" fill="#ffffff" stroke="#d8e2ee"/>
+    <text x="24" y="40" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="20" font-weight="700" fill="#10233f">近期预警与处理状态</text>
+    <g fill="#cbd5e1">
+      <rect x="24" y="70" width="160" height="20" rx="10"/>
+      <rect x="220" y="70" width="220" height="20" rx="10"/>
+      <rect x="476" y="70" width="168" height="20" rx="10"/>
+      <rect x="680" y="70" width="280" height="20" rx="10"/>
+      <rect x="24" y="112" width="180" height="20" rx="10"/>
+      <rect x="240" y="112" width="200" height="20" rx="10"/>
+      <rect x="476" y="112" width="188" height="20" rx="10"/>
+      <rect x="700" y="112" width="244" height="20" rx="10"/>
+    </g>
+    <rect x="906" y="24" width="110" height="30" rx="15" fill="#fee2e2"/>
+    <text x="929" y="45" font-family="Arial,'Microsoft YaHei',sans-serif" font-size="14" fill="#b91c1c">已脱敏</text>
+  </g>
+</svg>

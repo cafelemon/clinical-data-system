@@ -7,6 +7,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
+from app.core.config import settings
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
@@ -104,6 +106,7 @@ def create_subject(
             "project_id": project_id,
             "center_id": center_id,
             "screening_no": screening_no,
+            "subject_arm": "experimental",
         },
     )
     assert response.status_code == 201
@@ -267,7 +270,10 @@ def test_operation_log_filters_pagination_scope_and_permissions(
 def test_file_review_excel_logs(
     client: TestClient,
     admin_headers: dict[str, str],
+    monkeypatch,
+    tmp_path,
 ) -> None:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
     project_id = create_project(client, admin_headers, "FLOW")
     center_id = create_center(client, admin_headers, project_id, "FLOW")
     stage_id = create_stage_template(client, admin_headers, project_id)

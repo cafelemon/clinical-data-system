@@ -1,4 +1,5 @@
 import { http } from "@/services/http";
+import type { DocumentExtractedField, DocumentExtractedFieldUpdate } from "@/types/document-fields";
 import type { FileQuery, FileRecord, FileVersion } from "@/types/files";
 
 function filenameFromDisposition(disposition: string | undefined, fallback: string) {
@@ -22,6 +23,7 @@ export const filesApi = {
     file: File;
     fileCategory: string;
     stageFileId?: number;
+    ssuProgressId?: number;
     subjectItemId?: number;
     changeNote?: string;
   }) => {
@@ -29,6 +31,7 @@ export const filesApi = {
     formData.append("file", payload.file);
     formData.append("file_category", payload.fileCategory);
     if (payload.stageFileId) formData.append("stage_file_id", String(payload.stageFileId));
+    if (payload.ssuProgressId) formData.append("ssu_progress_id", String(payload.ssuProgressId));
     if (payload.subjectItemId) formData.append("subject_item_id", String(payload.subjectItemId));
     if (payload.changeNote) formData.append("change_note", payload.changeNote);
     const response = await http.post<FileRecord>("/files/upload", formData);
@@ -61,7 +64,29 @@ export const filesApi = {
     const response = await http.get<Blob>(`/files/${id}/preview`, {
       params: { version },
       responseType: "blob",
+      timeout: 600000,
     });
+    return response.data;
+  },
+  listExtractedFields: (id: number, version?: number) =>
+    read<DocumentExtractedField[]>(`/files/${id}/extracted-fields`, { version }),
+  analyzeExtractedFields: async (id: number, version?: number, force = false) => {
+    const response = await http.post<DocumentExtractedField[]>(
+      `/files/${id}/extracted-fields/analyze`,
+      undefined,
+      { params: { version, force } },
+    );
+    return response.data;
+  },
+  updateExtractedField: async (
+    fileId: number,
+    fieldId: number,
+    payload: DocumentExtractedFieldUpdate,
+  ) => {
+    const response = await http.patch<DocumentExtractedField>(
+      `/files/${fileId}/extracted-fields/${fieldId}`,
+      payload,
+    );
     return response.data;
   },
 };

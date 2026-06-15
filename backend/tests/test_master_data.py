@@ -109,9 +109,9 @@ def test_p1_master_data_crud_flow(client: TestClient, admin_headers: dict[str, s
     )
     assert stages_response.status_code == 200
     assert [stage["name"] for stage in stages_response.json()] == [
-        "启动阶段",
+        "试验准备阶段",
         "试验进行阶段",
-        "总结阶段",
+        "试验结束阶段",
     ]
 
     template_response = client.post(
@@ -134,7 +134,7 @@ def test_p1_master_data_crud_flow(client: TestClient, admin_headers: dict[str, s
         headers=admin_headers,
     )
     assert templates_response.status_code == 200
-    assert templates_response.json()[0]["item_name"] == "伦理批件"
+    assert "伦理批件" in {template["item_name"] for template in templates_response.json()}
 
     dictionary_update = client.put(
         f"/api/dictionaries/{dictionary_id}",

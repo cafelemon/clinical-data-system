@@ -19,6 +19,7 @@ class FileRead(BaseModel):
     subject_id: int | None = None
     stage_id: int | None = None
     stage_file_id: int | None = None
+    ssu_progress_id: int | None = None
     subject_item_id: int | None = None
     source_pdf_packet_id: int | None = None
     source_page_start: int | None = None

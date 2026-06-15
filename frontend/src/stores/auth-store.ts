@@ -37,11 +37,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   hasPermission: (permission) => {
     const user = get().user;
-    return Boolean(user?.is_admin || user?.permissions.includes(permission));
+    return Boolean(user?.is_admin || user?.permissions?.includes(permission));
   },
   hasAnyPermission: (permissions) => {
     const user = get().user;
-    return Boolean(user?.is_admin || permissions.some((permission) => user?.permissions.includes(permission)));
+    return Boolean(user?.is_admin || permissions.some((permission) => user?.permissions?.includes(permission)));
   },
 }));
-

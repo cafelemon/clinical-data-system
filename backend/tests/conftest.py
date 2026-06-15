@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +15,8 @@ from app.services.identity_bootstrap import bootstrap_identity
 
 
 @pytest.fixture()
-def client() -> Generator[TestClient, None, None]:
+def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generator[TestClient, None, None]:
+    monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -52,4 +54,3 @@ def admin_headers(client: TestClient) -> dict[str, str]:
     assert response.status_code == 200
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
-

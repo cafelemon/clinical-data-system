@@ -27,6 +27,8 @@ postgres-data/
 file-storage/
 logs/
 backups/
+V3材料/
+/0100*.pdf
 
 # Docker / runtime temporary files
 *.pid
