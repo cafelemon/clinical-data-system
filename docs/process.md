@@ -26,7 +26,7 @@
 - `3.4.0.x`：V3.4，对应图像数据管理、研发副本下载和电子报告上传。
 - `3.4.2.x` 至 `3.4.7.x`：V3.4 UI 与访视路线，对应品牌骨架、驾驶舱、资料中枢、方案解析、后台管理和方案访视生效。
 - `3.5.x.x`：V3.5，对应字段提取、SSU 字段核查、识别准确率和结肠资料包/大图像包支持。
-- `4.x.x.x`：V4，对应服务研发中心算法需求的受试者级字段化 JSON 证据包、图像索引、训练包和算法结果回写。
+- `4.x.x.x`：V4，对应服务研发中心算法需求的临床数据资产化体系、Subject Snapshot、Image Evidence、Snapshot JSON 导出和后续算法/数据集资产扩展。
 
 ### 1.2 内部阶段
 
@@ -50,9 +50,9 @@ V3 早期使用内部阶段号，V3-P0 结束后进入 V3.1：
 | `V3.5.0` 至 `V3.5.3` | `3.5.0.x` 至 `3.5.3.x` | 已完成 | PDF/SSU 字段提取、字段核查、在线预览和进展回写 |
 | `V3.5.4` | `3.5.4.x` | 已完成 | 小肠项目 SSU 与试验过程字段识别准确率优化 |
 | `V3.5.5` | `3.5.5.x` | 当前基线 | 结肠资料包按受试者资料项映射、3GB 图像包上传和字段日期展示归一化 |
-| `V4.0.0` | `4.0.0.x` | 规划基线 | 受试者级字段化 JSON 与算法研发证据包方案、schema、差距和路线 |
+| `V4.0.0` | `4.0.0.x` | 规划基线 | 临床数据资产化架构、Subject Snapshot、Image Evidence、Snapshot JSON 导出和路线 |
 
-当前统一口径：V3.5.5 已进入生产应用基线。V4.0.0 进入规划基线，只定义 subject JSON 证据包方案、schema 和路线，不新增 API、数据库 migration 或前端交互。资料包识别以当前受试者实际资料项为约束；字段提取已落地并持续通过真实样本改进；访视以已应用方案为准，默认访视只作为无方案项目的兜底。
+当前统一口径：V3.5.5 已进入生产应用基线。V4.0.0 进入规划基线，只定义临床数据资产化、Subject Snapshot、Image Evidence 和 Snapshot JSON 导出方案，不新增 API、数据库 migration 或前端交互。资料包识别以当前受试者实际资料项为约束；字段提取已落地并持续通过真实样本改进；访视以已应用方案为准，默认访视只作为无方案项目的兜底。
 
 ## 2. 阶段总览
 
@@ -82,7 +82,7 @@ V3 早期使用内部阶段号，V3-P0 结束后进入 V3.1：
 | `V3.5.3` | 已完成 | SSU PDF 字段识别、字段核查和进展字段自动回写 | 仅覆盖 SSU PDF，不新增 OCR 后端或权限模型 |
 | `V3.5.4` | 已完成 | 小肠项目 SSU 与试验过程字段识别准确率、低置信负例和样本回归优化 | 不更换 OCR 后端，不新增数据库列 |
 | `V3.5.5` | 当前基线 | 结肠资料包按当前受试者资料项映射、图像上传上限提升至 3GB、字段日期时间展示归一化 | 不新增数据库列，不取消增强图像依赖原始图像 |
-| `V4.0.0` | 规划基线 | subject JSON v0 schema、研发证据包定位、现状差距、4.x 路线和验收口径 | 不实现代码，不新增数据库，不改变生产 V3.5.5 基线 |
+| `V4.0.0` | 规划基线 | 资产化定位、Subject Snapshot、Image Evidence、Snapshot JSON 导出、现状差距、4.x 路线和验收口径 | 不实现代码，不新增数据库，不改变生产 V3.5.5 基线 |
 
 ## 3. V1 记录
 
@@ -557,19 +557,19 @@ V3.5.5 的主要内容：
 - 不取消增强图像依赖原始图像的业务限制。
 - 不替换本地 Apple Vision 或生产 PaddleOCR GPU 服务。
 
-### V4.0.0 字段化 JSON 与算法研发证据包基线
+### V4.0.0 临床数据资产化与 Subject Snapshot 基线
 
-V4 大版本定位为服务研发中心算法需求的受试者级结构化证据包。目标是每名受试者最终生成一份完整 subject JSON，算法团队可在 JSON 中定位字段、原始图像、增强图像、电子报告和后续 AI 结果，用于训练、复现和迭代。
+V4 大版本定位为服务研发中心算法需求的临床数据资产化体系。目标不再是单纯生成一份 subject JSON，而是把受试者资料、字段、图像和报告沉淀为可追溯、可复现、可交付的数据资产。JSON 是 Snapshot 的导出形式，不是系统核心资产本身。
 
 V4.0.0 的主要内容：
 
-1. 明确 subject JSON 定位为研发证据包，不是审计全量镜像，也不是只保留训练字段的轻量包。
-2. 定义 subject JSON v0 schema：顶层包含 `schema_version`、`generated_at`、`snapshot_id`、`project`、`center`、`subject`、`clinical_tree`、`fields_index`、`images_index`、`source_documents`、`algorithm_runs`、`quality_summary`。
-3. 明确 JSON 组织方式为“临床树 + 字段索引 + 图像索引 + 算法结果扩展位”：临床树保留访视和资料项上下文，索引层服务算法快速查找。
-4. 明确字段全量导出：`confirmed`、`extracted`、`needs_input`、低置信、人工修改字段均保留，并用状态、置信度和来源证据区分。
-5. 明确图像不内联进 JSON，只记录原 zip、解压目录、逐图相对路径、扩展名、大小和 hash 预留字段。
-6. 明确正式 JSON 未来按不可变快照版本管理，记录 schema、生成时间、来源版本和 hash，保障训练复现。
-7. 明确标识采用业务编码口径：保留项目、中心和筛选号，不导出姓名、身份证等直接身份信息。
+1. 明确 V4 采用 `Asset First`：核心资产围绕 `Project`、`Subject`、`Snapshot`、`Image Evidence`、`ReportImage`、`AlgorithmRun`、`Dataset` 展开。
+2. 明确 V4 采用 `Snapshot First`：正式研发交付必须基于不可变 Snapshot，禁止直接使用实时库状态作为训练或研发交付来源。
+3. 明确 V4 采用 `Subject Oriented`：所有资产最终归属于 Subject，并保留项目、中心、筛选号等业务编码标识，不导出姓名、身份证等直接身份信息。
+4. 明确 V4 采用 `Historical First`：必须兼容 `C10000` 和 `C200CN` 既有资产；允许新数据更丰富，但不要求历史数据补齐到新项目标准。
+5. 定义 Snapshot JSON v0 导出结构：顶层包含 `schema_version`、`generated_at`、`snapshot_id`、`project`、`center`、`subject`、`clinical_tree`、`fields_index`、`images_index`、`source_documents`、`algorithm_runs`、`quality_summary`。
+6. 明确字段全量导出：`confirmed`、`extracted`、`needs_input`、低置信、人工修改字段均保留，并用状态、置信度和来源证据区分。
+7. 明确图像不内联进 JSON，短期只记录原包、解压目录、报告图片、医生标注图、位置首帧图和必要轻量候选索引。
 
 当前数据基础：
 
@@ -580,48 +580,53 @@ V4.0.0 的主要内容：
 
 当前差距：
 
-- 无受试者级 JSON 聚合器。
-- 无 subject JSON schema version 和快照表。
-- 无逐图文件索引表，当前只有 zip 和解压统计。
-- 无算法运行结果模型，增强图像回存只能落在现有 `enhanced` 图像记录。
-- 无训练包导出流程和批量导出策略。
+- 无受试者级 Snapshot 聚合器和 Snapshot JSON 导出器。
+- 无 snapshot schema version 和不可变快照表。
+- 无快照生成前校验机制，资料/影像审核、字段冲突和关键字段确认尚不能作为统一门禁。
+- 无 Image Evidence 资产模型，当前只有 zip 包、解压目录和统计信息。
+- 无 Landmark Image 所需的轻量候选索引，当前无法稳定从报告时间点反查位置首帧。
+- 无算法运行结果模型；病灶资产、训练集导出和算法结果回写不属于 V4.1/V4.2 短期范围。
 
 4.x 路线：
 
-- `V4.0.0`：方案、schema、现状差距、路线和验收口径。
-- `V4.1.x`：subject JSON 生成器、实时预览和单受试者快照导出。
-- `V4.2.x`：逐图清单、训练包目录和批量导出。
-- `V4.3.x`：增强图像回存后刷新 JSON，并沉淀增强图像与原始图像的关联。
-- `V4.4.x`：算法运行结果回写模型，支持 AI 病灶识别、模型版本和结果证据扩展。
+- `V4.0.0`：资产架构、Subject Snapshot、Image Evidence、Snapshot JSON 导出方案、现状差距、路线和验收口径。
+- `V4.1.x`：Subject Snapshot 数据模型、生成前校验、单受试者快照生成、Snapshot JSON 导出和快照历史管理。
+- `V4.2.x`：Image Evidence Index，覆盖原始图像包、解压目录、报告图片、医生标注图、位置首帧图和 Landmark 轻量候选索引。
+- `V4.3.x`：Report-derived Lesion Draft，基于报告结构化信息和医生标注图生成病灶草稿资产。
+- `V4.4.x`：Algorithm Result Asset，接入算法运行结果、模型版本和增强图回写。
+- `V4.5.x`：Dataset Builder，建立研究数据集与训练数据集构建能力。
 
 未来接口草案：
 
 ```text
-GET  /api/subjects/{id}/research-json/preview
-POST /api/subjects/{id}/research-json/snapshots
-GET  /api/subjects/{id}/research-json/snapshots/{snapshot_id}/download
+GET  /api/subjects/{id}/snapshots/preview
+POST /api/subjects/{id}/snapshots
+GET  /api/subjects/{id}/snapshots/{snapshot_id}/json
 ```
 
 未来数据模型草案：
 
-- `subject_json_snapshots`：保存快照版本、schema_version、生成时间、生成者、文件路径、hash 和状态。
-- `subject_image_file_index`：保存解压后的逐图文件清单。
-- `algorithm_runs` / `algorithm_results`：保存模型版本、输入快照、输出增强图或病灶识别结果。
+- `subject_snapshots`：保存快照版本、schema_version、生成时间、生成者、文件路径、hash、状态和锁定信息。
+- `snapshot_quality_checks`：保存快照生成前校验结果，包括资料必传、影像必传、字段冲突、关键字段确认等。
+- `image_evidence_index`：保存图像包、解压目录、报告图片、医生标注图、位置首帧图和 Landmark 匹配状态。
+- `algorithm_runs` / `algorithm_results`：保存模型版本、输入快照、输出增强图或病灶识别结果，进入 V4.4 后细化。
 
 验收口径：
 
 - V4.0.0 不新增后端 API、不新增数据库 migration、不改前端交互。
-- `C200CN / 06 / 06012` 作为 schema 可用性样例时，schema 能表达受试者信息、访视资料项、字段证据、原始图像、增强图像和电子报告。
-- 算法方能通过 `fields_index` 找字段，通过 `images_index.raw.files[]` 找原始图片。
+- `C200CN / 06 / 06012` 作为 schema 可用性样例时，Snapshot JSON 能表达受试者信息、访视资料项、字段证据、原始图像包、增强图像包、电子报告、报告图片和医生标注图。
+- 算法方能通过 `fields_index` 找字段，通过 `images_index.raw.package` 和 `images_index.raw.extracted_dir` 找原始图像包和解压目录；V4.2 不承诺全量逐图清单。
 - 低置信和待补录字段不丢失，必须通过 `status`、`confidence`、`source` 区分。
-- 每个 4.x 阶段有明确输入、输出、边界和不做事项，V4.1 实现时不需要重新决定 schema 方向。
+- V4.1 同时支持 `draft_snapshot` 和 `released_snapshot`：草稿快照可用于预览调试，正式发布快照必须满足资料/影像审核、字段冲突处理和关键字段确认。
+- 每个 4.x 阶段有明确输入、输出、边界和不做事项，V4.1 实现时不需要重新决定资产和快照方向。
 
 边界：
 
 - 不实现代码，不新增数据库，不改变 V3.5.5 生产基线。
 - 不把图片内联进 JSON。
 - 不导出直接身份信息。
-- 不在 V4.0.0 细化病灶框、分割 mask、模型指标等算法结果细节，等算法方输出格式明确后进入 V4.4。
+- 不把 `V4落地方案.md` 以外的长期指导文档作为短期实现约束；病灶资产属于后续规划，不影响 V4.1/V4.2 边界。
+- 不在 V4.0.0 细化病灶框、分割 mask、模型指标等算法结果细节，等 V4.3/V4.4 根据研发反馈再细化。
 
 ### 历史分类与布局方向
 

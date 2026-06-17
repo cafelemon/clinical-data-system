@@ -4,7 +4,7 @@
 
 当前生产基线为 `V3.5.5`。当前生产交付已覆盖 V1 至 V3.5.5 的应用能力，不再使用“V3 仅为内部迭代、生产只交付 V1/V2”的旧口径。
 
-V4.0.0 进入规划基线：大版本 4 定位为服务研发中心算法需求的受试者级字段化 JSON 证据包。V4.0.0 只落地方案、schema、差距和路线，不新增后端 API、数据库 migration 或前端交互。
+V4.0.0 进入规划基线：大版本 4 定位为服务研发中心算法需求的临床数据资产化体系，短期以 Subject Snapshot、Image Evidence Index 和 Snapshot JSON 导出为主。V4.0.0 只落地资产架构、Snapshot/Schema、差距和路线，不新增后端 API、数据库 migration 或前端交互。
 
 ## 1. 当前能力
 
@@ -17,7 +17,7 @@ V4.0.0 进入规划基线：大版本 4 定位为服务研发中心算法需求�
 - 文件字段提取、来源页与置信度记录、人工核查、规范值展示和 SSU 回写。
 - 数据驾驶舱、独立看板维护、Excel 导入导出和项目/中心范围汇总。
 - 原始图像、增强图像和电子报告管理；zip 原包保留、安全解包和统计。
-- V4.0.0 研发证据包规划：面向每名受试者生成 subject JSON，组织临床树、字段索引、图像索引和算法结果扩展位。
+- V4.0.0 临床数据资产化规划：以 Subject 为归属中心，建立 Snapshot、Image Evidence、AlgorithmRun、Dataset 等资产口径；JSON 是 Snapshot 的导出形式，不是核心资产本身。
 
 ## 2. 当前业务口径
 
@@ -48,13 +48,14 @@ V4.0.0 进入规划基线：大版本 4 定位为服务研发中心算法需求�
 - Linux 生产：PaddleOCR GPU。
 - 应用版本发布默认只替换 backend/frontend，不重建、不替换生产 OCR GPU 基线。
 
-### 2.5 V4 JSON 证据包
+### 2.5 V4 临床数据资产化
 
-- subject JSON 定位为研发证据包，不是单纯审计包，也不是只给训练的轻量表。
-- JSON 保留业务编码标识，如项目、中心和筛选号，不导出姓名、身份证等直接身份信息。
-- JSON 未来按不可变快照版本管理，记录 schema、生成时间、来源版本和文件 hash，保障训练复现。
-- 图像不内联进 JSON，只记录原包、解压目录、逐图相对路径和 hash/size 等索引信息。
-- 算法病灶识别、模型版本和标注框等结果在 V4.0.0 只预留扩展位，等算法输出格式明确后细化。
+- V4 设计以资产对象为中心：`Project`、`Subject`、`Snapshot`、`Image Evidence`、`ReportImage`、`AlgorithmRun`、`Dataset`。
+- 正式研发交付必须基于不可变 Snapshot，禁止把实时库状态直接作为训练或研发交付来源。
+- JSON 是 Snapshot 的导出形式，保留业务编码标识，如项目、中心和筛选号，不导出姓名、身份证等直接身份信息。
+- V4.1 优先建立 Subject Snapshot：支持草稿快照用于预览和调试，正式发布快照需满足资料/影像审核、字段冲突处理和关键字段确认。
+- V4.2 建立 Image Evidence Index：先记录图像包、解压目录、报告图片、医生标注图和位置首帧图；不做全量逐图索引，但允许为 Landmark 反查建立轻量候选索引。
+- V4.3 以后病灶草稿、算法结果、训练/研究数据集构建按 V4.1/V4.2 反馈再细化；短期不把病灶资产作为必须落地范围。
 
 ## 3. 文档索引
 
@@ -66,8 +67,9 @@ V4.0.0 进入规划基线：大版本 4 定位为服务研发中心算法需求�
 | `docs/tech_plan.md` | 当前技术架构、模块边界和关键实现原则 |
 | `docs/database_field_design.md` | 已落库表、字段关系和后续候选字段 |
 | `docs/deploy_migration.md` | 应用发布包制作、生产替换、验证和回滚 |
+| `V4落地方案.md` | V4 短期落地路线、资产化原则和冲突处理优先口径 |
 
-文档冲突时，当前口径优先级为：实际代码与数据库迁移 > `README.md` > 专题文档中的当前基线 > 明确标记的历史记录。
+文档冲突时，当前口径优先级为：实际代码与数据库迁移 > `V4落地方案.md` 的短期 V4 口径 > `README.md` > 专题文档中的当前基线 > 明确标记的历史记录。`总体规划26-27.md` 属于中长期平台蓝图，`巡常临床高质量数据集建设指导方案（V1.0）.md` 属于补充参考，不反向约束 V4.1/V4.2。
 
 ## 4. 本地开发
 
@@ -130,7 +132,7 @@ cd backend
 V4.0.0 文档验收：
 
 ```bash
-rg -n "V4.0.0|schema_version|fields_index|images_index|algorithm_runs|research-json" README.md docs/*.md
+rg -n "V4.0.0|Subject Snapshot|Image Evidence|Snapshot JSON|AlgorithmRun|Dataset" README.md docs/*.md
 ```
 
 ## 6. 生产发布

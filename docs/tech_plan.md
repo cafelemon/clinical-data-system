@@ -36,7 +36,7 @@ Backend FastAPI
 13. V3.4.7 已应用方案访视优先生效和默认访视兜底。
 14. V3.5 文件/SSU 字段提取、字段核查、规范值展示和进展回写。
 15. V3.5.5 当前受试者资料项约束下的结肠资料包识别和 3GB 图像包上传。
-16. V4.0.0 受试者级字段化 JSON 与算法研发证据包基线。
+16. V4.0.0 临床数据资产化、Subject Snapshot 与 Image Evidence 基线。
 
 ## 2. 模块边界
 
@@ -54,7 +54,7 @@ Backend FastAPI
 | 试验方案 | 项目级方案 PDF 版本、访视/资料项/中心解析草稿、人工修正和确认应用 | 自动删除有文件的历史配置 |
 | 图像数据 | 原始/增强图像和电子报告、3GB zip 上传、安全解包统计、研发原始副本下载 | 单张图片预览和算法任务调度 |
 | 字段提取 | 文件版本或资料包片段字段、规范值、来源页、置信度、人工核查和 SSU 回写 | 替代原文件和人工最终判断 |
-| V4 研发证据包 | subject JSON schema、临床树、字段索引、图像索引、快照和算法扩展位 | V4.0.0 不实现导出 API、不训练模型、不定义完整算法结果格式 |
+| V4 临床数据资产化 | Subject Snapshot、Image Evidence、Snapshot JSON 导出、AlgorithmRun 和 Dataset 扩展位 | V4.0.0 不实现导出 API、不训练模型、不定义完整算法结果格式 |
 
 ## 3. 环境方案
 
@@ -486,13 +486,22 @@ V3.4.0 新增“图像数据”主模块，按受试者试验序列号管理原�
 }
 ```
 
-## 11. V4 subject JSON 证据包
+## 11. V4 临床数据资产化与 Subject Snapshot
 
-V4 大版本服务研发中心算法需求，核心产物是每名受试者一份 subject JSON。JSON 定位为研发证据包：既能让算法按字段和图像索引取数，也能保留来源资料、来源页、字段状态和置信度，便于训练复现和问题追溯。
+V4 大版本服务研发中心算法需求，定位从“资料管理能力增强”升级为“临床数据资产化体系建设”。系统核心资产不是 JSON 文件本身，而是围绕 Subject 沉淀的 Snapshot、Image Evidence、ReportImage、AlgorithmRun 和 Dataset。JSON 是 Snapshot 的导出形式，用于研发交付、训练复现和跨系统消费。
 
-V4.0.0 只落地方案和 schema 基线，不实现代码。
+V4.0.0 只落地资产架构、Snapshot/Schema 和路线基线，不实现代码。
 
-### 11.1 当前数据基础
+### 11.1 资产原则
+
+V4 采用以下原则：
+
+- `Asset First`：设计围绕资产对象展开，优先沉淀 `Project`、`Subject`、`Snapshot`、`Image Evidence`、`ReportImage`、`AlgorithmRun`、`Dataset`。
+- `Snapshot First`：所有正式研发数据交付基于不可变 Snapshot，禁止直接把实时库状态作为训练输入或正式交付来源。
+- `Subject Oriented`：所有资产最终归属于 Subject，使用项目、中心、筛选号等业务编码标识，不导出姓名、身份证等直接身份信息。
+- `Historical First`：必须兼容 `C10000` 和 `C200CN` 既有资产；允许新数据更丰富，但不要求历史数据补齐到新项目标准。
+
+### 11.2 当前数据基础和缺口
 
 V3.5.5 已具备以下可聚合数据：
 
@@ -504,21 +513,59 @@ V3.5.5 已具备以下可聚合数据：
 
 当前缺口：
 
-- 缺少受试者级 JSON 聚合器和统一 schema version。
-- 缺少不可变 JSON 快照表，无法稳定复现训练输入。
-- 缺少逐图文件索引，目前只能表达 zip 包和解压目录统计。
-- 缺少算法运行结果模型，增强图像和 AI 病灶识别结果还没有独立结果表。
-- 缺少训练包导出目录、批量导出和算法消费验收流程。
+- 缺少受试者级 Snapshot 聚合器和 Snapshot JSON 导出器。
+- 缺少 snapshot schema version 和不可变快照表，无法稳定复现训练输入。
+- 缺少快照生成前校验机制，资料/影像审核、字段冲突和关键字段确认尚不能作为统一门禁。
+- 缺少 Image Evidence 资产模型，目前只能表达 zip 包和解压目录统计。
+- 缺少 Landmark Image 所需的轻量候选索引，当前无法稳定从报告时间点反查位置首帧。
+- 缺少算法运行结果模型；病灶资产、训练集导出和算法结果回写不属于 V4.1/V4.2 短期范围。
 
-### 11.2 JSON v0 顶层结构
+### 11.3 Subject Snapshot
 
-subject JSON v0 顶层固定结构如下：
+V4.1 建立受试者级不可变资产快照。快照创建后禁止修改，后续变更通过新增版本实现。
+
+快照分两类：
+
+- `draft_snapshot`：允许资料或字段不完整，用于预览、调试、研发评估和数据质量排查。
+- `released_snapshot`：正式研发交付快照，必须满足资料/影像审核、字段冲突处理和关键字段确认。
+
+正式快照生成条件：
+
+```text
+项目必传资料全部上传
+项目必传资料全部审核通过
+项目必传影像全部上传
+项目必传影像全部审核通过
+字段冲突已处理
+关键字段完成确认
+管理员手动确认生成
+```
+
+Snapshot 内容保存：
+
+- 结构化字段和字段状态。
+- 审核结果和质量摘要。
+- 文件版本引用。
+- 影像包、报告图片、医生标注图和位置首帧引用。
+- schema_version、snapshot_version、generated_at、generated_by、file_hash 等快照元数据。
+
+Snapshot 内容不保存：
+
+- PDF 全文。
+- OCR 全文。
+- 原始图像二进制。
+- 完整报告正文。
+
+### 11.4 Snapshot JSON v0 导出结构
+
+Snapshot JSON v0 顶层固定结构如下：
 
 ```json
 {
-  "schema_version": "subject-json/v0",
+  "schema_version": "subject-snapshot-json/v0",
   "generated_at": "2026-06-12T00:00:00+08:00",
   "snapshot_id": null,
+  "snapshot_type": "draft",
   "project": {},
   "center": {},
   "subject": {},
@@ -527,7 +574,9 @@ subject JSON v0 顶层固定结构如下：
   "images_index": {
     "raw": {},
     "enhanced": {},
-    "report": {}
+    "report": {},
+    "landmark": [],
+    "marked": []
   },
   "source_documents": [],
   "algorithm_runs": [],
@@ -537,64 +586,17 @@ subject JSON v0 顶层固定结构如下：
 
 顶层含义：
 
-- `schema_version`：JSON schema 版本，V4.0.0 固定为 `subject-json/v0`。
-- `generated_at`：生成时间；未来正式快照必须使用不可变生成时间。
+- `schema_version`：JSON schema 版本，V4.0.0 固定为 `subject-snapshot-json/v0`。
+- `generated_at`：生成时间；正式快照必须使用不可变生成时间。
 - `snapshot_id`：正式快照 ID；V4.0.0 只定义字段，V4.1 再实现。
+- `snapshot_type`：`draft` 或 `released`。
 - `project` / `center` / `subject`：业务编码标识，不放姓名、身份证等直接身份信息。
 - `clinical_tree`：按访视和资料项组织的临床上下文。
 - `fields_index`：按 `field_key` 扁平聚合字段，服务算法快速取字段。
-- `images_index`：按 `raw`、`enhanced`、`report` 组织图像和报告索引。
-- `source_documents`：参与 JSON 的文件版本清单。
+- `images_index`：组织 raw/enhanced/report/landmark/marked 等图像证据。
+- `source_documents`：参与 Snapshot 的文件版本清单。
 - `algorithm_runs`：算法运行结果扩展位，V4.0.0 不细化病灶识别字段。
 - `quality_summary`：字段、资料、图像和待补录概览。
-
-### 11.3 临床树和字段索引
-
-`clinical_tree` 保留临床资料结构：
-
-```json
-[
-  {
-    "section_code": "PROTOCOL_VISIT_002",
-    "section_name": "访视2:检查期-胶囊检查日",
-    "items": [
-      {
-        "item_code": "PROTOCOL_V002_ITEM004",
-        "item_name": "结肠胶囊检查",
-        "required": true,
-        "upload_status": "uploaded",
-        "review_status": "approved",
-        "file_versions": [],
-        "fields": []
-      }
-    ]
-  }
-]
-```
-
-`fields_index` 按字段 key 聚合全量字段证据：
-
-```json
-{
-  "subject_signed_at": [
-    {
-      "field_label": "受试者签署时间",
-      "value_type": "datetime",
-      "raw_value": "2025.12.18 08.07",
-      "normalized_value": "2025-12-18 08:07",
-      "status": "confirmed",
-      "confidence": 0.78,
-      "manually_edited": true,
-      "source": {
-        "subject_item_code": "PROTOCOL_V001_ITEM001",
-        "file_version_id": 12,
-        "document_type": "informed_consent",
-        "source_page_no": 7
-      }
-    }
-  ]
-}
-```
 
 字段导出原则：
 
@@ -603,16 +605,37 @@ subject JSON v0 顶层固定结构如下：
 - `normalized_value` 是算法优先读取值；没有规范值时可回退 `raw_value`。
 - `source` 必须能追溯到资料项、文件版本或资料包片段。
 
-### 11.4 图像索引
+### 11.5 Image Evidence Index
 
-`images_index` 按图像类型组织：
+V4.2 建立图像证据索引体系，优先覆盖 `C200CN`，后续兼容 `C10000`。
+
+图像资产类型：
+
+- `Raw Image Package`：原始图像包和解压目录。
+- `Enhanced Image Package`：增强图像包和解压目录，仍依赖原始图像已上传。
+- `ReportImage`：电子报告直接导出的报告图片。
+- `Marked Image`：医生标注图。
+- `Landmark Image`：位置首帧图，来源于报告时间点或标注信息反查。
+
+V4.2 不做全量逐图索引，不把所有解压图片逐张提升为业务资产。为支持 Landmark 反查，允许建立轻量候选索引，只覆盖报告时间点、首帧、关键帧或标注相关图像。
+
+Landmark Image 匹配状态：
+
+```text
+resolved
+approx_matched
+unresolved
+not_supported
+```
+
+`images_index` 示例：
 
 ```json
 {
   "raw": {
     "record_id": 31,
     "upload_status": "uploaded",
-    "original_package": {
+    "package": {
       "storage_path": "projects/C200CN/centers/06/subjects/06012/image_data/raw/v1/xxxx.zip",
       "file_hash": "sha256...",
       "file_size": 753962081
@@ -622,54 +645,62 @@ subject JSON v0 顶层固定结构如下：
     "image_total_size": 123456789,
     "extensions": {
       "jpeg": 1000
-    },
-    "files": [
-      {
-        "relative_path": "06012/PCB250801013/00/000001-0000001-100150.jpeg",
-        "extension": "jpeg",
-        "size": 11047,
-        "hash": null
-      }
-    ]
-  }
+    }
+  },
+  "landmark": [
+    {
+      "source": "report_timepoint",
+      "match_status": "approx_matched",
+      "relative_path": "06012/PCB250801013/00/000001-0000001-100150.jpeg",
+      "confidence": null
+    }
+  ],
+  "marked": [
+    {
+      "source": "report_image",
+      "relative_path": "reports/marked/lesion_001.jpeg",
+      "review_status": "from_report"
+    }
+  ]
 }
 ```
 
 图像导出原则：
 
-- JSON 不内联图片，只记录原包、解压目录和逐图相对路径。
-- V4.0.0 只定义逐图索引结构；当前系统尚未落库逐图清单。
-- V4.2 需要补 `subject_image_file_index`，记录每张图的相对路径、大小、扩展名和 hash。
-- 增强图像仍依赖原始图像；增强图像回存后，V4.3 刷新 JSON 并保留 raw/enhanced 关联。
+- JSON 不内联图片，只记录原包、解压目录、证据图片和必要轻量索引。
+- V4.2 不承诺训练包目录和批量导出，不做模型训练编排。
+- 病灶资产不是 V4.1/V4.2 短期目标；V4.3 才进入 Report-derived Lesion Draft。
 
-### 11.5 快照、接口和未来模型
+### 11.6 快照、接口和未来模型
 
 未来接口草案：
 
 ```text
-GET  /api/subjects/{id}/research-json/preview
-POST /api/subjects/{id}/research-json/snapshots
-GET  /api/subjects/{id}/research-json/snapshots/{snapshot_id}/download
+GET  /api/subjects/{id}/snapshots/preview
+POST /api/subjects/{id}/snapshots
+GET  /api/subjects/{id}/snapshots/{snapshot_id}/json
 ```
 
 未来模型草案：
 
-- `subject_json_snapshots`：`subject_id`、`schema_version`、`snapshot_version`、`storage_path`、`file_hash`、`generated_by`、`generated_at`、`status`。
-- `subject_image_file_index`：`subject_image_record_id`、`relative_path`、`extension`、`file_size`、`file_hash`、`frame_no` 或排序号。
+- `subject_snapshots`：`subject_id`、`schema_version`、`snapshot_version`、`snapshot_type`、`storage_path`、`file_hash`、`generated_by`、`generated_at`、`status`、`locked_at`。
+- `snapshot_quality_checks`：`snapshot_id`、`check_code`、`check_status`、`blocking`、`message`、`payload_json`。
+- `image_evidence_index`：`subject_image_record_id`、`evidence_type`、`relative_path`、`source`、`match_status`、`file_hash`、`payload_json`。
 - `algorithm_runs`：`subject_id`、`input_snapshot_id`、`algorithm_name`、`model_version`、`status`、`started_at`、`completed_at`。
 - `algorithm_results`：`algorithm_run_id`、`result_type`、`target_image_path`、`payload_json`、`confidence`、`review_status`。
 
 V4.0.0 不新增这些模型，只把它们作为 V4.1-V4.4 的实现锚点。
 
-### 11.6 4.x 路线
+### 11.7 4.x 路线
 
 | 版本 | 目标 | 主要产出 | 边界 |
 | --- | --- | --- | --- |
-| `V4.0.0` | 建立方案和 schema 基线 | subject JSON v0、差距、路线、验收 | 不实现代码 |
-| `V4.1.x` | 单受试者 JSON 生成 | 聚合器、预览、快照下载 | 不做批量训练包 |
-| `V4.2.x` | 图像逐图索引和训练包 | 逐图清单、批量导出、训练目录 | 不做模型训练编排 |
-| `V4.3.x` | 增强图像回存后扩充 JSON | raw/enhanced 关联、快照刷新 | 不定义病灶结果细节 |
-| `V4.4.x` | 算法结果回写 | algorithm_runs/results、AI 病灶识别扩展 | 具体字段随算法输出定 |
+| `V4.0.0` | 建立资产架构和路线基线 | Asset/Snapshot/Image Evidence/JSON 导出方案、差距、验收 | 不实现代码 |
+| `V4.1.x` | Subject Snapshot | Snapshot 数据模型、生成前校验、单受试者快照、JSON 导出、历史管理 | 不做批量训练包 |
+| `V4.2.x` | Image Evidence Index | 原始图像包、解压目录、报告图片、医生标注图、位置首帧图、Landmark 轻量候选索引 | 不做全量逐图索引、不做训练集导出 |
+| `V4.3.x` | Report-derived Lesion Draft | 基于报告结构化信息和医生标注图生成病灶草稿资产 | 不接算法结果回写 |
+| `V4.4.x` | Algorithm Result Asset | algorithm_runs/results、增强图回写、模型版本和结果证据扩展 | 具体字段随算法输出定 |
+| `V4.5.x` | Dataset Builder | 研究数据集和训练数据集构建能力 | 不由平台负责模型训练 |
 
 ## 12. 前端交互原则
 
@@ -782,12 +813,13 @@ cd backend
 
 ### 14.8 V4.0.0 文档和 schema 验证
 
-- `README.md` 明确 V3.5.5 是生产基线，V4.0.0 是规划和 schema 基线。
-- `docs/process.md` 记录 V4.0.0 目标、边界、现状差距、4.x 路线和验收口径。
+- `README.md` 明确 V3.5.5 是生产基线，V4.0.0 是临床数据资产化和 Snapshot 规划基线。
+- `docs/process.md` 记录 V4.0.0 资产定位、Snapshot 边界、Image Evidence 边界、现状差距、4.x 路线和验收口径。
 - `docs/version_history.md` 有 2026-06-12 的 V4.0.0 时间线条目。
-- `docs/tech_plan.md` 定义 subject JSON v0 顶层结构、`clinical_tree`、`fields_index`、`images_index`、`algorithm_runs` 和未来接口/模型草案。
+- `docs/tech_plan.md` 定义 Subject Snapshot、Snapshot JSON v0 顶层结构、`clinical_tree`、`fields_index`、`images_index`、`algorithm_runs` 和未来接口/模型草案。
 - 文档中不得把 V4.0.0 写成已实现导出 API、已新增数据库或已支持算法结果回写。
-- 以 `C200CN / 06 / 06012` 为样例时，schema 可以表达受试者、访视资料项、字段证据、原始图像、增强图像和电子报告。
+- 以 `C200CN / 06 / 06012` 为样例时，Snapshot JSON 可以表达受试者、访视资料项、字段证据、原始图像包、增强图像包、电子报告、报告图片和医生标注图。
+- V4.2 不得被写成全量逐图索引或训练包导出版本；病灶资产和算法结果回写只作为 V4.3+ / V4.4+ 规划。
 
 ## 15. 文档维护规则
 
