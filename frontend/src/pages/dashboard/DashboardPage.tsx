@@ -279,7 +279,7 @@ export function DashboardPage() {
     <div className="space-y-5">
       <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <p className="text-sm font-medium text-slate-500">V3.4.3 数据驾驶舱</p>
+          <p className="text-sm font-medium text-slate-500">数据驾驶舱</p>
           <h1 className="mt-1 text-3xl font-semibold tracking-normal text-slate-950">
             临床数据运营总览
           </h1>

@@ -40,6 +40,11 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+    subject_snapshots = relationship(
+        "SubjectSnapshot",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
     pdf_packets = relationship("PdfPacket", back_populates="project", cascade="all, delete-orphan")
     trial_protocol_versions = relationship(
         "TrialProtocolVersion",

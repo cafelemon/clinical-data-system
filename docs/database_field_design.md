@@ -92,6 +92,8 @@ erDiagram
 | `stage_files` | 中心级阶段资料 | `project_id`, `center_id`, `stage_id`, `stage_template_id`, `file_name`, `file_type`, `required`, `upload_status`, `review_status`, `not_applicable`, `not_applicable_reason`, `remark` | 中心级资料项，支持“若有”资料声明无此材料，可与 SSU 文件显示同名互通提示但不共用归属。 |
 | `clinical_ssu_progress` | SSU 节点进展 | `project_id`, `center_id`, `stage_code`, `status`, `submitted_at`, `approved_at`, `completed_at`, `version_info`, `file_checklist`, `summary`, `fee_detail`, `notes` | 试验准备阶段 SSU 进展人工维护，可独立挂载多份 `ssu_document` PDF 文件。 |
 | `subject_image_records` | 受试者图像数据 | `project_id`, `center_id`, `subject_id`, `image_type`, `screening_no_snapshot`, `upload_status`, `original_name`, `storage_path`, `file_hash`, `file_size`, `version`, `extracted_dir`, `image_count`, `image_total_size`, `image_extensions_json`, `parse_warning`, `source_raw_record_id`, `uploaded_by`, `uploaded_at`, `copied_by`, `copied_at` | 按试验序列号管理原始图像、增强图像和电子报告。 |
+| `subject_snapshots` | 受试者资产快照 | `project_id`, `center_id`, `subject_id`, `screening_no_snapshot`, `schema_version`, `snapshot_version`, `snapshot_type`, `status`, `storage_path`, `file_hash`, `file_size`, `generated_by`, `generated_at`, `locked_at` | V4.1.0 建立的 Subject Snapshot 主表；V4.1.2 起可生成单受试者 `released_snapshot` 并固化 JSON 文件。 |
+| `snapshot_quality_checks` | 快照生成前质量检查 | `check_run_id`, `project_id`, `center_id`, `subject_id`, `snapshot_id`, `schema_version`, `snapshot_type`, `check_code`, `check_status`, `blocking`, `message`, `payload_json`, `created_at` | V4.1.1 建立的 Snapshot 预检结果表；一次预检通过 `check_run_id` 关联多条检查结果，V4.1.2 生成成功后回填 `snapshot_id`。 |
 
 状态口径：
 
@@ -108,6 +110,27 @@ erDiagram
 - 单文件业务上限为 `3072MB`；增强图像必须在对应原始图像已上传后才能上传。
 - `source_raw_record_id` 用于增强图像关联来源原始图像记录；研发下载原始副本时只写 `copied_by/copied_at` 和操作日志。
 - zip 根目录名与 `screening_no_snapshot` 不一致时写入 `parse_warning`，不阻断保存；路径穿越或非法 zip 会拒绝上传。
+
+Subject Snapshot 口径：
+
+- `subject_snapshots(subject_id, snapshot_version)` 唯一，V4.1.2 生成正式快照时按同一受试者现有最大版本递增。
+- `schema_version` 当前固定为 `subject-snapshot-json/v0`。
+- `snapshot_type` 仅预留 `draft_snapshot` 和 `released_snapshot`；V4.1.2 只生成 `released_snapshot`。
+- `status` 默认 `draft`；V4.1.2 生成成功的正式快照写入 `released`。
+- `storage_path`、`file_hash`、`file_size` 允许为空以兼容建模阶段和异常中间状态；V4.1.2 生成成功后必须回填。
+- V4.1.2 的 JSON 路径为 `projects/{project_code}/centers/{center_code}/subjects/{screening_no}/snapshots/v{snapshot_version}/subject_snapshot_v{snapshot_version}.json`，并使用稳定排序 UTF-8 JSON 计算 SHA256 和字节大小。
+- V4.1.2 只固化 JSON 文件；V4.1.3 提供指定 snapshot 的 JSON 下载导出，并在导出前校验文件路径、SHA256 和字节大小。
+- V4.1.4 提供受试者级快照历史列表和前端管理入口，但不允许删除、覆盖、回滚或编辑历史快照。
+
+Snapshot 生成前校验口径：
+
+- `snapshot_quality_checks.check_run_id` 标识一次预检运行；同一次 API 调用产生同一个 `check_run_id`。
+- `snapshot_id` 在 V4.1.1 允许为空，因为预检发生在 Snapshot 生成前；V4.1.2 生成成功后把同一次预检结果回填到新 Snapshot。
+- `check_status` 取 `pass`、`warn`、`fail`、`not_supported`；`blocking=true` 且 `check_status=fail` 时阻断正式快照生成。
+- V4.1.1 的必传影像门禁按现有模型只要求 raw/report 上传；enhanced 只进入摘要，不阻断。
+- 当前影像记录没有审核状态字段，影像审核检查记录为 `not_supported` 且不阻断。
+- 字段门禁使用现有 `document_extracted_fields.status`；`needs_input` 阻断，低置信和人工修改只产生 warning。
+- V4.1.1/V4.1.2/V4.1.3/V4.1.4 不创建 Image Evidence、AlgorithmRun、Dataset 或病灶资产表。
 
 ## 5. 文件、审核与整改
 

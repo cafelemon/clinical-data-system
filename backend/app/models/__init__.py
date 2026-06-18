@@ -29,8 +29,10 @@ from app.models.pdf_packet import PdfPacket, PdfPacketSegment
 from app.models.pdf_review import CorrectionTask, CorrectionTaskAnnotation, PdfAnnotation
 from app.models.project import Project
 from app.models.review import ReviewRecord
+from app.models.snapshot_quality_check import SnapshotQualityCheck
 from app.models.stage import Stage
 from app.models.stage_template import StageTemplate
+from app.models.subject_snapshot import SubjectSnapshot
 from app.models.trial_protocol import TrialProtocolVersion
 
 __all__ = [
@@ -58,6 +60,7 @@ __all__ = [
     "Project",
     "ReviewRecord",
     "Role",
+    "SnapshotQualityCheck",
     "Stage",
     "StageFile",
     "StageTemplate",
@@ -65,6 +68,7 @@ __all__ = [
     "SubjectImageRecord",
     "SubjectItem",
     "SubjectSection",
+    "SubjectSnapshot",
     "TrialProtocolVersion",
     "User",
     "role_permissions",

@@ -108,6 +108,35 @@ export type SubjectItemTimelineEntry = {
   remark: string | null;
 };
 
+export type SubjectSnapshot = {
+  id: number;
+  project_id: number;
+  center_id: number;
+  subject_id: number;
+  screening_no_snapshot: string;
+  schema_version: string;
+  snapshot_version: number;
+  snapshot_type: "draft_snapshot" | "released_snapshot";
+  status: string;
+  storage_path: string | null;
+  file_hash: string | null;
+  file_size: number | null;
+  generated_by: number | null;
+  generated_by_name: string | null;
+  generated_at: string | null;
+  locked_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SnapshotGenerateResponse = {
+  snapshot: SubjectSnapshot;
+  check_run_id: string;
+  storage_path: string;
+  file_hash: string;
+  file_size: number;
+};
+
 export type StageFile = {
   id: number;
   project_id: number;

@@ -458,9 +458,6 @@ export function AppShell() {
             </div>
           )}
           <div className="ml-auto flex items-center gap-4">
-            <div className="rounded-md border border-[#DDE7F0] bg-[#F5F8FB] px-3 py-1.5 text-xs font-medium text-[#39506A]">
-              3.4.2 品牌骨架
-            </div>
             <img src={fortuneLogo} alt="Fortune 势通" className="h-7 w-auto object-contain" />
           </div>
         </header>

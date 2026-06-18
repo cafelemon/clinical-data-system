@@ -6,6 +6,10 @@
 
 V4.0.0 进入规划基线：大版本 4 定位为服务研发中心算法需求的临床数据资产化体系，短期以 Subject Snapshot、Image Evidence Index 和 Snapshot JSON 导出为主。V4.0.0 只落地资产架构、Snapshot/Schema、差距和路线，不新增后端 API、数据库 migration 或前端交互。
 
+V4.0.1 完成运行时界面版本痕迹清理：生产界面只呈现业务语义，版本演进继续由本文、`docs/process.md` 和 `docs/version_history.md` 追溯。
+
+V4.1.4 落地 Snapshot 快照历史管理：受试者详情页可查看历史、刷新、生成新的正式 Snapshot 并下载 JSON；删除、回滚、比对和批量生成不在本版范围内。
+
 ## 1. 当前能力
 
 - 项目、中心、阶段、资料模板、字典、用户、角色和权限管理。
@@ -53,7 +57,7 @@ V4.0.0 进入规划基线：大版本 4 定位为服务研发中心算法需求�
 - V4 设计以资产对象为中心：`Project`、`Subject`、`Snapshot`、`Image Evidence`、`ReportImage`、`AlgorithmRun`、`Dataset`。
 - 正式研发交付必须基于不可变 Snapshot，禁止把实时库状态直接作为训练或研发交付来源。
 - JSON 是 Snapshot 的导出形式，保留业务编码标识，如项目、中心和筛选号，不导出姓名、身份证等直接身份信息。
-- V4.1 优先建立 Subject Snapshot：支持草稿快照用于预览和调试，正式发布快照需满足资料/影像审核、字段冲突处理和关键字段确认。
+- V4.1 优先建立 Subject Snapshot：V4.1.0 落地 `subject_snapshots` 数据模型，V4.1.1 落地生成前校验和 `snapshot_quality_checks`，V4.1.2 落地单受试者 `released_snapshot` 生成和 JSON 文件固化，V4.1.3 落地 Snapshot JSON 下载/导出，V4.1.4 落地历史管理和前端入口。
 - V4.2 建立 Image Evidence Index：先记录图像包、解压目录、报告图片、医生标注图和位置首帧图；不做全量逐图索引，但允许为 Landmark 反查建立轻量候选索引。
 - V4.3 以后病灶草稿、算法结果、训练/研究数据集构建按 V4.1/V4.2 反馈再细化；短期不把病灶资产作为必须落地范围。
 

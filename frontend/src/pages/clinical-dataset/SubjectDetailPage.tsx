@@ -1,4 +1,16 @@
-import { ArrowLeft, AlertTriangle, CheckCircle2, ClipboardList, RotateCcw, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  AlertTriangle,
+  CheckCircle2,
+  ClipboardList,
+  Download,
+  FileJson,
+  History,
+  Plus,
+  RotateCcw,
+  Users,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 
@@ -16,7 +28,13 @@ import { restoreScrollPosition, saveScrollPosition } from "@/lib/navigation-orig
 import { cn } from "@/lib/utils";
 import { clinicalDataApi } from "@/services/clinical-data";
 import { useAuthStore } from "@/stores/auth-store";
-import type { Subject, SubjectItem, SubjectItemRemarkResponse, SubjectSection } from "@/types/clinical-data";
+import type {
+  Subject,
+  SubjectItem,
+  SubjectItemRemarkResponse,
+  SubjectSection,
+  SubjectSnapshot,
+} from "@/types/clinical-data";
 import type { FileRecord } from "@/types/files";
 
 const uploadStatusLabels: Record<string, string> = {
@@ -65,6 +83,63 @@ function formatDateTimeMinute(value: string | null) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
     date.getHours(),
   )}:${pad(date.getMinutes())}`;
+}
+
+function formatFileSize(value: number | null) {
+  if (!value || value <= 0) return "-";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function shortHash(value: string | null) {
+  if (!value) return "-";
+  return value.length > 16 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.URL.revokeObjectURL(url);
+}
+
+function snapshotTypeLabel(value: string) {
+  if (value === "released_snapshot") return "正式";
+  if (value === "draft_snapshot") return "草稿";
+  return value;
+}
+
+function snapshotStatusTone(status: string) {
+  if (status === "released") return "success";
+  if (status === "draft") return "warning";
+  return "neutral";
+}
+
+function snapshotErrorMessage(error: unknown) {
+  const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+  if (detail && typeof detail === "object") {
+    const summary = detail as {
+      blocking_failure_count?: number;
+      warning_count?: number;
+      checks?: Array<{ check_status?: string; blocking?: boolean; message?: string }>;
+    };
+    const firstBlocking = summary.checks?.find((check) => check.blocking && check.check_status === "fail");
+    if (firstBlocking?.message) {
+      return `生成失败：${firstBlocking.message}`;
+    }
+    if (typeof summary.blocking_failure_count === "number") {
+      return `生成失败：阻断 ${summary.blocking_failure_count} 项，警告 ${summary.warning_count ?? 0} 项`;
+    }
+  }
+  return "Snapshot 操作失败";
 }
 
 function itemCompletenessStatus(item: SubjectItem) {
@@ -151,14 +226,24 @@ export function SubjectDetailPage() {
   const [expandedFieldItemId, setExpandedFieldItemId] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [snapshotPanelOpen, setSnapshotPanelOpen] = useState(false);
+  const [snapshots, setSnapshots] = useState<SubjectSnapshot[]>([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  const [snapshotsMessage, setSnapshotsMessage] = useState<string | null>(null);
+  const [generatingSnapshot, setGeneratingSnapshot] = useState(false);
   const hasPermission = useAuthStore((state) => state.hasPermission);
+  const currentUser = useAuthStore((state) => state.user);
   const canWrite = hasPermission("clinical_data:write");
+  const canExport = hasPermission("exports:read");
   const canReadFiles = hasPermission("files:read");
   const canWriteFiles = hasPermission("files:write");
   const canDeleteFiles = hasPermission("files:delete");
   const canReadReviews = hasPermission("reviews:read");
   const canSubmitReview = hasPermission("reviews:submit");
   const canReview = hasPermission("reviews:review");
+  const canGenerateSnapshot = Boolean(
+    canWrite && (currentUser?.is_admin || currentUser?.roles.includes("project_manager")),
+  );
 
   const groupedSections = useMemo(
     () =>
@@ -270,6 +355,50 @@ export function SubjectDetailPage() {
     void loadData();
   }, [loadData]);
 
+  const loadSnapshots = useCallback(async () => {
+    if (!subjectId) return;
+    setSnapshotsLoading(true);
+    try {
+      const data = await clinicalDataApi.listSubjectSnapshots(subjectId);
+      setSnapshots(data);
+      setSnapshotsMessage(null);
+    } catch {
+      setSnapshotsMessage("Snapshot 历史加载失败");
+    } finally {
+      setSnapshotsLoading(false);
+    }
+  }, [subjectId]);
+
+  function openSnapshotPanel() {
+    setSnapshotPanelOpen(true);
+    void loadSnapshots();
+  }
+
+  async function handleGenerateSnapshot() {
+    if (!subjectId) return;
+    if (!window.confirm("确认生成新的正式 Snapshot？")) return;
+    setGeneratingSnapshot(true);
+    try {
+      await clinicalDataApi.generateSubjectSnapshot(subjectId);
+      setSnapshotsMessage("Snapshot 已生成");
+      await loadSnapshots();
+    } catch (error) {
+      setSnapshotsMessage(snapshotErrorMessage(error));
+    } finally {
+      setGeneratingSnapshot(false);
+    }
+  }
+
+  async function handleDownloadSnapshot(snapshot: SubjectSnapshot) {
+    try {
+      const { blob, filename } = await clinicalDataApi.downloadSubjectSnapshotJson(subjectId, snapshot.id);
+      downloadBlob(blob, filename);
+      setSnapshotsMessage(null);
+    } catch {
+      setSnapshotsMessage("Snapshot JSON 下载失败");
+    }
+  }
+
   function handleRemarkSaved(itemId: number, response: SubjectItemRemarkResponse) {
     setItems((current) =>
       current.map((item) =>
@@ -326,6 +455,12 @@ export function SubjectDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {subject && (
+            <Button variant="secondary" onClick={openSnapshotPanel}>
+              <History className="size-4" aria-hidden="true" />
+              Snapshot
+            </Button>
+          )}
           {canReview && batchTargets.length > 0 && (
             <BatchApproveButton
               targets={batchTargets}
@@ -546,6 +681,120 @@ export function SubjectDetailPage() {
         );
         })}
       </div>
+
+      {snapshotPanelOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/30 p-4">
+          <div className="w-full max-w-5xl rounded-md bg-white shadow-xl">
+            <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">Snapshot 历史</h2>
+                <p className="mt-1 text-xs text-slate-500">{subject?.screening_no ?? "-"}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {canGenerateSnapshot && (
+                  <Button
+                    size="sm"
+                    onClick={() => void handleGenerateSnapshot()}
+                    disabled={generatingSnapshot}
+                  >
+                    <Plus className="size-4" aria-hidden="true" />
+                    {generatingSnapshot ? "生成中" : "生成 Snapshot"}
+                  </Button>
+                )}
+                <Button size="sm" variant="secondary" onClick={() => void loadSnapshots()}>
+                  <RotateCcw className="size-4" aria-hidden="true" />
+                  刷新
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSnapshotPanelOpen(false)}
+                  aria-label="关闭 Snapshot 历史"
+                  title="关闭 Snapshot 历史"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+            <div className="max-h-[72vh] overflow-auto p-4">
+              {snapshotsMessage && (
+                <div className="mb-3">
+                  <Badge tone={snapshotsMessage.includes("失败") ? "danger" : "success"}>
+                    {snapshotsMessage}
+                  </Badge>
+                </div>
+              )}
+              {snapshotsLoading && <p className="py-8 text-center text-sm text-slate-500">正在加载</p>}
+              {!snapshotsLoading && snapshots.length === 0 && (
+                <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center">
+                  <FileJson className="mx-auto size-8 text-slate-400" aria-hidden="true" />
+                  <p className="mt-3 text-sm font-medium text-slate-700">暂无 Snapshot</p>
+                </div>
+              )}
+              {!snapshotsLoading && snapshots.length > 0 && (
+                <table className="w-full min-w-[860px] text-left text-sm">
+                  <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">版本</th>
+                      <th className="px-3 py-2 font-medium">类型</th>
+                      <th className="px-3 py-2 font-medium">状态</th>
+                      <th className="px-3 py-2 font-medium">Schema</th>
+                      <th className="px-3 py-2 font-medium">生成时间</th>
+                      <th className="px-3 py-2 font-medium">生成人</th>
+                      <th className="px-3 py-2 font-medium">大小</th>
+                      <th className="px-3 py-2 font-medium">Hash</th>
+                      <th className="px-3 py-2 font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {snapshots.map((snapshot) => (
+                      <tr key={snapshot.id}>
+                        <td className="px-3 py-3 font-medium text-slate-900">
+                          v{snapshot.snapshot_version}
+                        </td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {snapshotTypeLabel(snapshot.snapshot_type)}
+                        </td>
+                        <td className="px-3 py-3">
+                          <Badge tone={snapshotStatusTone(snapshot.status)}>
+                            {snapshot.status}
+                          </Badge>
+                        </td>
+                        <td className="px-3 py-3 text-slate-600">{snapshot.schema_version}</td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {formatDateTimeMinute(snapshot.generated_at)}
+                        </td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {snapshot.generated_by_name ?? "-"}
+                        </td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {formatFileSize(snapshot.file_size)}
+                        </td>
+                        <td className="px-3 py-3 font-mono text-xs text-slate-500">
+                          {shortHash(snapshot.file_hash)}
+                        </td>
+                        <td className="px-3 py-3">
+                          {canExport && snapshot.status === "released" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => void handleDownloadSnapshot(snapshot)}
+                              aria-label="下载 Snapshot JSON"
+                              title="下载 Snapshot JSON"
+                            >
+                              <Download className="size-4" aria-hidden="true" />
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

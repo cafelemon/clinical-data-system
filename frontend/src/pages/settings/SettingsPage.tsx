@@ -56,10 +56,9 @@ export function SettingsPage() {
   return (
     <div className="space-y-6">
       <ManagementPageHeader
-        title="V3.4.6 系统管理控制台"
+        title="系统管理控制台"
         description="后台配置、权限治理、流程工具和全局状态收口"
         icon={Settings}
-        badge="UI 收尾"
         actions={
           <Button variant="secondary" onClick={() => void loadOverview()}>
             <RotateCcw className="size-4" aria-hidden="true" />

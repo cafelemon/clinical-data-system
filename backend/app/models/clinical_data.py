@@ -94,6 +94,12 @@ class Subject(Base):
         back_populates="subject",
         cascade="all, delete-orphan",
     )
+    snapshots = relationship(
+        "SubjectSnapshot",
+        back_populates="subject",
+        cascade="all, delete-orphan",
+        order_by="SubjectSnapshot.snapshot_version",
+    )
     pdf_packets = relationship("PdfPacket", back_populates="subject", cascade="all, delete-orphan")
 
 

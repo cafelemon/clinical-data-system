@@ -192,7 +192,7 @@ export function ExcelIoPage() {
         title="数据交换控制台"
         description="导入模板、批量导入和项目报表导出"
         icon={DatabaseZap}
-        badge="V3.4.6"
+        badge="数据交换"
         actions={
           canReadExports && (
             <Field label="项目" className="w-full sm:w-72">

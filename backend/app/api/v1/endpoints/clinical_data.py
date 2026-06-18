@@ -6,8 +6,9 @@ from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from starlette.responses import FileResponse
 
 from app.api.deps import AccessContext, require_permission
 from app.core.clinical_data import (
@@ -37,6 +38,7 @@ from app.models import (
     StageTemplate,
     Subject,
     SubjectItem,
+    SubjectSnapshot,
     User,
 )
 from app.models.clinical_data import SubjectSection
@@ -52,6 +54,8 @@ from app.schemas import (
     ClinicalSsuSummaryRead,
     ClinicalStageGroupSummaryRead,
     ClinicalStatusCountRead,
+    SnapshotGenerateResponse,
+    SnapshotPrecheckResponse,
     StageFileApplicabilityUpdate,
     StageFileGroupRead,
     StageFileRead,
@@ -63,6 +67,7 @@ from app.schemas import (
     SubjectItemUpdate,
     SubjectRead,
     SubjectSectionRead,
+    SubjectSnapshotHistoryItem,
     SubjectUpdate,
 )
 from app.services.audit import record_operation
@@ -78,6 +83,18 @@ from app.services.document_fields import (
 )
 from app.services.image_data import ensure_subject_image_records
 from app.services.pdf_packets import remove_packet_physical_file
+from app.services.snapshot_export import (
+    SnapshotJsonIntegrityError,
+    SnapshotJsonNotFoundError,
+    SnapshotJsonUnavailableError,
+    resolve_snapshot_json_export,
+)
+from app.services.snapshot_generation import (
+    SnapshotFileWriteError,
+    SnapshotPrecheckFailed,
+    generate_subject_snapshot,
+)
+from app.services.snapshot_precheck import run_snapshot_precheck
 from app.services.stage_config import (
     CENTER_FILE_OPTION_CODES,
     CENTER_FILE_SCOPE,
@@ -92,6 +109,7 @@ DBSession = Annotated[Session, Depends(get_db)]
 ClinicalRead = Annotated[AccessContext, Depends(require_permission("clinical_data:read"))]
 ClinicalWrite = Annotated[AccessContext, Depends(require_permission("clinical_data:write"))]
 ClinicalDelete = Annotated[AccessContext, Depends(require_permission("clinical_data:delete"))]
+ExportRead = Annotated[AccessContext, Depends(require_permission("exports:read"))]
 SSU_STAGE_CODES = frozenset(
     {
         "SSU_PROJECT_APPROVAL",
@@ -1048,6 +1066,187 @@ def get_subject(subject_id: int, db: DBSession, access: ClinicalRead) -> Subject
     subject = get_or_404(db, Subject, subject_id, "subject")
     ensure_subject_access(access, subject)
     return subject
+
+
+def ensure_snapshot_generate_role(access: AccessContext) -> None:
+    if access.is_admin or "project_manager" in access.roles:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only admins or project managers can generate released snapshots",
+    )
+
+
+@router.post("/subjects/{subject_id}/snapshots", response_model=SnapshotGenerateResponse)
+def generate_subject_snapshot_endpoint(
+    subject_id: int,
+    db: DBSession,
+    access: ClinicalWrite,
+) -> SnapshotGenerateResponse:
+    subject = get_or_404(db, Subject, subject_id, "subject")
+    ensure_subject_access(access, subject)
+    ensure_snapshot_generate_role(access)
+    result = None
+    try:
+        result = generate_subject_snapshot(db, subject, generated_by=access.user.id)
+        db.commit()
+    except SnapshotPrecheckFailed as exc:
+        db.commit()
+        for check in exc.result.checks:
+            db.refresh(check)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=SnapshotPrecheckResponse(
+                subject_id=exc.result.subject_id,
+                snapshot_type=exc.result.snapshot_type,
+                schema_version=exc.result.schema_version,
+                check_run_id=exc.result.check_run_id,
+                eligible=exc.result.eligible,
+                blocking_failure_count=exc.result.blocking_failure_count,
+                warning_count=exc.result.warning_count,
+                checks=exc.result.checks,
+            ).model_dump(mode="json"),
+        ) from exc
+    except SnapshotFileWriteError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="failed to write snapshot json",
+        ) from exc
+    except SQLAlchemyError:
+        db.rollback()
+        if result is not None:
+            ensure_relative_path(settings.file_storage_root, result.storage_path).unlink(
+                missing_ok=True
+            )
+        raise
+
+    db.refresh(result.snapshot)
+    return SnapshotGenerateResponse(
+        snapshot=result.snapshot,
+        check_run_id=result.check_run_id,
+        storage_path=result.storage_path,
+        file_hash=result.file_hash,
+        file_size=result.file_size,
+    )
+
+
+@router.get("/subjects/{subject_id}/snapshots", response_model=list[SubjectSnapshotHistoryItem])
+def list_subject_snapshots(
+    subject_id: int,
+    db: DBSession,
+    access: ClinicalRead,
+) -> list[SubjectSnapshotHistoryItem]:
+    subject = get_or_404(db, Subject, subject_id, "subject")
+    ensure_subject_access(access, subject)
+    snapshots = list(
+        db.scalars(
+            select(SubjectSnapshot)
+            .where(SubjectSnapshot.subject_id == subject.id)
+            .order_by(SubjectSnapshot.snapshot_version.desc(), SubjectSnapshot.id.desc())
+        )
+    )
+    generator_ids = {snapshot.generated_by for snapshot in snapshots if snapshot.generated_by}
+    generators = {}
+    if generator_ids:
+        generators = {
+            user.id: user
+            for user in db.scalars(select(User).where(User.id.in_(generator_ids)))
+        }
+    return [
+        SubjectSnapshotHistoryItem.model_validate(snapshot).model_copy(
+            update={
+                "generated_by_name": (
+                    generators[snapshot.generated_by].full_name
+                    or generators[snapshot.generated_by].username
+                    if snapshot.generated_by in generators
+                    else None
+                )
+            }
+        )
+        for snapshot in snapshots
+    ]
+
+
+@router.post("/subjects/{subject_id}/snapshots/precheck", response_model=SnapshotPrecheckResponse)
+def precheck_subject_snapshot(
+    subject_id: int,
+    db: DBSession,
+    access: ClinicalWrite,
+) -> SnapshotPrecheckResponse:
+    subject = get_or_404(db, Subject, subject_id, "subject")
+    ensure_subject_access(access, subject)
+    result = run_snapshot_precheck(db, subject)
+    db.commit()
+    for check in result.checks:
+        db.refresh(check)
+    return SnapshotPrecheckResponse(
+        subject_id=result.subject_id,
+        snapshot_type=result.snapshot_type,
+        schema_version=result.schema_version,
+        check_run_id=result.check_run_id,
+        eligible=result.eligible,
+        blocking_failure_count=result.blocking_failure_count,
+        warning_count=result.warning_count,
+        checks=result.checks,
+    )
+
+
+@router.get("/subjects/{subject_id}/snapshots/{snapshot_id}/json")
+def download_subject_snapshot_json(
+    subject_id: int,
+    snapshot_id: int,
+    db: DBSession,
+    access: ExportRead,
+    request: Request,
+) -> FileResponse:
+    subject = get_or_404(db, Subject, subject_id, "subject")
+    ensure_subject_access(access, subject)
+    try:
+        export = resolve_snapshot_json_export(
+            db,
+            subject_id=subject.id,
+            snapshot_id=snapshot_id,
+        )
+    except SnapshotJsonNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="snapshot json not found",
+        ) from exc
+    except SnapshotJsonUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="snapshot json is not available for export",
+        ) from exc
+    except SnapshotJsonIntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="snapshot json integrity check failed",
+        ) from exc
+
+    record_operation(
+        db,
+        action="subject_snapshot.download_json",
+        request=request,
+        access=access,
+        target_type="subject_snapshot",
+        target_id=export.snapshot.id,
+        project_id=export.snapshot.project_id,
+        center_id=export.snapshot.center_id,
+        detail={
+            "snapshot_id": export.snapshot.id,
+            "snapshot_version": export.snapshot.snapshot_version,
+            "schema_version": export.snapshot.schema_version,
+            "file_hash": export.file_hash,
+            "file_size": export.file_size,
+        },
+    )
+    db.commit()
+    return FileResponse(
+        export.path,
+        media_type="application/json",
+        filename=export.filename,
+    )
 
 
 @router.put("/subjects/{subject_id}", response_model=SubjectRead)

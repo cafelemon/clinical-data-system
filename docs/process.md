@@ -51,8 +51,14 @@ V3 早期使用内部阶段号，V3-P0 结束后进入 V3.1：
 | `V3.5.4` | `3.5.4.x` | 已完成 | 小肠项目 SSU 与试验过程字段识别准确率优化 |
 | `V3.5.5` | `3.5.5.x` | 当前基线 | 结肠资料包按受试者资料项映射、3GB 图像包上传和字段日期展示归一化 |
 | `V4.0.0` | `4.0.0.x` | 规划基线 | 临床数据资产化架构、Subject Snapshot、Image Evidence、Snapshot JSON 导出和路线 |
+| `V4.0.1` | `4.0.1.x` | 生产观感修订 | 清理运行时前端研发版本标签，界面只保留业务语义 |
+| `V4.1.0` | `4.1.0.x` | 数据模型基线 | Subject Snapshot 主表、ORM 和 schema 基础 |
+| `V4.1.1` | `4.1.1.x` | 生成前校验基线 | Snapshot 预检 API、质量检查持久化和 released snapshot 门禁 |
+| `V4.1.2` | `4.1.2.x` | 单受试者生成基线 | 单受试者 released Snapshot 生成和 JSON 文件固化 |
+| `V4.1.3` | `4.1.3.x` | JSON 导出基线 | released Snapshot JSON 下载、完整性校验和导出审计 |
+| `V4.1.4` | `4.1.4.x` | 历史管理基线 | 受试者详情页 Snapshot 历史、生成入口、刷新和 JSON 下载 |
 
-当前统一口径：V3.5.5 已进入生产应用基线。V4.0.0 进入规划基线，只定义临床数据资产化、Subject Snapshot、Image Evidence 和 Snapshot JSON 导出方案，不新增 API、数据库 migration 或前端交互。资料包识别以当前受试者实际资料项为约束；字段提取已落地并持续通过真实样本改进；访视以已应用方案为准，默认访视只作为无方案项目的兜底。
+当前统一口径：V3.5.5 已进入生产应用基线。V4.0.0 进入规划基线，只定义临床数据资产化、Subject Snapshot、Image Evidence 和 Snapshot JSON 导出方案，不新增 API、数据库 migration 或前端交互。V4.0.1 只清理运行时界面中的研发版本痕迹，版本演进继续由文档追溯。V4.1.0 落地 Subject Snapshot 数据模型；V4.1.1 落地生成前校验和质量检查持久化；V4.1.2 在预检通过后生成单受试者 `released_snapshot` 并固化 JSON 文件；V4.1.3 提供已生成 Snapshot JSON 的下载导出和完整性校验；V4.1.4 在受试者详情页提供历史列表、生成入口、刷新和下载。资料包识别以当前受试者实际资料项为约束；字段提取已落地并持续通过真实样本改进；访视以已应用方案为准，默认访视只作为无方案项目的兜底。
 
 ## 2. 阶段总览
 
@@ -83,6 +89,12 @@ V3 早期使用内部阶段号，V3-P0 结束后进入 V3.1：
 | `V3.5.4` | 已完成 | 小肠项目 SSU 与试验过程字段识别准确率、低置信负例和样本回归优化 | 不更换 OCR 后端，不新增数据库列 |
 | `V3.5.5` | 当前基线 | 结肠资料包按当前受试者资料项映射、图像上传上限提升至 3GB、字段日期时间展示归一化 | 不新增数据库列，不取消增强图像依赖原始图像 |
 | `V4.0.0` | 规划基线 | 资产化定位、Subject Snapshot、Image Evidence、Snapshot JSON 导出、现状差距、4.x 路线和验收口径 | 不实现代码，不新增数据库，不改变生产 V3.5.5 基线 |
+| `V4.0.1` | 生产观感修订 | 清理生产运行界面的研发版本标签，保留业务语义和文档追溯 | 不新增 API，不改数据库，不改变 V4.1 实现路线 |
+| `V4.1.0` | 数据模型基线 | 新增 `subject_snapshots` 主表、ORM 关系和内部 read schema | 不生成快照，不做校验，不导出 JSON，不新增前端入口 |
+| `V4.1.1` | 生成前校验基线 | 新增 `snapshot_quality_checks`、预检服务和 `POST /api/subjects/{subject_id}/snapshots/precheck` | 不生成快照，不写 JSON，不补影像审核流程，不做前端入口 |
+| `V4.1.2` | 单受试者生成基线 | 新增 `POST /api/subjects/{subject_id}/snapshots`，预检通过后创建 `released_snapshot` 并写入不可变 JSON 文件 | 不新增下载接口，不做批量生成，不新增前端入口，不创建 Image Evidence 或算法模型 |
+| `V4.1.3` | JSON 导出基线 | 新增 `GET /api/subjects/{subject_id}/snapshots/{snapshot_id}/json`，导出已固化的 released JSON | 不重新生成 JSON，不做历史列表，不新增前端入口，不创建 Image Evidence 或算法模型 |
+| `V4.1.4` | 历史管理基线 | 新增 `GET /api/subjects/{subject_id}/snapshots` 和受试者详情页 Snapshot 面板 | 不删除、不回滚、不比对、不批量生成，不创建 Image Evidence 或算法模型 |
 
 ## 3. V1 记录
 
@@ -617,7 +629,7 @@ GET  /api/subjects/{id}/snapshots/{snapshot_id}/json
 - `C200CN / 06 / 06012` 作为 schema 可用性样例时，Snapshot JSON 能表达受试者信息、访视资料项、字段证据、原始图像包、增强图像包、电子报告、报告图片和医生标注图。
 - 算法方能通过 `fields_index` 找字段，通过 `images_index.raw.package` 和 `images_index.raw.extracted_dir` 找原始图像包和解压目录；V4.2 不承诺全量逐图清单。
 - 低置信和待补录字段不丢失，必须通过 `status`、`confidence`、`source` 区分。
-- V4.1 同时支持 `draft_snapshot` 和 `released_snapshot`：草稿快照可用于预览调试，正式发布快照必须满足资料/影像审核、字段冲突处理和关键字段确认。
+- V4.1 数据模型预留 `draft_snapshot` 和 `released_snapshot`；当前实现只生成 `released_snapshot`，正式发布快照必须满足资料/影像审核和字段门禁。
 - 每个 4.x 阶段有明确输入、输出、边界和不做事项，V4.1 实现时不需要重新决定资产和快照方向。
 
 边界：
@@ -627,6 +639,114 @@ GET  /api/subjects/{id}/snapshots/{snapshot_id}/json
 - 不导出直接身份信息。
 - 不把 `V4落地方案.md` 以外的长期指导文档作为短期实现约束；病灶资产属于后续规划，不影响 V4.1/V4.2 边界。
 - 不在 V4.0.0 细化病灶框、分割 mask、模型指标等算法结果细节，等 V4.3/V4.4 根据研发反馈再细化。
+
+### V4.0.1 运行时界面版本痕迹清理
+
+V4.0.1 是进入 V4.1 前的生产观感修订版，目标是把版本演进留在文档中，把生产运行界面恢复为面向用户的业务表达。
+
+V4.0.1 的主要内容：
+
+1. 清理运行时前端中的研发版本标签和阶段性 UI 标记。
+2. 页面标题保留业务命名，例如数据驾驶舱、试验数据资料中枢、项目与方案智能识别、系统管理控制台。
+3. 保留文件版本、历史版本、方案版本、图像版本和字段版本信息等真实业务概念。
+
+边界：
+
+- 不新增 API，不改数据库，不改变业务流程。
+- 不清理版本文档、部署文档、历史设计稿中的版本追溯内容。
+- 不改变 V4.0.0 的规划基线，也不改变 V4.1 的 Subject Snapshot 实现路线。
+
+### V4.1.0 Subject Snapshot 数据模型基线
+
+V4.1.0 是 V4.1 系列的第一个实现版本，只建立受试者级不可变快照的数据模型基础。
+
+V4.1.0 的主要内容：
+
+1. 新增 `subject_snapshots` 表，记录项目、中心、受试者、筛选号快照、schema version、snapshot version、snapshot type、状态、存储路径、文件 hash、文件大小、生成者、生成时间和锁定时间。
+2. 新增 `SubjectSnapshot` ORM 和 `SubjectSnapshotRead` 内部 read schema，并建立 Project、Center、Subject 到快照的关系。
+3. 约束同一受试者的 `snapshot_version` 唯一，`snapshot_type` 仅预留 `draft_snapshot` 和 `released_snapshot`。
+
+边界：
+
+- 不新增后端 API，不新增前端入口。
+- 不实现快照生成、不写 JSON 文件、不计算 `file_hash`。
+- 不创建 `snapshot_quality_checks`，快照生成前校验进入 V4.1.1。
+- 不创建 Image Evidence、AlgorithmRun、Dataset 或病灶相关模型。
+
+### V4.1.1 Snapshot 生成前校验基线
+
+V4.1.1 是 V4.1 系列的第二个实现版本，只判断当前受试者是否具备生成正式 `released_snapshot` 的条件。
+
+V4.1.1 的主要内容：
+
+1. 新增 `snapshot_quality_checks` 表，按 `check_run_id` 保存一次预检的多条质量检查结果。
+2. 新增 `SnapshotQualityCheck` ORM、`SnapshotQualityCheckRead` 和 `SnapshotPrecheckResponse`。
+3. 新增 `POST /api/subjects/{subject_id}/snapshots/precheck`，使用 `clinical_data:write` 权限并保存本次预检结果。
+4. 预检覆盖临床树存在性、必填资料上传、必填资料审核通过、raw/report 必传影像上传、影像审核暂不支持说明、字段 `needs_input` 阻断和字段低置信/人工修改警告。
+
+边界：
+
+- 不生成 `subject_snapshots` 记录，不写 Snapshot JSON 文件，不计算快照文件 hash。
+- 不新增前端入口，预检 API 先服务 V4.1.2 生成流程和调试验收。
+- 不给 `subject_image_records` 补审核状态；当前只校验 raw/report 上传，影像审核检查保存为 `not_supported` 且不阻断。
+- 不新增字段冲突表或关键字段配置表；短期使用现有 `document_extracted_fields.status` 作为门禁。
+- 不创建 Image Evidence、AlgorithmRun、Dataset 或病灶相关模型。
+
+### V4.1.2 单受试者 Snapshot 生成
+
+V4.1.2 是 V4.1 系列的第三个实现版本，只落地单受试者正式 `released_snapshot` 生成能力。
+
+V4.1.2 的主要内容：
+
+1. 新增 `POST /api/subjects/{subject_id}/snapshots`，仅允许管理员或项目负责人在项目范围内生成。
+2. 生成前重跑 V4.1.1 预检；预检不通过时返回 `409`，保存本次质量检查结果，但不创建 Snapshot、不写 JSON 文件。
+3. 预检通过后按同一受试者 `snapshot_version` 递增创建 `released_snapshot`，并设置 `generated_at`、`locked_at`、`generated_by`。
+4. 将 subject JSON v0 写入文件存储，回填 `storage_path`、`file_hash` 和 `file_size`，并把本次 `snapshot_quality_checks.snapshot_id` 关联到新 Snapshot。
+5. JSON 顶层包含 `schema_version`、`generated_at`、`snapshot_id`、`snapshot_type`、`project`、`center`、`subject`、`clinical_tree`、`fields_index`、`images_index`、`source_documents`、`algorithm_runs` 和 `quality_summary`。
+
+边界：
+
+- 不新增数据库 migration，沿用 V4.1.0 和 V4.1.1 已建立的数据模型。
+- V4.1.2 不开放 JSON 下载/导出接口，不新增前端入口；下载导出进入 V4.1.3，历史管理进入 V4.1.4。
+- 不做批量生成，不覆盖旧快照版本。
+- `images_index` 只记录现有 `subject_image_records` 的 raw/enhanced/report 包级信息，不做 V4.2 Image Evidence、逐图索引、Landmark 或 marked image。
+- 不创建 AlgorithmRun、Dataset、病灶资产或算法结果回写模型。
+
+### V4.1.3 Snapshot JSON 导出
+
+V4.1.3 是 V4.1 系列的第四个实现版本，只导出已经由 V4.1.2 生成并固化的正式 Snapshot JSON。
+
+V4.1.3 的主要内容：
+
+1. 新增 `GET /api/subjects/{subject_id}/snapshots/{snapshot_id}/json`，按指定 Snapshot 下载 JSON 文件。
+2. 使用 `exports:read` 权限，并沿用受试者项目/中心范围校验。
+3. 导出前校验 Snapshot 属于当前受试者、类型和状态为 released、文件路径存在、hash 和大小与数据库一致。
+4. 成功下载前写入 `subject_snapshot.download_json` 操作日志，记录 snapshot 版本、schema version、hash 和文件大小。
+
+边界：
+
+- 不重新生成 JSON，不从实时库临时拼装 JSON。
+- 不新增数据库 migration，不新增 Pydantic 文件响应 schema。
+- 不做快照历史列表、latest 快捷入口或前端下载按钮；这些进入 V4.1.4。
+- 不创建 Image Evidence、AlgorithmRun、Dataset 或病灶相关模型。
+
+### V4.1.4 Snapshot 快照历史管理
+
+V4.1.4 是 V4.1 系列的第五个实现版本，在受试者详情页形成 Snapshot 历史管理闭环。
+
+V4.1.4 的主要内容：
+
+1. 新增 `GET /api/subjects/{subject_id}/snapshots`，按 `snapshot_version` 倒序返回当前受试者 Snapshot 历史，并展示生成人名称。
+2. 受试者详情页新增 Snapshot 面板，支持查看历史、刷新列表、下载 JSON。
+3. 管理员或项目负责人可在面板中生成新的正式 Snapshot；生成成功后刷新历史列表，预检失败时展示阻断摘要。
+4. 下载仍复用 V4.1.3 的 JSON 导出接口和完整性校验。
+
+边界：
+
+- 不新增数据库 migration。
+- 不删除、不覆盖、不回滚、不编辑历史快照。
+- 不做 Snapshot diff、latest 快捷入口或批量生成。
+- 不创建 Image Evidence、AlgorithmRun、Dataset 或病灶相关模型；这些继续进入 V4.2 以后。
 
 ### 历史分类与布局方向
 

@@ -1771,7 +1771,7 @@ export function ClinicalDatasetPage() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-normal text-slate-950">
-            V3.4.4 试验数据资料中枢
+            试验数据资料中枢
           </h1>
           <p className="mt-1 text-sm text-slate-500">项目中心资料与受试者链路</p>
         </div>
@@ -1793,7 +1793,7 @@ export function ClinicalDatasetPage() {
           </div>
           <div>
             <h1 className="text-2xl font-semibold tracking-normal text-slate-950">
-              V3.4.4 试验数据资料中枢
+              试验数据资料中枢
             </h1>
             <p className="mt-1 text-sm text-slate-500">
               {selectedProject?.name ?? "未选择项目"} · {selectedCenter?.name ?? "未选择中心"}

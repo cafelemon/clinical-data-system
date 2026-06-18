@@ -644,7 +644,7 @@ export function ProjectsPage() {
           </div>
           <div>
             <h1 className="text-2xl font-semibold tracking-normal text-slate-950">
-              V3.4.5 项目与方案智能识别
+              项目与方案智能识别
             </h1>
             <p className="mt-1 text-sm text-slate-500">
               项目基础口径、方案版本解析、证据确认和应用结果

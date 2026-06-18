@@ -19,7 +19,17 @@ import type {
   SubjectItemTimelineEntry,
   SubjectPayload,
   SubjectSection,
+  SubjectSnapshot,
+  SnapshotGenerateResponse,
 } from "@/types/clinical-data";
+
+function filenameFromDisposition(disposition: string | undefined, fallback: string) {
+  if (!disposition) return fallback;
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return match?.[1] ?? fallback;
+}
 
 async function read<T>(url: string, params?: Record<string, unknown>) {
   const response = await http.get<T>(url, { params });
@@ -77,6 +87,23 @@ export const clinicalDataApi = {
     update<Subject, Partial<SubjectPayload>>(`/subjects/${id}`, payload),
   deleteSubject: (id: number) => http.delete(`/subjects/${id}`),
   getSubject: (id: number) => read<Subject>(`/subjects/${id}`),
+  listSubjectSnapshots: (id: number) => read<SubjectSnapshot[]>(`/subjects/${id}/snapshots`),
+  generateSubjectSnapshot: async (id: number) => {
+    const response = await http.post<SnapshotGenerateResponse>(`/subjects/${id}/snapshots`);
+    return response.data;
+  },
+  downloadSubjectSnapshotJson: async (subjectId: number, snapshotId: number) => {
+    const response = await http.get<Blob>(`/subjects/${subjectId}/snapshots/${snapshotId}/json`, {
+      responseType: "blob",
+    });
+    return {
+      blob: response.data,
+      filename: filenameFromDisposition(
+        response.headers["content-disposition"],
+        `subject-snapshot-${snapshotId}.json`,
+      ),
+    };
+  },
   listSubjectSections: (id: number) => read<SubjectSection[]>(`/subjects/${id}/sections`),
   listSubjectItems: (id: number) => read<SubjectItem[]>(`/subjects/${id}/items`),
   updateSubjectItem: (id: number, payload: SubjectItemPayload) =>
