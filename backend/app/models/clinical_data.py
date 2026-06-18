@@ -94,6 +94,11 @@ class Subject(Base):
         back_populates="subject",
         cascade="all, delete-orphan",
     )
+    image_evidence = relationship(
+        "ImageEvidenceIndex",
+        back_populates="subject",
+        cascade="all, delete-orphan",
+    )
     snapshots = relationship(
         "SubjectSnapshot",
         back_populates="subject",

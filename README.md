@@ -8,7 +8,9 @@ V4.0.0 进入规划基线：大版本 4 定位为服务研发中心算法需求�
 
 V4.0.1 完成运行时界面版本痕迹清理：生产界面只呈现业务语义，版本演进继续由本文、`docs/process.md` 和 `docs/version_history.md` 追溯。
 
-V4.1.4 落地 Snapshot 快照历史管理：受试者详情页可查看历史、刷新、生成新的正式 Snapshot 并下载 JSON；删除、回滚、比对和批量生成不在本版范围内。
+V4.1.5 完成 Subject Snapshot 系列收口：V4.1 的数据模型、预检、生成、下载和历史管理进入稳定基线；下一阶段进入 V4.2 Image Evidence Index。
+
+V4.2.0 落地 Image Evidence 数据模型基线：新增图像证据索引持久化口径，但不生成索引、不解析报告图片、不做 Landmark 反查、不新增前端入口。
 
 ## 1. 当前能力
 
@@ -57,8 +59,8 @@ V4.1.4 落地 Snapshot 快照历史管理：受试者详情页可查看历史、
 - V4 设计以资产对象为中心：`Project`、`Subject`、`Snapshot`、`Image Evidence`、`ReportImage`、`AlgorithmRun`、`Dataset`。
 - 正式研发交付必须基于不可变 Snapshot，禁止把实时库状态直接作为训练或研发交付来源。
 - JSON 是 Snapshot 的导出形式，保留业务编码标识，如项目、中心和筛选号，不导出姓名、身份证等直接身份信息。
-- V4.1 优先建立 Subject Snapshot：V4.1.0 落地 `subject_snapshots` 数据模型，V4.1.1 落地生成前校验和 `snapshot_quality_checks`，V4.1.2 落地单受试者 `released_snapshot` 生成和 JSON 文件固化，V4.1.3 落地 Snapshot JSON 下载/导出，V4.1.4 落地历史管理和前端入口。
-- V4.2 建立 Image Evidence Index：先记录图像包、解压目录、报告图片、医生标注图和位置首帧图；不做全量逐图索引，但允许为 Landmark 反查建立轻量候选索引。
+- V4.1 已完成 Subject Snapshot 基线：V4.1.0 落地 `subject_snapshots` 数据模型，V4.1.1 落地生成前校验和 `snapshot_quality_checks`，V4.1.2 落地单受试者 `released_snapshot` 生成和 JSON 文件固化，V4.1.3 落地 Snapshot JSON 下载/导出，V4.1.4 落地历史管理和前端入口，V4.1.5 完成系列收口和 V4.2 衔接。
+- V4.2 建立 Image Evidence Index：V4.2.0 先落地 `image_evidence_index` 数据模型，后续 V4.2.1 做报告图片索引，V4.2.2 做 Landmark 反查，V4.2.3 做 Image Evidence Index 导出；不做全量逐图索引，但允许为 Landmark 反查建立轻量候选索引。
 - V4.3 以后病灶草稿、算法结果、训练/研究数据集构建按 V4.1/V4.2 反馈再细化；短期不把病灶资产作为必须落地范围。
 
 ## 3. 文档索引
@@ -137,6 +139,20 @@ V4.0.0 文档验收：
 
 ```bash
 rg -n "V4.0.0|Subject Snapshot|Image Evidence|Snapshot JSON|AlgorithmRun|Dataset" README.md docs/*.md
+```
+
+V4.1.5 收口验收：
+
+```bash
+rg -n "V4.1.5|V4.2|Image Evidence|subject_snapshots|snapshot_quality_checks" README.md docs/*.md
+```
+
+V4.2.0 数据模型验收：
+
+```bash
+cd backend
+.venv/bin/python -m pytest tests/test_image_evidence_index.py
+.venv/bin/python -m ruff check app/models/image_evidence.py app/schemas/image_evidence.py tests/test_image_evidence_index.py
 ```
 
 ## 6. 生产发布

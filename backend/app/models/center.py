@@ -34,6 +34,11 @@ class Center(Base):
         back_populates="center",
         cascade="all, delete-orphan",
     )
+    image_evidence = relationship(
+        "ImageEvidenceIndex",
+        back_populates="center",
+        cascade="all, delete-orphan",
+    )
     subject_snapshots = relationship(
         "SubjectSnapshot",
         back_populates="center",

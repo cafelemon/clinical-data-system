@@ -503,42 +503,45 @@ V4 采用以下原则：
 
 ### 11.2 当前数据基础和缺口
 
-V3.5.5 已具备以下可聚合数据：
+V4.1.5 已在 V3.5.5 数据基础上完成 Subject Snapshot 基线。当前可聚合数据包括：
 
 - `subjects`：受试者主记录、项目、中心、筛选号和关键日期。
 - `subject_sections` / `subject_items`：访视结构、资料项、上传状态、审核状态和必填口径。
 - `file_assets` / `file_versions`：资料文件、版本、来源资料包页码和文件 hash。
 - `document_extracted_fields`：字段原值、规范值、来源页、来源文本、置信度、状态、人工修改和确认人。
 - `subject_image_records`：原始图像、增强图像、电子报告的原包、解压目录、数量、大小和扩展名分布。
+- `subject_snapshots`：受试者级不可变快照版本、状态、文件路径、hash、大小和生成/锁定信息。
+- `snapshot_quality_checks`：快照生成前质量检查、阻断/警告结果和生成成功后的快照关联。
+- `image_evidence_index`：V4.2.0 建立的图像证据索引主表，可关联 raw/enhanced/report 图像记录并预留报告图片、医生标注图和 Landmark Image。
 
 当前缺口：
 
-- 缺少受试者级 Snapshot 聚合器和 Snapshot JSON 导出器。
-- 缺少 snapshot schema version 和不可变快照表，无法稳定复现训练输入。
-- 缺少快照生成前校验机制，资料/影像审核、字段冲突和关键字段确认尚不能作为统一门禁。
-- 缺少 Image Evidence 资产模型，目前只能表达 zip 包和解压目录统计。
-- 缺少 Landmark Image 所需的轻量候选索引，当前无法稳定从报告时间点反查位置首帧。
+- V4.1 只生成和导出单受试者 `released_snapshot`，尚不做批量生成、批量导出或训练包目录。
+- V4.1 的 `images_index` 只表达 raw/enhanced/report 包级信息，尚不表达逐图证据资产。
+- V4.2.0 只建立 Image Evidence 数据模型，尚不自动生成图像证据记录。
+- 缺少报告图片索引、医生标注图索引和 Landmark Image 所需的轻量候选索引，当前无法稳定从报告时间点反查位置首帧。
 - 缺少算法运行结果模型；病灶资产、训练集导出和算法结果回写不属于 V4.1/V4.2 短期范围。
 
 ### 11.3 Subject Snapshot
 
-V4.1 建立受试者级不可变资产快照。快照创建后禁止修改，后续变更通过新增版本实现。
+V4.1 建立受试者级不可变资产快照。快照创建后禁止修改，后续变更通过新增版本实现。V4.1.5 后，数据模型、预检、单受试者生成、JSON 下载和历史管理已形成闭环。
 
 快照分两类：
 
-- `draft_snapshot`：允许资料或字段不完整，用于预览、调试、研发评估和数据质量排查。
-- `released_snapshot`：正式研发交付快照，必须满足资料/影像审核、字段冲突处理和关键字段确认。
+- `draft_snapshot`：数据模型预留，V4.1 暂不生成。
+- `released_snapshot`：V4.1 已支持生成、下载和历史管理；正式研发交付必须使用该类型。
 
-正式快照生成条件：
+V4.1 已落地的正式快照生成门禁：
 
 ```text
-项目必传资料全部上传
-项目必传资料全部审核通过
-项目必传影像全部上传
-项目必传影像全部审核通过
-字段冲突已处理
-关键字段完成确认
-管理员手动确认生成
+受试者临床树存在
+必填资料全部上传
+必填资料全部审核通过
+raw/report 图像记录已上传
+字段 needs_input 阻断
+低置信和人工修改字段进入 warning
+影像审核状态当前 not_supported 且不阻断
+管理员或项目负责人手动生成
 ```
 
 Snapshot 内容保存：
@@ -546,7 +549,7 @@ Snapshot 内容保存：
 - 结构化字段和字段状态。
 - 审核结果和质量摘要。
 - 文件版本引用。
-- 影像包、报告图片、医生标注图和位置首帧引用。
+- V4.1 保存 raw/enhanced/report 包级图像引用；报告图片、医生标注图和位置首帧进入 V4.2 Image Evidence Index。
 - schema_version、snapshot_version、generated_at、generated_by、file_hash 等快照元数据。
 
 Snapshot 内容不保存：
@@ -565,7 +568,7 @@ Snapshot JSON v0 顶层固定结构如下：
   "schema_version": "subject-snapshot-json/v0",
   "generated_at": "2026-06-12T00:00:00+08:00",
   "snapshot_id": null,
-  "snapshot_type": "draft",
+  "snapshot_type": "released_snapshot",
   "project": {},
   "center": {},
   "subject": {},
@@ -586,14 +589,14 @@ Snapshot JSON v0 顶层固定结构如下：
 
 顶层含义：
 
-- `schema_version`：JSON schema 版本，V4.0.0 固定为 `subject-snapshot-json/v0`。
+- `schema_version`：JSON schema 版本，V4.1 固定为 `subject-snapshot-json/v0`。
 - `generated_at`：生成时间；正式快照必须使用不可变生成时间。
-- `snapshot_id`：正式快照 ID；V4.0.0 只定义字段，V4.1 再实现。
-- `snapshot_type`：`draft` 或 `released`。
+- `snapshot_id`：正式快照 ID，V4.1.2 起生成后写入。
+- `snapshot_type`：当前生成值为 `released_snapshot`。
 - `project` / `center` / `subject`：业务编码标识，不放姓名、身份证等直接身份信息。
 - `clinical_tree`：按访视和资料项组织的临床上下文。
 - `fields_index`：按 `field_key` 扁平聚合字段，服务算法快速取字段。
-- `images_index`：组织 raw/enhanced/report/landmark/marked 等图像证据。
+- `images_index`：V4.1 组织 raw/enhanced/report 包级图像信息；landmark/marked 作为 V4.2 扩展方向。
 - `source_documents`：参与 Snapshot 的文件版本清单。
 - `algorithm_runs`：算法运行结果扩展位，V4.0.0 不细化病灶识别字段。
 - `quality_summary`：字段、资料、图像和待补录概览。
@@ -609,6 +612,8 @@ Snapshot JSON v0 顶层固定结构如下：
 
 V4.2 建立图像证据索引体系，优先覆盖 `C200CN`，后续兼容 `C10000`。
 
+V4.2.0 只落地 `image_evidence_index` 数据模型，不生成索引数据。报告图片索引进入 V4.2.1，Landmark Image 反查进入 V4.2.2，Image Evidence Index 导出进入 V4.2.3。
+
 图像资产类型：
 
 - `Raw Image Package`：原始图像包和解压目录。
@@ -617,7 +622,7 @@ V4.2 建立图像证据索引体系，优先覆盖 `C200CN`，后续兼容 `C100
 - `Marked Image`：医生标注图。
 - `Landmark Image`：位置首帧图，来源于报告时间点或标注信息反查。
 
-V4.2 不做全量逐图索引，不把所有解压图片逐张提升为业务资产。为支持 Landmark 反查，允许建立轻量候选索引，只覆盖报告时间点、首帧、关键帧或标注相关图像。
+V4.2 不做全量逐图索引，不把所有解压图片逐张提升为业务资产。为支持 Landmark 反查，允许建立轻量候选索引，只覆盖报告时间点、首帧、关键帧或标注相关图像；该能力不在 V4.2.0 实现。
 
 Landmark Image 匹配状态：
 
@@ -673,31 +678,41 @@ not_supported
 
 ### 11.6 快照、接口和未来模型
 
-未来接口草案：
+V4.1 已落地接口：
+
+```text
+POST /api/subjects/{id}/snapshots/precheck
+POST /api/subjects/{id}/snapshots
+GET  /api/subjects/{id}/snapshots/{snapshot_id}/json
+GET  /api/subjects/{id}/snapshots
+```
+
+仍属于未来扩展的接口草案：
 
 ```text
 GET  /api/subjects/{id}/snapshots/preview
-POST /api/subjects/{id}/snapshots
-GET  /api/subjects/{id}/snapshots/{snapshot_id}/json
 ```
 
-未来模型草案：
+当前已落地模型：
 
 - `subject_snapshots`：`subject_id`、`schema_version`、`snapshot_version`、`snapshot_type`、`storage_path`、`file_hash`、`generated_by`、`generated_at`、`status`、`locked_at`。
 - `snapshot_quality_checks`：`snapshot_id`、`check_code`、`check_status`、`blocking`、`message`、`payload_json`。
-- `image_evidence_index`：`subject_image_record_id`、`evidence_type`、`relative_path`、`source`、`match_status`、`file_hash`、`payload_json`。
+- `image_evidence_index`：V4.2.0 已落地，包含 `subject_image_record_id`、`evidence_type`、`evidence_source`、`relative_path`、`match_status`、`file_hash`、`file_size`、`gastrointestinal_location`、`payload_json`、`indexed_by`、`indexed_at`。
+
+未来模型草案：
+
 - `algorithm_runs`：`subject_id`、`input_snapshot_id`、`algorithm_name`、`model_version`、`status`、`started_at`、`completed_at`。
 - `algorithm_results`：`algorithm_run_id`、`result_type`、`target_image_path`、`payload_json`、`confidence`、`review_status`。
 
-V4.0.0 不新增这些模型，只把它们作为 V4.1-V4.4 的实现锚点。
+V4.2.0 后，Image Evidence 只具备数据模型；不提前创建 AlgorithmRun、Dataset 或病灶资产模型。
 
 ### 11.7 4.x 路线
 
 | 版本 | 目标 | 主要产出 | 边界 |
 | --- | --- | --- | --- |
 | `V4.0.0` | 建立资产架构和路线基线 | Asset/Snapshot/Image Evidence/JSON 导出方案、差距、验收 | 不实现代码 |
-| `V4.1.x` | Subject Snapshot | Snapshot 数据模型、生成前校验、单受试者快照、JSON 导出、历史管理 | 不做批量训练包 |
-| `V4.2.x` | Image Evidence Index | 原始图像包、解压目录、报告图片、医生标注图、位置首帧图、Landmark 轻量候选索引 | 不做全量逐图索引、不做训练集导出 |
+| `V4.1.x` | Subject Snapshot | Snapshot 数据模型、生成前校验、单受试者快照、JSON 导出、历史管理和 V4.1.5 收口 | 不做批量训练包，不做 Image Evidence |
+| `V4.2.x` | Image Evidence Index | V4.2.0 数据模型、报告图片索引、医生标注图、位置首帧图、Landmark 轻量候选索引 | 不做全量逐图索引、不做训练集导出 |
 | `V4.3.x` | Report-derived Lesion Draft | 基于报告结构化信息和医生标注图生成病灶草稿资产 | 不接算法结果回写 |
 | `V4.4.x` | Algorithm Result Asset | algorithm_runs/results、增强图回写、模型版本和结果证据扩展 | 具体字段随算法输出定 |
 | `V4.5.x` | Dataset Builder | 研究数据集和训练数据集构建能力 | 不由平台负责模型训练 |
@@ -820,6 +835,7 @@ cd backend
 - 文档中不得把 V4.0.0 写成已实现导出 API、已新增数据库或已支持算法结果回写。
 - 以 `C200CN / 06 / 06012` 为样例时，Snapshot JSON 可以表达受试者、访视资料项、字段证据、原始图像包、增强图像包、电子报告、报告图片和医生标注图。
 - V4.2 不得被写成全量逐图索引或训练包导出版本；病灶资产和算法结果回写只作为 V4.3+ / V4.4+ 规划。
+- V4.2.0 只新增 Image Evidence 数据模型；不得被写成已支持报告图片解析、Landmark 反查或导出。
 
 ## 15. 文档维护规则
 

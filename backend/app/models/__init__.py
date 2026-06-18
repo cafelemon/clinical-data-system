@@ -24,6 +24,7 @@ from app.models.identity import (
     user_roles,
 )
 from app.models.image_data import SubjectImageRecord
+from app.models.image_evidence import ImageEvidenceIndex
 from app.models.operation_log import OperationLog
 from app.models.pdf_packet import PdfPacket, PdfPacketSegment
 from app.models.pdf_review import CorrectionTask, CorrectionTaskAnnotation, PdfAnnotation
@@ -52,6 +53,7 @@ __all__ = [
     "DocumentExtractedField",
     "FileAsset",
     "FileVersion",
+    "ImageEvidenceIndex",
     "OperationLog",
     "PdfPacket",
     "PdfPacketSegment",

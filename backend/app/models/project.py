@@ -40,6 +40,11 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+    image_evidence = relationship(
+        "ImageEvidenceIndex",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
     subject_snapshots = relationship(
         "SubjectSnapshot",
         back_populates="project",

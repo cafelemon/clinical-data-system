@@ -87,3 +87,8 @@ class SubjectImageRecord(Base):
     center = relationship("Center", back_populates="image_records")
     subject = relationship("Subject", back_populates="image_records")
     source_raw_record = relationship("SubjectImageRecord", remote_side=[id])
+    image_evidence = relationship(
+        "ImageEvidenceIndex",
+        back_populates="subject_image_record",
+        cascade="all, delete-orphan",
+    )

@@ -16,6 +16,7 @@ erDiagram
   subjects ||--o{ subject_sections : has
   subject_sections ||--o{ subject_items : contains
   subjects ||--o{ subject_image_records : owns
+  subject_image_records ||--o{ image_evidence_index : indexes
   stage_templates ||--o{ stage_files : materializes
   stage_templates ||--o{ subject_items : seeds
   stage_files ||--o{ file_assets : stores
@@ -92,6 +93,7 @@ erDiagram
 | `stage_files` | 中心级阶段资料 | `project_id`, `center_id`, `stage_id`, `stage_template_id`, `file_name`, `file_type`, `required`, `upload_status`, `review_status`, `not_applicable`, `not_applicable_reason`, `remark` | 中心级资料项，支持“若有”资料声明无此材料，可与 SSU 文件显示同名互通提示但不共用归属。 |
 | `clinical_ssu_progress` | SSU 节点进展 | `project_id`, `center_id`, `stage_code`, `status`, `submitted_at`, `approved_at`, `completed_at`, `version_info`, `file_checklist`, `summary`, `fee_detail`, `notes` | 试验准备阶段 SSU 进展人工维护，可独立挂载多份 `ssu_document` PDF 文件。 |
 | `subject_image_records` | 受试者图像数据 | `project_id`, `center_id`, `subject_id`, `image_type`, `screening_no_snapshot`, `upload_status`, `original_name`, `storage_path`, `file_hash`, `file_size`, `version`, `extracted_dir`, `image_count`, `image_total_size`, `image_extensions_json`, `parse_warning`, `source_raw_record_id`, `uploaded_by`, `uploaded_at`, `copied_by`, `copied_at` | 按试验序列号管理原始图像、增强图像和电子报告。 |
+| `image_evidence_index` | 图像证据索引 | `project_id`, `center_id`, `subject_id`, `subject_image_record_id`, `evidence_type`, `evidence_source`, `relative_path`, `match_status`, `file_hash`, `file_size`, `gastrointestinal_location`, `payload_json`, `indexed_by`, `indexed_at` | V4.2.0 建立的 Image Evidence 主表；本版只建模，不自动生成报告图片、医生标注图或 Landmark 索引。 |
 | `subject_snapshots` | 受试者资产快照 | `project_id`, `center_id`, `subject_id`, `screening_no_snapshot`, `schema_version`, `snapshot_version`, `snapshot_type`, `status`, `storage_path`, `file_hash`, `file_size`, `generated_by`, `generated_at`, `locked_at` | V4.1.0 建立的 Subject Snapshot 主表；V4.1.2 起可生成单受试者 `released_snapshot` 并固化 JSON 文件。 |
 | `snapshot_quality_checks` | 快照生成前质量检查 | `check_run_id`, `project_id`, `center_id`, `subject_id`, `snapshot_id`, `schema_version`, `snapshot_type`, `check_code`, `check_status`, `blocking`, `message`, `payload_json`, `created_at` | V4.1.1 建立的 Snapshot 预检结果表；一次预检通过 `check_run_id` 关联多条检查结果，V4.1.2 生成成功后回填 `snapshot_id`。 |
 
@@ -111,6 +113,15 @@ erDiagram
 - `source_raw_record_id` 用于增强图像关联来源原始图像记录；研发下载原始副本时只写 `copied_by/copied_at` 和操作日志。
 - zip 根目录名与 `screening_no_snapshot` 不一致时写入 `parse_warning`，不阻断保存；路径穿越或非法 zip 会拒绝上传。
 
+Image Evidence 口径：
+
+- `image_evidence_index` 是 V4.2 的图像证据索引主表，归属于项目、中心、受试者，并必须关联一条 `subject_image_records`。
+- `evidence_type` 预留 `raw_package`、`enhanced_package`、`report_package`、`report_image`、`marked_image`、`landmark_image`。
+- `match_status` 允许为空；非空时只能是 `resolved`、`approx_matched`、`unresolved`、`not_supported`。
+- `relative_path`、`gastrointestinal_location`、`file_hash` 和 `file_size` 在 V4.2.0 允许为空，后续由报告图片索引或 Landmark 反查能力填充。
+- 删除受试者或对应图像记录时，关联的 Image Evidence 记录级联删除。
+- V4.2.0 不生成 Image Evidence 数据，不拆报告图片，不做 Landmark 反查，不改变 Snapshot JSON。
+
 Subject Snapshot 口径：
 
 - `subject_snapshots(subject_id, snapshot_version)` 唯一，V4.1.2 生成正式快照时按同一受试者现有最大版本递增。
@@ -121,6 +132,7 @@ Subject Snapshot 口径：
 - V4.1.2 的 JSON 路径为 `projects/{project_code}/centers/{center_code}/subjects/{screening_no}/snapshots/v{snapshot_version}/subject_snapshot_v{snapshot_version}.json`，并使用稳定排序 UTF-8 JSON 计算 SHA256 和字节大小。
 - V4.1.2 只固化 JSON 文件；V4.1.3 提供指定 snapshot 的 JSON 下载导出，并在导出前校验文件路径、SHA256 和字节大小。
 - V4.1.4 提供受试者级快照历史列表和前端管理入口，但不允许删除、覆盖、回滚或编辑历史快照。
+- V4.1.5 冻结 V4.1 Snapshot 持久化面；V4.1 最终只包含 `subject_snapshots` 和 `snapshot_quality_checks` 两张 Snapshot 相关表。V4.2.0 起新增 `image_evidence_index`，但不补充 AlgorithmRun、Dataset 或病灶资产表。
 
 Snapshot 生成前校验口径：
 
@@ -130,7 +142,7 @@ Snapshot 生成前校验口径：
 - V4.1.1 的必传影像门禁按现有模型只要求 raw/report 上传；enhanced 只进入摘要，不阻断。
 - 当前影像记录没有审核状态字段，影像审核检查记录为 `not_supported` 且不阻断。
 - 字段门禁使用现有 `document_extracted_fields.status`；`needs_input` 阻断，低置信和人工修改只产生 warning。
-- V4.1.1/V4.1.2/V4.1.3/V4.1.4 不创建 Image Evidence、AlgorithmRun、Dataset 或病灶资产表。
+- V4.1.1/V4.1.2/V4.1.3/V4.1.4/V4.1.5 不创建 Image Evidence、AlgorithmRun、Dataset 或病灶资产表；V4.2.0 只创建 Image Evidence 数据模型，不创建 AlgorithmRun、Dataset 或病灶资产表。
 
 ## 5. 文件、审核与整改
 

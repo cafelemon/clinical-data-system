@@ -57,8 +57,10 @@ V3 早期使用内部阶段号，V3-P0 结束后进入 V3.1：
 | `V4.1.2` | `4.1.2.x` | 单受试者生成基线 | 单受试者 released Snapshot 生成和 JSON 文件固化 |
 | `V4.1.3` | `4.1.3.x` | JSON 导出基线 | released Snapshot JSON 下载、完整性校验和导出审计 |
 | `V4.1.4` | `4.1.4.x` | 历史管理基线 | 受试者详情页 Snapshot 历史、生成入口、刷新和 JSON 下载 |
+| `V4.1.5` | `4.1.5.x` | 系列收口基线 | 冻结 V4.1 Snapshot 接口、数据模型和验收口径，衔接 V4.2 Image Evidence Index |
+| `V4.2.0` | `4.2.0.x` | Image Evidence 数据模型基线 | 建立 `image_evidence_index` 主表、ORM 和内部 read schema |
 
-当前统一口径：V3.5.5 已进入生产应用基线。V4.0.0 进入规划基线，只定义临床数据资产化、Subject Snapshot、Image Evidence 和 Snapshot JSON 导出方案，不新增 API、数据库 migration 或前端交互。V4.0.1 只清理运行时界面中的研发版本痕迹，版本演进继续由文档追溯。V4.1.0 落地 Subject Snapshot 数据模型；V4.1.1 落地生成前校验和质量检查持久化；V4.1.2 在预检通过后生成单受试者 `released_snapshot` 并固化 JSON 文件；V4.1.3 提供已生成 Snapshot JSON 的下载导出和完整性校验；V4.1.4 在受试者详情页提供历史列表、生成入口、刷新和下载。资料包识别以当前受试者实际资料项为约束；字段提取已落地并持续通过真实样本改进；访视以已应用方案为准，默认访视只作为无方案项目的兜底。
+当前统一口径：V3.5.5 已进入生产应用基线。V4.0.0 进入规划基线，只定义临床数据资产化、Subject Snapshot、Image Evidence 和 Snapshot JSON 导出方案，不新增 API、数据库 migration 或前端交互。V4.0.1 只清理运行时界面中的研发版本痕迹，版本演进继续由文档追溯。V4.1.0 落地 Subject Snapshot 数据模型；V4.1.1 落地生成前校验和质量检查持久化；V4.1.2 在预检通过后生成单受试者 `released_snapshot` 并固化 JSON 文件；V4.1.3 提供已生成 Snapshot JSON 的下载导出和完整性校验；V4.1.4 在受试者详情页提供历史列表、生成入口、刷新和下载；V4.1.5 冻结 V4.1 的接口、数据模型、验收和边界口径；V4.2.0 建立 Image Evidence 数据模型，但不生成索引、不解析报告图片、不做 Landmark 反查。资料包识别以当前受试者实际资料项为约束；字段提取已落地并持续通过真实样本改进；访视以已应用方案为准，默认访视只作为无方案项目的兜底。
 
 ## 2. 阶段总览
 
@@ -95,6 +97,8 @@ V3 早期使用内部阶段号，V3-P0 结束后进入 V3.1：
 | `V4.1.2` | 单受试者生成基线 | 新增 `POST /api/subjects/{subject_id}/snapshots`，预检通过后创建 `released_snapshot` 并写入不可变 JSON 文件 | 不新增下载接口，不做批量生成，不新增前端入口，不创建 Image Evidence 或算法模型 |
 | `V4.1.3` | JSON 导出基线 | 新增 `GET /api/subjects/{subject_id}/snapshots/{snapshot_id}/json`，导出已固化的 released JSON | 不重新生成 JSON，不做历史列表，不新增前端入口，不创建 Image Evidence 或算法模型 |
 | `V4.1.4` | 历史管理基线 | 新增 `GET /api/subjects/{subject_id}/snapshots` 和受试者详情页 Snapshot 面板 | 不删除、不回滚、不比对、不批量生成，不创建 Image Evidence 或算法模型 |
+| `V4.1.5` | 系列收口基线 | 固化 V4.1 接口清单、数据模型边界、Snapshot JSON v0 当前能力和 V4.2 衔接口径 | 不新增 API，不新增前端入口，不新增 migration，不提前实现 Image Evidence |
+| `V4.2.0` | Image Evidence 数据模型基线 | 新增 `image_evidence_index` 主表、ORM 关系和内部 read schema | 不生成证据索引，不解析报告图片，不做 Landmark 反查，不新增 API 或前端入口 |
 
 ## 3. V1 记录
 
@@ -583,44 +587,53 @@ V4.0.0 的主要内容：
 6. 明确字段全量导出：`confirmed`、`extracted`、`needs_input`、低置信、人工修改字段均保留，并用状态、置信度和来源证据区分。
 7. 明确图像不内联进 JSON，短期只记录原包、解压目录、报告图片、医生标注图、位置首帧图和必要轻量候选索引。
 
-当前数据基础：
+V4.0.0 定调时的数据基础：
 
 - `subjects`、`subject_sections`、`subject_items` 已能表达受试者、访视和资料项。
 - `file_assets`、`file_versions` 已能表达文件和版本。
 - `document_extracted_fields` 已能表达文件/片段字段证据。
 - `subject_image_records` 已能表达原始图像、增强图像和电子报告记录。
 
-当前差距：
+V4.1.5 后的剩余差距：
 
-- 无受试者级 Snapshot 聚合器和 Snapshot JSON 导出器。
-- 无 snapshot schema version 和不可变快照表。
-- 无快照生成前校验机制，资料/影像审核、字段冲突和关键字段确认尚不能作为统一门禁。
-- 无 Image Evidence 资产模型，当前只有 zip 包、解压目录和统计信息。
+- V4.1 已补齐受试者级 Snapshot 主表、预检、单受试者生成、JSON 下载和历史管理，但尚不支持批量生成或训练包目录。
+- V4.1 的 `images_index` 只表达 raw/enhanced/report 包级信息，尚不表达逐图证据资产。
+- V4.2.0 已补齐 Image Evidence 主表，但尚无报告图片索引、医生标注图索引和 Landmark Image 反查能力。
 - 无 Landmark Image 所需的轻量候选索引，当前无法稳定从报告时间点反查位置首帧。
 - 无算法运行结果模型；病灶资产、训练集导出和算法结果回写不属于 V4.1/V4.2 短期范围。
 
 4.x 路线：
 
 - `V4.0.0`：资产架构、Subject Snapshot、Image Evidence、Snapshot JSON 导出方案、现状差距、路线和验收口径。
-- `V4.1.x`：Subject Snapshot 数据模型、生成前校验、单受试者快照生成、Snapshot JSON 导出和快照历史管理。
-- `V4.2.x`：Image Evidence Index，覆盖原始图像包、解压目录、报告图片、医生标注图、位置首帧图和 Landmark 轻量候选索引。
+- `V4.1.x`：Subject Snapshot 数据模型、生成前校验、单受试者快照生成、Snapshot JSON 导出、快照历史管理和系列收口。
+- `V4.2.x`：Image Evidence Index，V4.2.0 先建立数据模型，后续覆盖报告图片、医生标注图、位置首帧图和 Landmark 轻量候选索引。
 - `V4.3.x`：Report-derived Lesion Draft，基于报告结构化信息和医生标注图生成病灶草稿资产。
 - `V4.4.x`：Algorithm Result Asset，接入算法运行结果、模型版本和增强图回写。
 - `V4.5.x`：Dataset Builder，建立研究数据集与训练数据集构建能力。
+
+V4.1 已落地接口：
+
+```text
+POST /api/subjects/{id}/snapshots/precheck
+POST /api/subjects/{id}/snapshots
+GET  /api/subjects/{id}/snapshots/{snapshot_id}/json
+GET  /api/subjects/{id}/snapshots
+```
 
 未来接口草案：
 
 ```text
 GET  /api/subjects/{id}/snapshots/preview
-POST /api/subjects/{id}/snapshots
-GET  /api/subjects/{id}/snapshots/{snapshot_id}/json
 ```
 
-未来数据模型草案：
+当前已落地数据模型：
 
 - `subject_snapshots`：保存快照版本、schema_version、生成时间、生成者、文件路径、hash、状态和锁定信息。
 - `snapshot_quality_checks`：保存快照生成前校验结果，包括资料必传、影像必传、字段冲突、关键字段确认等。
-- `image_evidence_index`：保存图像包、解压目录、报告图片、医生标注图、位置首帧图和 Landmark 匹配状态。
+- `image_evidence_index`：V4.2.0 已建立，保存图像包、解压目录、报告图片、医生标注图、位置首帧图和 Landmark 匹配状态。
+
+未来数据模型草案：
+
 - `algorithm_runs` / `algorithm_results`：保存模型版本、输入快照、输出增强图或病灶识别结果，进入 V4.4 后细化。
 
 验收口径：
@@ -747,6 +760,72 @@ V4.1.4 的主要内容：
 - 不删除、不覆盖、不回滚、不编辑历史快照。
 - 不做 Snapshot diff、latest 快捷入口或批量生成。
 - 不创建 Image Evidence、AlgorithmRun、Dataset 或病灶相关模型；这些继续进入 V4.2 以后。
+
+### V4.1.5 Subject Snapshot 系列收口与 V4.2 衔接
+
+V4.1.5 是 V4.1 系列的收尾版本，不扩展新的产品能力，只把 V4.1.0-V4.1.4 的 Snapshot 能力整理为稳定基线，并明确 V4.2 从 Image Evidence Index 开始。
+
+V4.1.5 固化的 V4.1 接口清单：
+
+```text
+POST /api/subjects/{subject_id}/snapshots/precheck
+POST /api/subjects/{subject_id}/snapshots
+GET  /api/subjects/{subject_id}/snapshots/{snapshot_id}/json
+GET  /api/subjects/{subject_id}/snapshots
+```
+
+V4.1.5 固化的 V4.1 数据模型口径：
+
+1. `subject_snapshots` 是 V4.1 的快照主表，负责不可变快照版本、状态、文件路径、hash、大小和生成/锁定信息。
+2. `snapshot_quality_checks` 是 V4.1 的快照质量检查表，负责预检运行结果和生成成功后的 Snapshot 关联。
+3. V4.1 不再增加 Snapshot 相关表；Image Evidence、AlgorithmRun、Dataset 和病灶资产进入 V4.2 以后。
+
+V4.1.5 固化的 Snapshot JSON v0 口径：
+
+- JSON 来自已生成并锁定的 `released_snapshot`，不能在下载时从实时库临时拼装。
+- `clinical_tree`、`fields_index`、`source_documents` 和 `quality_summary` 是 V4.1 的核心输出。
+- `images_index` 在 V4.1 只表达 `subject_image_records` 的 raw/enhanced/report 包级信息，包括原包、解压目录、数量、大小和扩展名统计。
+- V4.1 不包含 V4.2 的逐图证据索引、Landmark 候选索引、医生标注图资产或报告图片拆分资产。
+
+V4.2 衔接口径：
+
+- V4.2.0 从 Image Evidence 数据模型开始，输入基础是现有 `subject_image_records`、Snapshot JSON `images_index` 和原始/增强/报告包状态。
+- V4.2 的短期目标是 Image Evidence Index，优先服务报告图片、医生标注图、位置首帧图和 Landmark 轻量候选索引。
+- V4.2.0 不做训练包导出、不做算法运行结果、不做病灶资产、不做完整逐图训练集流水线。
+- V4.2.0 只固化 `image_evidence_index` 基础字段；报告图提取策略和 Landmark/marked image 候选规则进入 V4.2.1/V4.2.2。
+
+验收口径：
+
+- V4.1.0-V4.1.4 不再被描述为未来规划，统一作为已落地 Snapshot 基线。
+- V4.2.0 只写成数据模型阶段；V4.2.1 以后的报告图片索引、Landmark 反查和导出仍是后续阶段。
+- 静态搜索不得出现本版本新增 Image Evidence、AlgorithmRun、Dataset 或病灶资产模型的实现口径。
+
+边界：
+
+- 不新增后端 API，不新增前端路由或按钮。
+- 不新增数据库 migration。
+- 不改变 V4.1.4 Snapshot 面板交互。
+- 不提前创建 Image Evidence、AlgorithmRun、Dataset 或病灶资产模型。
+
+### V4.2.0 Image Evidence 数据模型基线
+
+V4.2.0 是 V4.2 系列第一个实现版本，只建立 Image Evidence Index 的持久化和内部类型基础。
+
+V4.2.0 的主要内容：
+
+1. 新增 `image_evidence_index` 表，归属到项目、中心、受试者和现有 `subject_image_records`。
+2. 预留 `raw_package`、`enhanced_package`、`report_package`、`report_image`、`marked_image`、`landmark_image` 六类证据类型。
+3. 预留 Landmark 匹配状态：`resolved`、`approx_matched`、`unresolved`、`not_supported`，并允许为空以兼容非 Landmark 证据。
+4. 新增 `ImageEvidenceIndex` ORM 和 `ImageEvidenceIndexRead` 内部 schema，供 V4.2.1-V4.2.3 复用。
+
+边界：
+
+- 不新增后端 API，不新增前端入口。
+- 不自动生成 Image Evidence 记录，不改变 V4.1 Snapshot JSON。
+- 不解析电子报告图片，不提取医生标注图；报告图片索引进入 V4.2.1。
+- 不做 Landmark Image 反查；反查能力进入 V4.2.2。
+- 不导出 Image Evidence Index；导出进入 V4.2.3。
+- 不创建 AlgorithmRun、Dataset、病灶资产或逐图文件清单表。
 
 ### 历史分类与布局方向
 
