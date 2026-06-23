@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     initial_admin_email: str | None = None
 
     file_storage_root: Path = PROJECT_ROOT / "data-dev" / "file-storage"
-    max_upload_size_mb: int = 3072
+    max_upload_size_mb: int = 4096
     pdf_packet_ocr_api_url: str | None = "http://127.0.0.1:8048"
     pdf_packet_ocr_dpi: int = 120
     pdf_packet_ocr_timeout_seconds: int = 600

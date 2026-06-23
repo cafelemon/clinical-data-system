@@ -192,14 +192,14 @@ def test_zip_with_screening_root_extracts_without_warning(
     assert (extracted_dir / "06012" / "nested" / "b.PNG").exists()
 
 
-def test_image_upload_uses_three_gb_default_limit_and_rejects_over_limit(
+def test_image_upload_uses_four_gb_default_limit_and_rejects_over_limit(
     client: TestClient,
     admin_headers: dict[str, str],
     monkeypatch,
     tmp_path,
 ) -> None:
     monkeypatch.setattr(settings, "file_storage_root", tmp_path / "file-storage")
-    assert settings.max_upload_size_mb == 3072
+    assert settings.max_upload_size_mb == 4096
     project_id, center_id, _ = setup_subject(client, admin_headers, "IMG_LIMIT")
     raw_record = image_rows(client, admin_headers, project_id, center_id, "raw")[0]["record"]
 

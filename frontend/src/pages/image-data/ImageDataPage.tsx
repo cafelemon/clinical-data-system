@@ -1,11 +1,13 @@
 import {
   AlertCircle,
+  CheckCircle2,
   Copy,
   Download,
   FileArchive,
   FileText,
   Image as ImageIcon,
   Loader2,
+  RefreshCw,
   Upload,
 } from "lucide-react";
 import axios from "axios";
@@ -20,7 +22,14 @@ import { cn } from "@/lib/utils";
 import { imageDataApi } from "@/services/image-data";
 import { masterDataApi } from "@/services/master-data";
 import { useAuthStore } from "@/stores/auth-store";
-import type { ImageDataType, SubjectImageRecord, SubjectImageRow } from "@/types/image-data";
+import type {
+  ImageDataType,
+  ImageEvidence,
+  LandmarkCandidate,
+  LandmarkIndexResponse,
+  SubjectImageRecord,
+  SubjectImageRow,
+} from "@/types/image-data";
 import type { Center, Project } from "@/types/master-data";
 
 const typeTabs: Array<{
@@ -101,13 +110,13 @@ function uploadErrorMessage(err: unknown) {
     return err instanceof Error ? err.message : "上传失败";
   }
   if (err.response?.status === 413) {
-    return "文件超过上传上限，当前图像数据包上限为 3GB；如在生产环境仍报错，请检查代理上传限制。";
+    return "文件超过上传上限，当前图像数据包上限为 4GB；如在生产环境仍报错，请检查代理上传限制。";
   }
   const detail = err.response?.data?.detail;
   if (typeof detail === "string") {
     if (detail.includes("invalid zip")) return "压缩包无法解包，请确认 zip 文件未损坏。";
     if (detail.includes("unsafe path")) return "压缩包包含不安全路径，请重新打包后上传。";
-    if (detail.includes("file too large")) return "文件超过上传上限，当前图像数据包上限为 3GB。";
+    if (detail.includes("file too large")) return "文件超过上传上限，当前图像数据包上限为 4GB。";
     if (detail.includes("raw image data")) return "请先上传原始图像，再上传增强图像。";
     return detail;
   }
@@ -131,6 +140,8 @@ export function ImageDataPage() {
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [busyRecordId, setBusyRecordId] = useState<number | null>(null);
+  const [landmarks, setLandmarks] = useState<Record<number, LandmarkIndexResponse>>({});
+  const [landmarkLoadingId, setLandmarkLoadingId] = useState<number | null>(null);
 
   const activeTab = useMemo(
     () => typeTabs.find((tab) => tab.type === activeType) ?? typeTabs[0],
@@ -142,6 +153,7 @@ export function ImageDataPage() {
   const canUploadReport = hasPermission("image_data:upload_report");
   const canCopyRaw = hasPermission("image_data:copy_raw");
   const canDelete = hasPermission("image_data:delete");
+  const canManageEvidence = hasPermission("image_data:manage_evidence");
 
   const canUploadCurrent =
     (activeType === "raw" && canUploadRaw) ||
@@ -201,6 +213,24 @@ export function ImageDataPage() {
   useEffect(() => {
     void loadRows();
   }, [loadRows]);
+
+  const loadLandmarks = useCallback(async (recordId: number) => {
+    setLandmarkLoadingId(recordId);
+    try {
+      const result = await imageDataApi.getLandmarks(recordId);
+      setLandmarks((current) => ({ ...current, [recordId]: result }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Landmark 证据加载失败");
+    } finally {
+      setLandmarkLoadingId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeType === "report" && expandedId !== null) {
+      void loadLandmarks(expandedId);
+    }
+  }, [activeType, expandedId, loadLandmarks]);
 
   function updateParams(next: {
     type?: ImageDataType;
@@ -268,6 +298,35 @@ export function ImageDataPage() {
       setError(err instanceof Error ? err.message : "清空失败");
     } finally {
       setBusyRecordId(null);
+    }
+  }
+
+  async function handleLandmarkRebuild(recordId: number) {
+    setLandmarkLoadingId(recordId);
+    setError(null);
+    try {
+      const result = await imageDataApi.rebuildLandmarks(recordId);
+      setLandmarks((current) => ({ ...current, [recordId]: result }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Landmark 重建失败");
+    } finally {
+      setLandmarkLoadingId(null);
+    }
+  }
+
+  async function handleLandmarkConfirm(evidenceId: number, candidateKey: string) {
+    setLandmarkLoadingId(evidenceId);
+    setError(null);
+    try {
+      const result = await imageDataApi.confirmLandmark(evidenceId, candidateKey);
+      setLandmarks((current) => ({
+        ...current,
+        [result.report_record_id]: result,
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Landmark 确认失败");
+    } finally {
+      setLandmarkLoadingId(null);
     }
   }
 
@@ -562,6 +621,18 @@ export function ImageDataPage() {
                                     warning={Boolean(record.parse_warning)}
                                   />
                                 </div>
+                                {activeType === "report" && (
+                                  <LandmarkReviewPanel
+                                    result={landmarks[record.id]}
+                                    loading={landmarkLoadingId !== null}
+                                    canManage={canManageEvidence}
+                                    onReload={() => void loadLandmarks(record.id)}
+                                    onRebuild={() => void handleLandmarkRebuild(record.id)}
+                                    onConfirm={(evidenceId, candidateKey) =>
+                                      void handleLandmarkConfirm(evidenceId, candidateKey)
+                                    }
+                                  />
+                                )}
                               </td>
                             </tr>
                           )}
@@ -579,6 +650,294 @@ export function ImageDataPage() {
             </p>
           )}
         </section>
+      </div>
+    </div>
+  );
+}
+
+const landmarkStatusLabels: Record<LandmarkIndexResponse["index_status"], string> = {
+  waiting_for_assets: "等待三类资料",
+  indexed: "已完成",
+  partial: "部分待复核",
+  unresolved: "未定位",
+  not_supported: "暂不支持",
+  failed: "处理失败",
+};
+
+function landmarkStatusTone(
+  status: LandmarkIndexResponse["index_status"],
+): "success" | "warning" | "danger" | "neutral" {
+  if (status === "indexed") return "success";
+  if (status === "failed") return "danger";
+  if (status === "partial" || status === "unresolved") return "warning";
+  return "neutral";
+}
+
+function matchStatusLabel(evidence: ImageEvidence) {
+  if (evidence.payload_json?.manually_confirmed) return "人工确认";
+  if (evidence.match_status === "resolved") return "精确命中";
+  if (evidence.match_status === "approx_matched") return "候选待确认";
+  return "未定位";
+}
+
+function LandmarkReviewPanel({
+  result,
+  loading,
+  canManage,
+  onReload,
+  onRebuild,
+  onConfirm,
+}: {
+  result?: LandmarkIndexResponse;
+  loading: boolean;
+  canManage: boolean;
+  onReload: () => void;
+  onRebuild: () => void;
+  onConfirm: (evidenceId: number, candidateKey: string) => void;
+}) {
+  const landmarks =
+    result?.evidence.filter((row) => row.evidence_type === "landmark_image") ?? [];
+
+  return (
+    <div className="mt-4 rounded-md border border-slate-200 bg-white">
+      <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <p className="font-medium text-slate-900">Landmark 反查复核</p>
+            {result && (
+              <Badge tone={landmarkStatusTone(result.index_status)}>
+                {landmarkStatusLabels[result.index_status]}
+              </Badge>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            报告图、增强图命中与 raw 同帧证据对照
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button type="button" size="sm" variant="ghost" onClick={onReload} disabled={loading}>
+            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            刷新
+          </Button>
+          {canManage && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={onRebuild}
+              disabled={loading}
+            >
+              重建索引
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {!result && (
+        <div className="px-4 py-8 text-center text-xs text-slate-500">
+          {loading ? "正在加载 Landmark 证据" : "暂无 Landmark 结果"}
+        </div>
+      )}
+
+      {result && (
+        <>
+          <div className="grid grid-cols-4 gap-2 border-b border-slate-100 px-4 py-3 text-center text-xs">
+            <EvidenceStat label="精确命中" value={result.counts.resolved} tone="emerald" />
+            <EvidenceStat label="待复核" value={result.counts.approx_matched} tone="amber" />
+            <EvidenceStat label="未定位" value={result.counts.unresolved} tone="rose" />
+            <EvidenceStat label="圈注图" value={result.counts.marked} tone="teal" />
+          </div>
+          {result.warning && (
+            <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+              {result.warning}
+            </div>
+          )}
+          {landmarks.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-slate-500">
+              当前没有可复核的报告时间点
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {landmarks.map((evidence, index) => (
+                <LandmarkEvidenceRow
+                  key={evidence.id}
+                  evidence={evidence}
+                  index={index}
+                  loading={loading}
+                  canManage={canManage}
+                  onConfirm={onConfirm}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function EvidenceStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "emerald" | "amber" | "rose" | "teal";
+}) {
+  const tones = {
+    emerald: "bg-emerald-50 text-emerald-700",
+    amber: "bg-amber-50 text-amber-700",
+    rose: "bg-rose-50 text-rose-700",
+    teal: "bg-teal-50 text-teal-700",
+  };
+  return (
+    <div className={cn("rounded-md px-2 py-2", tones[tone])}>
+      <p className="text-base font-semibold">{value}</p>
+      <p>{label}</p>
+    </div>
+  );
+}
+
+function LandmarkEvidenceRow({
+  evidence,
+  index,
+  loading,
+  canManage,
+  onConfirm,
+}: {
+  evidence: ImageEvidence;
+  index: number;
+  loading: boolean;
+  canManage: boolean;
+  onConfirm: (evidenceId: number, candidateKey: string) => void;
+}) {
+  const candidates = evidence.payload_json?.candidates ?? [];
+  const selectedKey = evidence.payload_json?.selected_candidate_key ?? "";
+  const selected = evidence.payload_json?.selected_candidate ?? null;
+  const [candidateKey, setCandidateKey] = useState(selectedKey);
+
+  useEffect(() => {
+    setCandidateKey(selectedKey);
+  }, [selectedKey]);
+
+  return (
+    <div className="px-4 py-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-slate-400">
+            #{String(index + 1).padStart(2, "0")}
+          </span>
+          <span className="text-sm font-medium text-slate-900">
+            {evidence.gastrointestinal_location || "位置待识别"}
+          </span>
+          <span className="text-xs text-slate-500">
+            {evidence.payload_json?.elapsed_time ?? "-"}
+          </span>
+          {evidence.payload_json?.marked && <Badge tone="warning">医生圈注</Badge>}
+        </div>
+        <Badge
+          tone={
+            evidence.match_status === "resolved"
+              ? "success"
+              : evidence.match_status === "unresolved"
+                ? "danger"
+                : "warning"
+          }
+        >
+          {matchStatusLabel(evidence)}
+        </Badge>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        <EvidencePreview evidenceId={evidence.id} variant="report" label="报告图" />
+        <EvidencePreview evidenceId={evidence.id} variant="enhanced" label="增强命中" />
+        <EvidencePreview evidenceId={evidence.id} variant="raw" label="Raw 同帧" />
+      </div>
+
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+        <Field label="候选帧" className="min-w-0 flex-1">
+          <SelectField
+            value={candidateKey}
+            disabled={!canManage || candidates.length === 0 || loading}
+            onChange={(event) => setCandidateKey(event.target.value)}
+          >
+            {candidates.length === 0 && <option value="">无候选</option>}
+            {candidates.map((candidate: LandmarkCandidate) => (
+              <option key={candidate.candidate_key} value={candidate.candidate_key}>
+                {candidate.filename} · {(candidate.score * 100).toFixed(2)}%
+              </option>
+            ))}
+          </SelectField>
+        </Field>
+        <div className="min-w-[150px] rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          相似度：
+          <span className="ml-1 font-semibold text-slate-900">
+            {selected ? `${(selected.score * 100).toFixed(2)}%` : "-"}
+          </span>
+        </div>
+        {canManage && (
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => onConfirm(evidence.id, candidateKey)}
+            disabled={!candidateKey || loading}
+          >
+            <CheckCircle2 className="size-3.5" />
+            确认候选
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EvidencePreview({
+  evidenceId,
+  variant,
+  label,
+}: {
+  evidenceId: number;
+  variant: "report" | "enhanced" | "raw";
+  label: string;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    setFailed(false);
+    void imageDataApi
+      .previewEvidence(evidenceId, variant)
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = window.URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        if (active) setFailed(true);
+      });
+    return () => {
+      active = false;
+      if (objectUrl) window.URL.revokeObjectURL(objectUrl);
+    };
+  }, [evidenceId, variant]);
+
+  return (
+    <div className="overflow-hidden rounded-md border border-slate-200 bg-slate-950">
+      <div className="flex h-8 items-center justify-between bg-white px-3 text-xs text-slate-600">
+        <span>{label}</span>
+        <span className="uppercase text-slate-400">{variant}</span>
+      </div>
+      <div className="flex aspect-square items-center justify-center">
+        {url ? (
+          <img src={url} alt={`${label}预览`} className="size-full object-contain" />
+        ) : (
+          <span className="text-xs text-slate-400">
+            {failed ? "暂无预览" : "加载中"}
+          </span>
+        )}
       </div>
     </div>
   );

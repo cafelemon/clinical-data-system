@@ -1,9 +1,18 @@
+import mimetypes
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse
@@ -12,8 +21,14 @@ from app.api.deps import AccessContext, require_permission
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.files import ensure_relative_path
-from app.models import Center, Project, Subject, SubjectImageRecord
-from app.schemas import SubjectImageRowRead, SubjectImageUploadRead
+from app.models import Center, ImageEvidenceIndex, Project, Subject, SubjectImageRecord
+from app.schemas import (
+    LandmarkConfirmRequest,
+    LandmarkIndexResponse,
+    ReportImageIndexResponse,
+    SubjectImageRowRead,
+    SubjectImageUploadRead,
+)
 from app.services.audit import record_operation
 from app.services.image_data import (
     IMAGE_TYPES,
@@ -27,10 +42,26 @@ from app.services.image_data import (
     store_image_upload,
     validate_upload_file,
 )
+from app.services.landmark_index import (
+    clear_landmark_index,
+    confirm_landmark_candidate,
+    landmark_counts,
+    landmark_index_state,
+    maybe_rebuild_landmark_index,
+    rebuild_landmark_index,
+)
+from app.services.report_image_index import (
+    clear_report_image_index,
+    rebuild_report_image_index,
+)
 
 router = APIRouter()
 DBSession = Annotated[Session, Depends(get_db)]
 ImageReadAccess = Annotated[AccessContext, Depends(require_permission("image_data:read"))]
+ImageEvidenceManageAccess = Annotated[
+    AccessContext,
+    Depends(require_permission("image_data:manage_evidence")),
+]
 ImageUpload = Annotated[UploadFile, File()]
 
 
@@ -171,6 +202,9 @@ def upload_image_record(
 
     next_version = record.version + 1
     target_dir = image_record_directory(project, center, subject, record.image_type, next_version)
+    clear_landmark_index(db, record.subject_id)
+    if record.image_type == "report":
+        clear_report_image_index(db, record)
     clear_record_physical_files(record)
     stored = store_image_upload(file, target_dir)
     record.original_name = stored.original_name
@@ -207,8 +241,14 @@ def upload_image_record(
         record.image_count = 0
         record.image_total_size = 0
         record.image_extensions_json = None
+        rebuild_report_image_index(db, record, indexed_by=access.user.id)
     if record.image_type == "enhanced":
         record.source_raw_record_id = records["raw"].id
+    landmark_result = maybe_rebuild_landmark_index(
+        db,
+        record.subject_id,
+        indexed_by=access.user.id,
+    )
     record_operation(
         db,
         action="image_data.upload",
@@ -223,11 +263,276 @@ def upload_image_record(
             "screening_no": subject.screening_no,
             "file_size": record.file_size,
             "image_count": record.image_count,
+            "landmark_index_status": (
+                landmark_result.index_status if landmark_result is not None else None
+            ),
         },
     )
     db.commit()
     db.refresh(record)
     return SubjectImageUploadRead(record=record)
+
+
+@router.post(
+    "/image-data/{record_id}/report-images/index",
+    response_model=ReportImageIndexResponse,
+)
+def index_report_images(
+    record_id: int,
+    db: DBSession,
+    access: ImageReadAccess,
+    request: Request,
+) -> ReportImageIndexResponse:
+    record = get_record_or_404(db, record_id)
+    ensure_record_scope(access, record)
+    if record.image_type != "report":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="record is not an electronic report",
+        )
+    ensure_upload_permission(access, record)
+    if record.upload_status != IMAGE_UPLOAD_STATUS_DONE or record.storage_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="electronic report has not been uploaded",
+        )
+
+    clear_landmark_index(db, record.subject_id)
+    result = rebuild_report_image_index(db, record, indexed_by=access.user.id)
+    landmark_result = maybe_rebuild_landmark_index(
+        db,
+        record.subject_id,
+        indexed_by=access.user.id,
+    )
+    record_operation(
+        db,
+        action="image_data.report_images.index",
+        request=request,
+        access=access,
+        target_type="subject_image_record",
+        target_id=record.id,
+        project_id=record.project_id,
+        center_id=record.center_id,
+        detail={
+            "screening_no": record.screening_no_snapshot,
+            "report_version": result.report_version,
+            "index_status": result.index_status,
+            "indexed_image_count": len(result.evidence),
+            "duplicate_count": result.duplicate_count,
+            "landmark_index_status": (
+                landmark_result.index_status if landmark_result is not None else None
+            ),
+        },
+    )
+    db.commit()
+    return ReportImageIndexResponse(
+        record_id=result.record_id,
+        report_version=result.report_version,
+        index_status=result.index_status,
+        report_package_evidence_id=result.report_package.id,
+        indexed_image_count=len(result.evidence),
+        duplicate_count=result.duplicate_count,
+        warning=result.warning,
+        evidence=result.evidence,
+    )
+
+
+def landmark_response(result) -> LandmarkIndexResponse:
+    return LandmarkIndexResponse(
+        report_record_id=result.report_record_id,
+        raw_record_id=result.raw_record_id,
+        enhanced_record_id=result.enhanced_record_id,
+        index_status=result.index_status,
+        counts=landmark_counts(result.evidence),
+        warning=result.warning,
+        evidence=result.evidence,
+    )
+
+
+@router.post(
+    "/image-data/{record_id}/landmarks/index",
+    response_model=LandmarkIndexResponse,
+)
+def index_landmarks(
+    record_id: int,
+    db: DBSession,
+    access: ImageEvidenceManageAccess,
+    request: Request,
+) -> LandmarkIndexResponse:
+    record = get_record_or_404(db, record_id)
+    ensure_record_scope(access, record)
+    if record.image_type != "report":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="record is not an electronic report",
+        )
+    result = maybe_rebuild_landmark_index(
+        db,
+        record.subject_id,
+        indexed_by=access.user.id,
+    )
+    if result is None:
+        result = rebuild_landmark_index(db, record, indexed_by=access.user.id)
+    record_operation(
+        db,
+        action="image_data.landmarks.index",
+        request=request,
+        access=access,
+        target_type="subject_image_record",
+        target_id=record.id,
+        project_id=record.project_id,
+        center_id=record.center_id,
+        detail={
+            "screening_no": record.screening_no_snapshot,
+            "index_status": result.index_status,
+            "counts": landmark_counts(result.evidence),
+        },
+    )
+    db.commit()
+    return landmark_response(result)
+
+
+@router.get(
+    "/image-data/{record_id}/landmarks",
+    response_model=LandmarkIndexResponse,
+)
+def get_landmarks(
+    record_id: int,
+    db: DBSession,
+    access: ImageReadAccess,
+) -> LandmarkIndexResponse:
+    record = get_record_or_404(db, record_id)
+    ensure_record_scope(access, record)
+    if record.image_type != "report":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="record is not an electronic report",
+        )
+    return landmark_response(landmark_index_state(db, record))
+
+
+@router.post(
+    "/image-evidence/{evidence_id}/confirm",
+    response_model=LandmarkIndexResponse,
+)
+def confirm_landmark(
+    evidence_id: int,
+    payload: LandmarkConfirmRequest,
+    db: DBSession,
+    access: ImageEvidenceManageAccess,
+    request: Request,
+) -> LandmarkIndexResponse:
+    evidence = db.get(ImageEvidenceIndex, evidence_id)
+    if evidence is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="image evidence not found",
+        )
+    ensure_record_scope(
+        access,
+        get_record_or_404(db, evidence.subject_image_record_id),
+    )
+    try:
+        confirm_landmark_candidate(
+            evidence,
+            payload.candidate_key,
+            confirmed_by=access.user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="candidate not found",
+        ) from exc
+    report_record_id = (evidence.payload_json or {}).get("report_record_id")
+    report_record = (
+        db.get(SubjectImageRecord, report_record_id)
+        if isinstance(report_record_id, int)
+        else None
+    )
+    if report_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="landmark report source is missing",
+        )
+    record_operation(
+        db,
+        action="image_data.landmark.confirm",
+        request=request,
+        access=access,
+        target_type="image_evidence_index",
+        target_id=evidence.id,
+        project_id=evidence.project_id,
+        center_id=evidence.center_id,
+        detail={"candidate_key": payload.candidate_key},
+    )
+    db.commit()
+    db.refresh(evidence)
+    return landmark_response(landmark_index_state(db, report_record))
+
+
+@router.get("/image-evidence/{evidence_id}/preview")
+def preview_image_evidence(
+    evidence_id: int,
+    db: DBSession,
+    access: ImageReadAccess,
+    variant: str = "raw",
+) -> FileResponse:
+    evidence = db.get(ImageEvidenceIndex, evidence_id)
+    if evidence is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="image evidence not found",
+        )
+    ensure_record_scope(
+        access,
+        get_record_or_404(db, evidence.subject_image_record_id),
+    )
+    payload = evidence.payload_json or {}
+    relative_path: str | None = None
+    if variant == "report":
+        value = payload.get("report_relative_path")
+        relative_path = value if isinstance(value, str) else evidence.relative_path
+    elif variant == "enhanced":
+        selected = payload.get("selected_candidate")
+        if isinstance(selected, dict):
+            value = selected.get("enhanced_relative_path")
+            relative_path = value if isinstance(value, str) else None
+    elif variant == "raw":
+        relative_path = evidence.relative_path
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid preview variant",
+        )
+    if not relative_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="preview image not available",
+        )
+    try:
+        path = ensure_relative_path(settings.file_storage_root, relative_path)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="preview image not found",
+        ) from exc
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="preview image not found",
+        )
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if not media_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="evidence preview is not an image",
+        )
+    return FileResponse(path, media_type=media_type)
 
 
 @router.get("/image-data/{record_id}/download")
@@ -309,6 +614,9 @@ def delete_image_record(
 ) -> None:
     record = get_record_or_404(db, record_id)
     ensure_record_scope(access, record)
+    clear_landmark_index(db, record.subject_id)
+    if record.image_type == "report":
+        clear_report_image_index(db, record)
     clear_record_physical_files(record)
     record_operation(
         db,

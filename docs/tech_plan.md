@@ -35,7 +35,7 @@ Backend FastAPI
 12. V3.4.0 图像数据管理、研发副本下载和电子报告上传。
 13. V3.4.7 已应用方案访视优先生效和默认访视兜底。
 14. V3.5 文件/SSU 字段提取、字段核查、规范值展示和进展回写。
-15. V3.5.5 当前受试者资料项约束下的结肠资料包识别和 3GB 图像包上传。
+15. V3.5.5 当前受试者资料项约束下的结肠资料包识别和大图像包上传。
 16. V4.0.0 临床数据资产化、Subject Snapshot 与 Image Evidence 基线。
 
 ## 2. 模块边界
@@ -52,7 +52,7 @@ Backend FastAPI
 | 临床数据集 | 三阶段中心资料、SSU 进展、若有资料声明、方案访视优先生效、默认访视兜底 | 资料包页级 OCR 分类 |
 | 看板 | 纯展示运营看板、独立维护入口、自动优先聚合接口 | 替代临床数据集成为主数据源 |
 | 试验方案 | 项目级方案 PDF 版本、访视/资料项/中心解析草稿、人工修正和确认应用 | 自动删除有文件的历史配置 |
-| 图像数据 | 原始/增强图像和电子报告、3GB zip 上传、安全解包统计、研发原始副本下载 | 单张图片预览和算法任务调度 |
+| 图像数据 | 原始/增强图像和电子报告、4GB zip 上传、安全解包统计、Landmark 反查与复核 | 算法任务调度和训练集导出 |
 | 字段提取 | 文件版本或资料包片段字段、规范值、来源页、置信度、人工核查和 SSU 回写 | 替代原文件和人工最终判断 |
 | V4 临床数据资产化 | Subject Snapshot、Image Evidence、Snapshot JSON 导出、AlgorithmRun 和 Dataset 扩展位 | V4.0.0 不实现导出 API、不训练模型、不定义完整算法结果格式 |
 
@@ -75,7 +75,7 @@ Mac OCR 使用 Apple Vision OCR，目标是便于本地开发和真实样本调�
 - 生产交付优先使用离线镜像包和模型缓存包。
 - 不在生产服务器在线 build GPU OCR 镜像。
 - 常规应用发布只替换 backend/frontend，并使用 `--no-build --no-deps` 保持 OCR 和 PostgreSQL 不变。
-- 生产 Nginx、后端配置和前端上传超时共同支持 `3GB` 图像包。
+- 生产 Nginx、后端配置和前端上传超时共同支持 `4GB` 图像包。
 
 ## 4. V2 PDF 审阅方案
 
@@ -439,13 +439,14 @@ V3.4.0 新增“图像数据”主模块，按受试者试验序列号管理原�
 - `image_data:copy_raw`：研发原始图像副本下载入口。
 - `image_data:upload_enhanced`：上传或下载增强图像记录。
 - `image_data:upload_report`：上传或下载电子报告。
+- `image_data:manage_evidence`：重建和人工确认 Landmark 证据。
 - `image_data:delete`：清空图像数据记录。
 
 安全边界：
 
 - zip 解包必须拒绝绝对路径和 `..` 路径穿越。
 - zip 根目录名不强制等于 `subjects.screening_no`，不一致时仅写入 `parse_warning`。
-- 单文件上传上限为 `3072MB`；生产代理层 `client_max_body_size` 同步为 `3g`。
+- 单文件上传上限为 `4096MB`；生产代理层 `client_max_body_size` 同步为 `4g`。
 - 增强图像必须在对应原始图像已上传后才能上传。
 - 当前不做单图缩略图、单图预览、算法任务调度，也不创建独立研发副本记录。
 
@@ -512,14 +513,14 @@ V4.1.5 已在 V3.5.5 数据基础上完成 Subject Snapshot 基线。当前可�
 - `subject_image_records`：原始图像、增强图像、电子报告的原包、解压目录、数量、大小和扩展名分布。
 - `subject_snapshots`：受试者级不可变快照版本、状态、文件路径、hash、大小和生成/锁定信息。
 - `snapshot_quality_checks`：快照生成前质量检查、阻断/警告结果和生成成功后的快照关联。
-- `image_evidence_index`：V4.2.0 建立的图像证据索引主表，可关联 raw/enhanced/report 图像记录并预留报告图片、医生标注图和 Landmark Image。
+- `image_evidence_index`：V4.2.0 建立的图像证据索引主表；V4.2.1 已用于 PDF `report_package` 和 `report_image`。
 
 当前缺口：
 
 - V4.1 只生成和导出单受试者 `released_snapshot`，尚不做批量生成、批量导出或训练包目录。
 - V4.1 的 `images_index` 只表达 raw/enhanced/report 包级信息，尚不表达逐图证据资产。
-- V4.2.0 只建立 Image Evidence 数据模型，尚不自动生成图像证据记录。
-- 缺少报告图片索引、医生标注图索引和 Landmark Image 所需的轻量候选索引，当前无法稳定从报告时间点反查位置首帧。
+- V4.2.1 已支持 PDF 电子报告内嵌图片索引；Office 报告仍为 `not_supported`。
+- 仍缺少医生标注图识别和 Landmark Image 所需的轻量候选索引，当前无法稳定从报告时间点反查位置首帧。
 - 缺少算法运行结果模型；病灶资产、训练集导出和算法结果回写不属于 V4.1/V4.2 短期范围。
 
 ### 11.3 Subject Snapshot
@@ -612,7 +613,7 @@ Snapshot JSON v0 顶层固定结构如下：
 
 V4.2 建立图像证据索引体系，优先覆盖 `C200CN`，后续兼容 `C10000`。
 
-V4.2.0 只落地 `image_evidence_index` 数据模型，不生成索引数据。报告图片索引进入 V4.2.1，Landmark Image 反查进入 V4.2.2，Image Evidence Index 导出进入 V4.2.3。
+V4.2.0 落地 `image_evidence_index` 数据模型。V4.2.1 已支持 PDF 报告图片索引；V4.2.2 已支持 Landmark Image 反查、标注图识别和人工复核；Image Evidence Index 导出进入 V4.2.3。
 
 图像资产类型：
 
@@ -623,6 +624,23 @@ V4.2.0 只落地 `image_evidence_index` 数据模型，不生成索引数据。�
 - `Landmark Image`：位置首帧图，来源于报告时间点或标注信息反查。
 
 V4.2 不做全量逐图索引，不把所有解压图片逐张提升为业务资产。为支持 Landmark 反查，允许建立轻量候选索引，只覆盖报告时间点、首帧、关键帧或标注相关图像；该能力不在 V4.2.0 实现。
+
+V4.2.1 报告图片索引口径：
+
+- 仅正式支持 PDF，使用 PyMuPDF 提取内嵌栅格图片；DOC/DOCX/XLS/XLSX 记录为 `not_supported`。
+- 每个当前报告版本写入一条 `report_package`；图片按 SHA256 去重后写入 `report_image`。
+- 提取图片存放在报告版本目录的 `evidence/report_images/`，`payload_json` 保存报告版本、页码、图片序号、xref、宽高、格式、MIME 和全部出现位置。
+- 上传后自动索引，同时提供 `POST /api/image-data/{record_id}/report-images/index` 进行替换式重建。
+- `empty`、`not_supported`、`failed` 只记录索引状态和提示，不撤销电子报告上传。
+- V4.2.1 不推断 `marked_image`，不填写 Landmark 匹配状态或消化道位置。
+
+V4.2.2 Landmark 反查口径：
+
+- OCR 读取报告图烧录时间，PDF 布局读取消化道位置标题。
+- `ispLog.txt` 作为首帧时间主证据，文件名时间作为回退。
+- 只生成目标秒前后候选，不创建全量逐图表；OpenCV 排除时间文字和绿色圈注后完成相似度排序。
+- `landmark_image` 关联 raw 记录并保留增强图候选、版本、分数和人工确认；`marked_image` 关联报告记录。
+- API 支持重建、查询、确认和 `report/enhanced/raw` 三类受控预览，前端在电子报告展开区完成复核。
 
 Landmark Image 匹配状态：
 
@@ -704,7 +722,7 @@ GET  /api/subjects/{id}/snapshots/preview
 - `algorithm_runs`：`subject_id`、`input_snapshot_id`、`algorithm_name`、`model_version`、`status`、`started_at`、`completed_at`。
 - `algorithm_results`：`algorithm_run_id`、`result_type`、`target_image_path`、`payload_json`、`confidence`、`review_status`。
 
-V4.2.0 后，Image Evidence 只具备数据模型；不提前创建 AlgorithmRun、Dataset 或病灶资产模型。
+V4.2.1 后，Image Evidence 已具备 PDF 报告包和报告图片索引；仍不提前创建 AlgorithmRun、Dataset 或病灶资产模型。
 
 ### 11.7 4.x 路线
 
@@ -823,7 +841,7 @@ cd backend
 - 当前受试者无同名资料项时，不生成指向旧项目资料项的建议 ID。
 - 小肠资料包原有规则保持兼容。
 - `06012.zip` 和 `06012_enhanced.zip` 按原始、增强顺序上传后保留原包并显示解压统计。
-- 超过 `3072MB` 返回 413，非法 zip 和路径穿越继续拒绝。
+- 超过 `4096MB` 返回 413，非法 zip 和路径穿越继续拒绝。
 - 人工日期输入如 `2025.12.18 08.07` 展示为 `2025/12/18 08:07`。
 
 ### 14.8 V4.0.0 文档和 schema 验证
@@ -836,6 +854,7 @@ cd backend
 - 以 `C200CN / 06 / 06012` 为样例时，Snapshot JSON 可以表达受试者、访视资料项、字段证据、原始图像包、增强图像包、电子报告、报告图片和医生标注图。
 - V4.2 不得被写成全量逐图索引或训练包导出版本；病灶资产和算法结果回写只作为 V4.3+ / V4.4+ 规划。
 - V4.2.0 只新增 Image Evidence 数据模型；不得被写成已支持报告图片解析、Landmark 反查或导出。
+- V4.2.1 只支持 PDF 报告图片索引和后端重建；不得写成已支持标注图识别、Landmark 反查、Snapshot JSON 扩展或证据导出。
 
 ## 15. 文档维护规则
 

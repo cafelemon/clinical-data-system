@@ -2,6 +2,8 @@
 
 `clinical-data-system` 是面向临床研究资料收集、质量核查、PDF 审阅、资料包识别和图像数据管理的内部业务系统。
 
+如果是项目交接或首次接手，请先读 `docs/handover.md`。本文保留为 10 分钟快速入口，完整背景、模块地图、运行验证、发布边界和 V4.2.2 交接说明都集中在交接文档中。
+
 当前生产基线为 `V3.5.5`。当前生产交付已覆盖 V1 至 V3.5.5 的应用能力，不再使用“V3 仅为内部迭代、生产只交付 V1/V2”的旧口径。
 
 V4.0.0 进入规划基线：大版本 4 定位为服务研发中心算法需求的临床数据资产化体系，短期以 Subject Snapshot、Image Evidence Index 和 Snapshot JSON 导出为主。V4.0.0 只落地资产架构、Snapshot/Schema、差距和路线，不新增后端 API、数据库 migration 或前端交互。
@@ -11,6 +13,10 @@ V4.0.1 完成运行时界面版本痕迹清理：生产界面只呈现业务语�
 V4.1.5 完成 Subject Snapshot 系列收口：V4.1 的数据模型、预检、生成、下载和历史管理进入稳定基线；下一阶段进入 V4.2 Image Evidence Index。
 
 V4.2.0 落地 Image Evidence 数据模型基线：新增图像证据索引持久化口径，但不生成索引、不解析报告图片、不做 Landmark 反查、不新增前端入口。
+
+V4.2.1 落地 PDF 电子报告图片索引：上传后自动提取内嵌图片并写入 `report_package` / `report_image` 证据，支持后端重建；Office 报告暂记为不支持，不识别医生标注图或 Landmark。
+
+V4.2.2 落地 Landmark Image 反查与复核：按报告经过时长定位增强图并回溯 raw 同帧，识别绿色医生圈注，支持候选复核、人工确认和三图预览。
 
 ## 1. 当前能力
 
@@ -23,6 +29,8 @@ V4.2.0 落地 Image Evidence 数据模型基线：新增图像证据索引持久
 - 文件字段提取、来源页与置信度记录、人工核查、规范值展示和 SSU 回写。
 - 数据驾驶舱、独立看板维护、Excel 导入导出和项目/中心范围汇总。
 - 原始图像、增强图像和电子报告管理；zip 原包保留、安全解包和统计。
+- PDF 电子报告内嵌图片自动索引、SHA256 去重、来源页追溯和后端重建。
+- 报告图到增强图、raw 同帧的 Landmark 反查，医生圈注识别和前端人工复核。
 - V4.0.0 临床数据资产化规划：以 Subject 为归属中心，建立 Snapshot、Image Evidence、AlgorithmRun、Dataset 等资产口径；JSON 是 Snapshot 的导出形式，不是核心资产本身。
 
 ## 2. 当前业务口径
@@ -44,7 +52,7 @@ V4.2.0 落地 Image Evidence 数据模型基线：新增图像证据索引持久
 ### 2.3 图像数据
 
 - 图像类型为 `raw`、`enhanced`、`report`。
-- 原始图像和增强图像使用 zip 上传，单文件业务上限为 `3GB`。
+- 原始图像和增强图像使用 zip 上传，单文件业务上限为 `4GB`。
 - 增强图像必须在原始图像上传后才能上传。
 - 系统保留原 zip，并将内容安全解压到版本目录，统计图片数量、总大小和扩展名分布。
 
@@ -60,7 +68,7 @@ V4.2.0 落地 Image Evidence 数据模型基线：新增图像证据索引持久
 - 正式研发交付必须基于不可变 Snapshot，禁止把实时库状态直接作为训练或研发交付来源。
 - JSON 是 Snapshot 的导出形式，保留业务编码标识，如项目、中心和筛选号，不导出姓名、身份证等直接身份信息。
 - V4.1 已完成 Subject Snapshot 基线：V4.1.0 落地 `subject_snapshots` 数据模型，V4.1.1 落地生成前校验和 `snapshot_quality_checks`，V4.1.2 落地单受试者 `released_snapshot` 生成和 JSON 文件固化，V4.1.3 落地 Snapshot JSON 下载/导出，V4.1.4 落地历史管理和前端入口，V4.1.5 完成系列收口和 V4.2 衔接。
-- V4.2 建立 Image Evidence Index：V4.2.0 先落地 `image_evidence_index` 数据模型，后续 V4.2.1 做报告图片索引，V4.2.2 做 Landmark 反查，V4.2.3 做 Image Evidence Index 导出；不做全量逐图索引，但允许为 Landmark 反查建立轻量候选索引。
+- V4.2 建立 Image Evidence Index：V4.2.0 已落地数据模型，V4.2.1 已完成 PDF 报告图片索引，V4.2.2 已完成 Landmark 反查、标注图识别和前端复核，V4.2.3 负责 Image Evidence Index 导出；不做全量逐图索引。
 - V4.3 以后病灶草稿、算法结果、训练/研究数据集构建按 V4.1/V4.2 反馈再细化；短期不把病灶资产作为必须落地范围。
 
 ## 3. 文档索引
@@ -68,6 +76,7 @@ V4.2.0 落地 Image Evidence 数据模型基线：新增图像证据索引持久
 | 文档 | 用途 |
 | --- | --- |
 | `README.md` | 当前系统能力、统一业务口径和本地运行入口 |
+| `docs/handover.md` | 离职/接手交接主文档，串联背景、模块、运行、验证、发布和 V4.2.2 当前状态 |
 | `docs/process.md` | 版本边界、历史记录、验收状态和生产变更原则 |
 | `docs/version_history.md` | 版本号、日期和一句话时间线 |
 | `docs/tech_plan.md` | 当前技术架构、模块边界和关键实现原则 |
@@ -153,6 +162,26 @@ V4.2.0 数据模型验收：
 cd backend
 .venv/bin/python -m pytest tests/test_image_evidence_index.py
 .venv/bin/python -m ruff check app/models/image_evidence.py app/schemas/image_evidence.py tests/test_image_evidence_index.py
+```
+
+V4.2.1 报告图片索引验收：
+
+```bash
+cd backend
+.venv/bin/python -m pytest tests/test_report_image_index.py tests/test_image_evidence_index.py
+.venv/bin/python -m ruff check app/services/report_image_index.py app/api/v1/endpoints/image_data.py tests/test_report_image_index.py
+```
+
+V4.2.2 Landmark 反查验收：
+
+```bash
+cd backend
+.venv/bin/python -m pytest tests/test_landmark_index.py tests/test_report_image_index.py tests/test_image_data.py
+.venv/bin/python -m ruff check app/services/landmark_index.py app/api/v1/endpoints/image_data.py tests/test_landmark_index.py
+
+cd ../frontend
+npm run lint
+npm run build
 ```
 
 ## 6. 生产发布

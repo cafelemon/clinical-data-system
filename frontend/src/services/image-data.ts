@@ -1,6 +1,7 @@
 import { http } from "@/services/http";
 import type {
   ImageDataType,
+  LandmarkIndexResponse,
   SubjectImageRow,
   SubjectImageUploadResult,
 } from "@/types/image-data";
@@ -67,5 +68,35 @@ export const imageDataApi = {
   },
   delete: async (recordId: number) => {
     await http.delete(`/image-data/${recordId}`);
+  },
+  getLandmarks: async (recordId: number) => {
+    const response = await http.get<LandmarkIndexResponse>(
+      `/image-data/${recordId}/landmarks`,
+    );
+    return response.data;
+  },
+  rebuildLandmarks: async (recordId: number) => {
+    const response = await http.post<LandmarkIndexResponse>(
+      `/image-data/${recordId}/landmarks/index`,
+    );
+    return response.data;
+  },
+  confirmLandmark: async (evidenceId: number, candidateKey: string) => {
+    const response = await http.post<LandmarkIndexResponse>(
+      `/image-evidence/${evidenceId}/confirm`,
+      { candidate_key: candidateKey },
+    );
+    return response.data;
+  },
+  previewEvidence: async (
+    evidenceId: number,
+    variant: "report" | "enhanced" | "raw",
+  ) => {
+    const response = await http.get<Blob>(`/image-evidence/${evidenceId}/preview`, {
+      params: { variant },
+      responseType: "blob",
+      timeout: 120000,
+    });
+    return response.data;
   },
 };

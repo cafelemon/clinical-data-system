@@ -51,6 +51,11 @@ from app.schemas.image_data import (
     SubjectImageRowRead,
     SubjectImageUploadRead,
 )
+from app.schemas.image_evidence import (
+    LandmarkConfirmRequest,
+    LandmarkIndexResponse,
+    ReportImageIndexResponse,
+)
 from app.schemas.master_data import (
     CenterCreate,
     CenterRead,
@@ -166,6 +171,8 @@ __all__ = [
     "FileRead",
     "FileVersionRead",
     "LoginRequest",
+    "LandmarkConfirmRequest",
+    "LandmarkIndexResponse",
     "OperationLogListRead",
     "OperationLogRead",
     "PdfPacketRead",
@@ -185,6 +192,7 @@ __all__ = [
     "ProjectCreate",
     "ProjectRead",
     "ProjectUpdate",
+    "ReportImageIndexResponse",
     "ReviewActionRequest",
     "ReviewBatchApproveRead",
     "ReviewBatchApproveRequest",
